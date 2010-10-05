@@ -1,0 +1,12 @@
+AC_PREREQ([2.63])
+
+AC_INIT(nox, 0.0.1, [], noxe)
+AM_INIT_AUTOMAKE([])
+
+AC_PROG_CXX
+
+AC_CHECK_HEADERS(linux/kvm.h)
+
+AC_CONFIG_FILES(Makefile)
+AC_OUTPUT
+
