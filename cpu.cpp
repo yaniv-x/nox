@@ -80,10 +80,6 @@ void CPU::create()
     if (_kvm_run == MAP_FAILED) {
         THROW("mmap failed %d", errno);
     }
-
-
-    //KVM_SET_SIGNAL_MASK
-    // KVM_INTERRUPT
 }
 
 #define CPU_STEPPING 0
@@ -297,16 +293,19 @@ void CPU::set_state(State state)
 
 void CPU::run()
 {
+    _thread.enable_signal(SIGUSR1);
     create();
     reset();
 
     for (;;) {
 
         Lock lock(_command_mutex);
+
         while (_command == WAIT) {
             set_state(WAITING);
             _command_condition.wait(_command_mutex);
         }
+
         Command command = _command;
         _command = WAIT;
         lock.unlock();
@@ -339,6 +338,7 @@ void CPU::start()
 void* CPU::thread_main(void* ioaque)
 {
     CPU* cpu = (CPU*)ioaque;
+
     try {
         cpu->run();
     } catch (Exception& e) {
@@ -362,7 +362,11 @@ void CPU::output_trigger()
     __sync_synchronize();
 
     if (_executing && !_kvm_run->request_interrupt_window) {
+        D_MESSAGE("SIGUSR1");
+        //possible race
         _thread.signal(SIGUSR1);
+    } else {
+        D_MESSAGE("NO SIGUSR1%s", _executing ? " executing" : "");
     }
 
     Lock lock(_halt_mutex);
