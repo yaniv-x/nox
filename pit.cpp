@@ -59,7 +59,7 @@ enum {
 
 #define CLOCK_HERTZ 1193181.8181
 
-static const double tick = double(1000) * 1000 * 1000 / CLOCK_HERTZ; //838.095238153
+static const double TICK = double(1000) * 1000 * 1000 / CLOCK_HERTZ; //838.095238153
 
 enum {
     READ_BACK_COUNTER_MASK = 0x10,
@@ -200,8 +200,9 @@ inline void PIT::set_counter_mode(PICTimer& timer, uint8_t val)
     timer.start_time = 0;
     timer.end_time = 0;
     timer.programed_val = 0;
-    timer.output = 0;
+    timer.output = timer.mode == 0 ? 0 : 1;
     timer.null = 1;
+    timer.ticks = 0;
 
     switch (timer.rw_mode) {
     case RW_MODE_LSB:
@@ -212,6 +213,14 @@ inline void PIT::set_counter_mode(PICTimer& timer, uint8_t val)
         timer.read_flip = 1;
         timer.write_filp = 0;
         break;
+    }
+
+    if (timer.timer) {
+        timer.timer->disarm();
+    }
+
+    if (timer.irq) {
+        timer.irq->set_level(timer.output);
     }
 }
 
@@ -236,65 +245,168 @@ inline void PIT::control(uint8_t val)
 }
 
 
-void PIT::update_timer(PICTimer& timer)
+inline bool PIT::update_one_shot(PICTimer& timer)
+{
+    nox_time_t now = get_monolitic_time();
+
+    uint64_t counter_val = now - timer.start_time;
+
+    if (timer.bcd) {
+        timer.counter_output = to_bcd(counter_val % 10000);
+    } else {
+        timer.counter_output = counter_val % (1 << 16);
+    }
+
+    if (!timer.ticks && now >= timer.end_time) {
+        timer.ticks++;
+        return true;
+    }
+
+    return false;
+}
+
+
+inline bool PIT::update_interval(PICTimer& timer, uint shift)
 {
     nox_time_t now = get_monolitic_time();
     int64_t delta = timer.end_time - now;
+    bool is_tick = delta <= 0;
 
-    if (delta <= 0) {
-        if (timer.irq) {
-            timer.irq->spike();
+    if (is_tick) {
+
+        uint programed_val = timer.programed_val >> shift;
+
+        if (timer.null) {
+            timer.start_time = now;
+            timer.ticks = 0;
+            timer.null = 0;
+
+            if (timer.timer) {
+                timer.timer->modifay(timer.end_time);
+            }
+
+        } else {
+            timer.ticks++;
         }
-
-        timer.null = 0;
 
         //todo: use timer.start_time and timer.tiks in order to compensate on time lost
 
-        timer.end_time = tick * timer.programed_val;
-
-        if (timer.timer) {
-            timer.timer->modifay(timer.end_time);
-        }
-
+        timer.end_time = TICK * programed_val;
         timer.end_time += now;
-        delta = timer.programed_val - 1;
+        delta = programed_val;
     }
 
-    uint counter_val = delta / tick;
+    uint counter_val = delta / TICK;
+    counter_val >>= shift;
     timer.counter_output = timer.bcd ? to_bcd(counter_val) : counter_val;
+
+    return is_tick;
 }
 
+void PIT::update_timer(PICTimer& timer)
+{
+    switch (timer.mode) {
+    case 2:
+        if (update_interval(timer, 0) && timer.irq) {
+            timer.irq->drop();
+        }
+        break;
+    case 0:
+        if (update_one_shot(timer)) {
+            timer.output = 1;
+        }
+        break;
+    case 3:
+        if (update_interval(timer, 1)) {
+            timer.counter_output ^= 1;
+        }
+        break;
+    case 4:
+        if (update_one_shot(timer) && timer.irq) {
+            timer.irq->drop();
+        }
+        break;
+    case 5:
+    case 1: //hardware triggers will never hapend so the
+            // counter will never be loaded
+        timer.counter_output = 0;
+        break;
+    default:
+        D_MESSAGE("invalid timer mode %u", timer.mode);
+    }
+
+    if (timer.irq) {
+        timer.irq->set_level(timer.output);
+    }
+}
+
+
+void PIT::set_interval_counter(PICTimer& timer, uint shift)
+{
+    if (timer.start_time) {
+        // new counter will be used on next load
+        timer.null = 1;
+        return;
+    }
+
+    timer.ticks = 0;
+    timer.null = 0;
+    timer.output = 1;
+    timer.start_time = get_monolitic_time();
+    timer.end_time = TICK * (timer.programed_val >> shift) + timer.start_time;
+
+    if (timer.timer) {
+        timer.timer->arm(timer.end_time - timer.start_time, true);
+    }
+}
+
+
+void PIT::set_one_shout_counter(PICTimer& timer, uint output)
+{
+    timer.ticks = 0;
+    timer.null = 0;
+    timer.output = output;
+    timer.start_time = get_monolitic_time();
+    timer.end_time = TICK * timer.programed_val + timer.start_time;
+
+    if (timer.timer) {
+        timer.timer->arm(timer.end_time - timer.start_time, false);
+    }
+}
 
 void PIT::set_counter(PICTimer& timer, uint val)
 {
     timer.programed_val = timer.bcd ? from_bcd(val) : val;
-    timer.null = 1;
+
+    if (timer.programed_val == 0) {
+        timer.programed_val = timer.bcd ? 10000 : 1 << 16;
+    }
 
     switch (timer.mode) {
     case 2:
-
         // timer.programed_val == 1 is illegal in mode 2
-
-        if (timer.programed_val == 0) {
-            timer.programed_val = timer.bcd ? 10000 : 1 << 16;
-        }
-
-        if (timer.start_time) {
-            // new counter will be used on next load
-            return;
-        }
-        timer.null = 0;
-        timer.output = 1;
-        timer.start_time = get_monolitic_time();
-        timer.end_time = tick * timer.programed_val + timer.start_time;
-
-        if (timer.timer) {
-            timer.timer->arm(timer.end_time - timer.start_time, true);
-        }
-
+        set_interval_counter(timer, 0);
         break;
+    case 3:
+        set_interval_counter(timer, 1);
+        break;
+    case 0:
+        set_one_shout_counter(timer, 0);
+        break;
+    case 4:
+        set_one_shout_counter(timer, 1);
+        break;
+    case 5:
+    case 1: //hardware triggers will never hapend so the
+            // counter will never be loaded
+        break;
+    default:
+        D_MESSAGE("invalid timer mode %u", timer.mode);
     }
 
+    if (timer.irq) {
+        timer.irq->set_level(timer.output);
+    }
 }
 
 

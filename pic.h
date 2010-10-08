@@ -159,10 +159,17 @@ public:
 
     void spike()
     {
-        ASSERT(!_high);
-        pic->raise(_pin);
         pic->drop(_pin);
+        pic->raise(_pin);
+    }
 
+    void set_level(bool high)
+    {
+        if (high) {
+            raise();
+        } else {
+            drop();
+        }
     }
 
 private:
