@@ -61,7 +61,7 @@ private:
         uint counter_latch[2];
         uint counter_output; //if bcd is set then in bcd else == _counter
         nox_time_t start_time;
-        nox_time_t tiks;
+        uint64_t ticks;
         nox_time_t end_time;
         uint programed_val;
         uint read_flip;
@@ -81,12 +81,16 @@ private:
 
     void latch_counter(PICTimer& timer);
     void latch_status(PICTimer& timer);
+    bool update_interval(PICTimer& timer, uint shift);
+    bool update_one_shot(PICTimer& timer);
     void update_timer(PICTimer& timer);
     void read_back(uint8_t val);
     void set_counter_mode(PICTimer& timer, uint8_t val);
     void counter_write(PICTimer&t, uint val);
     void control(uint8_t val);
     void timer_proc();
+    void set_one_shout_counter(PICTimer& timer, uint output);
+    void set_interval_counter(PICTimer& timer, uint shift);
     void set_counter(PICTimer& timer, uint val);
 
 private:
