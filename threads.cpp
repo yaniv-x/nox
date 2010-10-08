@@ -24,7 +24,7 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-//#include <signal.h>
+#include <signal.h>
 #include "threads.h"
 
 std::list<Thread*> threads;
@@ -34,20 +34,22 @@ Mutex exclucive;
 
 Thread::Thread(start_proc_t start_proc, void* opaque)
 {
-    /*sigset_t sig_mask;
+    sigset_t sig_mask;
     sigset_t curr_sig_mask;
 
     sigfillset(&sig_mask);
-    sigdelset(&sig_mask, SIGUSR1);
+    //sigdelset(&sig_mask, SIGUSR1);
+    sigdelset(&sig_mask, SIGKILL);
+    sigdelset(&sig_mask, SIGSTOP);
     sigdelset(&sig_mask, SIGSEGV);
     sigdelset(&sig_mask, SIGFPE);
     sigdelset(&sig_mask, SIGILL);
 
-    pthread_sigmask(SIG_SETMASK, &sig_mask, &curr_sig_mask);*/
+    pthread_sigmask(SIG_SETMASK, &sig_mask, &curr_sig_mask);
 
     int error = pthread_create(&_thread, NULL, start_proc, opaque);
 
-    //pthread_sigmask(SIG_SETMASK, &sig_mask, &curr_sig_mask);
+    pthread_sigmask(SIG_SETMASK, &curr_sig_mask, NULL);
 
     if (error) {
         THROW("failed %d", error);
@@ -62,10 +64,29 @@ void Thread::join()
 }
 
 
+void Thread::enable_signal(int signal)
+{
+    sigset_t sigset;
+
+    if (pthread_sigmask(SIG_SETMASK, NULL, &sigset)) {
+        THROW("get mask filed");
+    }
+
+    if (sigdelset(&sigset, SIGUSR1)) {
+        THROW("sigaddset filed");
+    }
+
+    if (pthread_sigmask(SIG_SETMASK, &sigset, NULL)) {
+        THROW("set mask filed");
+    }
+}
+
+
 void Thread::suspend_other_threads(Thread* thread)
 {
 
 }
+
 
 void Thread::resume_other_threads(Thread* thread)
 {
