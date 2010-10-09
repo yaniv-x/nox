@@ -167,5 +167,7 @@ public:
 #endif
 
 
+extern MemoryBus* memory_bus;
+
 #endif
 

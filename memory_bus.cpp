@@ -31,6 +31,8 @@
 #include "common.h"
 #include "kvm.h"
 
+MemoryBus* memory_bus = NULL;
+
 static const page_address_t address_mask = (page_address_t(1) << MemoryBus::ADDRESS_BITS) - 1;
 static const uint64_t max_pages = (address_mask >> GUEST_PAGE_SHIFT) + 1;
 
@@ -208,6 +210,8 @@ MemoryBus::MemoryBus(NoxVM& nox)
     , _address_mask (~(1ULL << 20))
 {
     fill_gap(0, max_pages);
+
+    memory_bus = this;
 }
 
 
