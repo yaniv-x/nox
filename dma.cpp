@@ -26,6 +26,7 @@
 
 #include "dma.h"
 #include "nox_vm.h"
+#include "io_bus.h"
 
 enum {
     IO_ADDRESS_0 = 0x00,

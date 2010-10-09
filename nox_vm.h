@@ -32,7 +32,6 @@
 #include "memory_bus.h"
 #include "dma.h"
 #include "pit.h"
-#include "keyboard.h"
 
 class KVM;
 class PlaceHolder;
@@ -41,6 +40,8 @@ class IORegion;
 class PCIBus;
 class CMOS;
 class ATAController;
+class KbdController;
+class IOBus;
 
 class NoxVM: public VMPart {
 public:
@@ -50,7 +51,8 @@ public:
     bool init();
 
     KVM& get_kvm() { return _kvm;}
-    IOBus& get_io_bus() { return _io_bus;}
+    IOBus& get_io_bus() { return *_io_bus.get();}
+
 
     virtual void reset();
     virtual void start();
@@ -71,7 +73,7 @@ private:
 
 private:
     KVM _kvm;
-    IOBus _io_bus;
+    std::auto_ptr<IOBus> _io_bus;
     MemoryBus _mem_bus;
     std::auto_ptr<PIC> _pic;
     std::auto_ptr<PCIBus> _pci;
@@ -85,7 +87,7 @@ private:
     IORegion* _bochs_io_region;
     PIT _pit;
     IORegion* _post_diagnostic;
-    KbdController _kbd;
+    std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<PlaceHolder> _holder;
     std::auto_ptr<ATAController> _ata;
     uint64_t _ram_size;

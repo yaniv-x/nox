@@ -26,6 +26,7 @@
 
 #include "pic.h"
 #include "nox_vm.h"
+#include "io_bus.h"
 
 enum {
     IO_PIC1 = 0x20,

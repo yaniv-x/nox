@@ -38,6 +38,7 @@
 #include "ata_controller.h"
 #include "cmos.h"
 #include "disk.h"
+#include "keyboard.h"
 
 
 enum {
@@ -56,7 +57,7 @@ enum {
 
 NoxVM::NoxVM()
     : VMPart ("Nox")
-    , _io_bus (*this)
+    , _io_bus (new IOBus(*this))
     , _mem_bus (*this)
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
@@ -69,19 +70,19 @@ NoxVM::NoxVM()
     , _dma (*this)
     , _bochs_io_region (NULL)
     , _pit (*this)
-    , _kbd (*this)
+    , _kbd (new KbdController(*this))
     , _holder (new PlaceHolder(*this))
     , _ata (new ATAController(*this, ATA0_IRQ))
 {
-    _a20_io_region = _io_bus.register_region(*this, IO_PORT_A20, 1, this,
+    _a20_io_region = _io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                              (io_read_byte_proc_t)&NoxVM::a20_port_read,
                                              (io_write_byte_proc_t)&NoxVM::a20_port_write);
 
-    _bochs_io_region = _io_bus.register_region(*this, IO_PORT_BOCHS_PANIC_1, 5, this,
+    _bochs_io_region = _io_bus->register_region(*this, IO_PORT_BOCHS_PANIC_1, 5, this,
                                                NULL,
                                                (io_write_byte_proc_t)&NoxVM::bochs_port_write);
 
-    _post_diagnostic = _io_bus.register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
+    _post_diagnostic = _io_bus->register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
                                                NULL,
                                                (io_write_byte_proc_t)&NoxVM::post_diagnostic);
 }
@@ -89,9 +90,9 @@ NoxVM::NoxVM()
 
 NoxVM::~NoxVM()
 {
-    _io_bus.unregister_region(_a20_io_region);
-    _io_bus.unregister_region(_bochs_io_region);
-    _io_bus.unregister_region(_post_diagnostic);
+    _io_bus->unregister_region(_a20_io_region);
+    _io_bus->unregister_region(_bochs_io_region);
+    _io_bus->unregister_region(_post_diagnostic);
 
     _mem_bus.unmap_physical_ram(_ram);
     _mem_bus.release_physical_ram(_ram);

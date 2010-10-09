@@ -28,6 +28,7 @@
 #include "nox_vm.h"
 #include "pic.h"
 #include "application.h"
+#include "io_bus.h"
 
 //After power-up the state of the 8254 is undefined
 
