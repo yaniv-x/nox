@@ -18,7 +18,8 @@ nox_SOURCES =					\
 	place_holder.cpp			\
 	pic.cpp					\
 	pci_bus.cpp				\
-	ata_controller.cpp
+	ata_controller.cpp		\
+	disk.cpp
 
 INCLUDES =												\
 	-Wall -Werror -Wno-sign-compare -Wno-switch-enum						\

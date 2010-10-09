@@ -32,6 +32,7 @@
 
 class NoxVM;
 class PICWire;
+class Disk;
 
 class ATAController: public VMPart {
 public:
@@ -43,6 +44,8 @@ public:
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
+
+    void set_disk(Disk* disk) { _disk = disk;}
 
 private:
     void soft_reset();
@@ -57,15 +60,20 @@ private:
     void clear_HOB();
     void set_config();
     void identify_device();
+    void do_read_sectors();
     void do_command(uint8_t command);
     void raise();
     uint64_t get_num_sectors();
 
 private:
     Mutex _mutex;
+    Disk* _disk;
     std::auto_ptr<PICWire> _irq;
 
-    uint16_t _identity[256];
+    union {
+        uint16_t _identity[256];
+        uint8_t _sector[512];
+    };
 
     uint _status;
     uint _control;
@@ -77,8 +85,12 @@ private:
     uint _lba_high;
     uint _feature;
 
+    uint _heads_per_cylinder;
+    uint _sectors_per_track;
     uint16_t* _data_in;
     uint16_t* _data_in_end;
+    uint64_t _next_sector;
+    uint64_t _end_sector;
 };
 
 #endif
