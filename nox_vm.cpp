@@ -50,6 +50,8 @@ enum {
     IO_PORT_BOCHS_DEBUG = 0x403,
     IO_PORT_BOCHS_MY_TEST = 0x404,
 
+    IO_PORT_VGA_BIOS_MESSAGE = 0x500,
+
     ATA0_IRQ = 14,
 };
 
@@ -59,6 +61,7 @@ NoxVM::NoxVM()
     : VMPart ("Nox")
     , _io_bus (new IOBus(*this))
     , _mem_bus (*this)
+    , _holder (new PlaceHolder(*this))
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
     , _cmos (new CMOS(*this))
@@ -71,7 +74,6 @@ NoxVM::NoxVM()
     , _bochs_io_region (NULL)
     , _pit (*this)
     , _kbd (new KbdController(*this))
-    , _holder (new PlaceHolder(*this))
     , _ata (new ATAController(*this, ATA0_IRQ))
 {
     _a20_io_region = _io_bus->register_region(*this, IO_PORT_A20, 1, this,
@@ -85,6 +87,11 @@ NoxVM::NoxVM()
     _post_diagnostic = _io_bus->register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
                                                NULL,
                                                (io_write_byte_proc_t)&NoxVM::post_diagnostic);
+
+
+    add_io_region(_io_bus->register_region(*this, IO_PORT_VGA_BIOS_MESSAGE, 1, this,
+                                           NULL,
+                                           (io_write_byte_proc_t)&NoxVM::vgabios_port_write));
 }
 
 
@@ -130,18 +137,23 @@ uint8_t NoxVM::a20_port_read(uint16_t port)
 void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
 {
     switch (port) {
-        case 0x400:
-        case 0x401:
-            D_MESSAGE("0x%x", val);
-            PANIC("bochs panic");
-            break;
-        case 0x402:
-        case 0x403:
-            printf("%c", val);
-            break;
+    case 0x400:
+    case 0x401:
+        D_MESSAGE("0x%x", val);
+        PANIC("bochs panic");
+        break;
+    case 0x402:
+    case 0x403:
+        printf("%c", val);
+        break;
     case IO_PORT_BOCHS_MY_TEST:
         D_MESSAGE("my %u", val);
     };
+}
+
+void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
+{
+    printf("%c", val);
 }
 
 void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
