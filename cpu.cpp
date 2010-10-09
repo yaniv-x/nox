@@ -33,6 +33,7 @@
 #include "nox_vm.h"
 #include "kvm.h"
 #include "pic.h"
+#include "io_bus.h"
 
 CPU::CPU(NoxVM& vm, uint id)
     : VMPart ("cpu", vm)
@@ -362,11 +363,11 @@ void CPU::output_trigger()
     __sync_synchronize();
 
     if (_executing && !_kvm_run->request_interrupt_window) {
-        D_MESSAGE("SIGUSR1");
+//        D_MESSAGE("SIGUSR1");
         //possible race
         _thread.signal(SIGUSR1);
     } else {
-        D_MESSAGE("NO SIGUSR1%s", _executing ? " executing" : "");
+//        D_MESSAGE("NO SIGUSR1%s", _executing ? " executing" : "");
     }
 
     Lock lock(_halt_mutex);

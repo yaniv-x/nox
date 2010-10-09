@@ -26,6 +26,7 @@
 
 #include "cmos.h"
 #include "nox_vm.h"
+#include "io_bus.h"
 
 
 CMOS::CMOS(NoxVM& vm)

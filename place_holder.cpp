@@ -27,6 +27,7 @@
 #include "place_holder.h"
 #include "nox_vm.h"
 #include "application.h"
+#include "io_bus.h"
 
 
 #define NUM_MICRO 30
