@@ -28,6 +28,31 @@
 #include "nox_vm.h"
 #include "io_bus.h"
 
+enum {
+    CMOD_OFFSET_SHUTDOWN = 0x0f,
+    CMOD_OFFSET_FLOPPY_TYPE = 0x10,
+    CMOD_OFFSET_HD_TYPE = 0x12,
+    CMOD_OFFSET_EQUIPMENT = 0x14,
+    CMOD_OFFSET_BASE_MEM_LOW = 0x15,
+    CMOD_OFFSET_BASE_MEM_HIGH = 0x16,
+    CMOD_OFFSET_EXT_MEM_LOW = 0x17,
+    CMOD_OFFSET_EXT_MEM_HIGH = 0x18,
+    CMOD_OFFSET_HD_EXT_TYPE = 0x19,
+    CMOD_OFFSET_HD_T47_CYL_LOW = 0x1b,
+    CMOD_OFFSET_HD_T47_CYL_HIGH = 0x1c,
+    CMOD_OFFSET_HD_T47_HEADS = 0x1d,
+    CMOD_OFFSET_HD_T47_SECTORS = 0x23,
+    CMOD_OFFSET_EXT_MEM_LOW_ALIAS = 0x30,
+    CMOD_OFFSET_EXT_MEM_HIGH_ALIAS = 0x31,
+    CMOD_OFFSET_MEM_ABOVE_16M_LOW = 0x34,
+    CMOD_OFFSET_MEM_ABOVE_16M_HIGH = 0x35,
+    CMOD_OFFSET_BOOT_DEV_LOW = 0x3d,
+    CMOD_OFFSET_MEM_ABOVE_4G_LOW = 0x5b,
+    CMOD_OFFSET_MEM_ABOVE_4G_MID = 0x5c,
+    CMOD_OFFSET_MEM_ABOVE_4G_HIGH = 0x5d,
+    CMOD_OFFSET_NUM_CPUS = 0x5f,
+};
+
 
 CMOS::CMOS(NoxVM& vm)
     : VMPart ("cmos", vm)
@@ -70,6 +95,30 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
         case REGC:
         case REGD:
             PANIC("implement me");
+            break;
+        case CMOD_OFFSET_SHUTDOWN:
+        case CMOD_OFFSET_FLOPPY_TYPE:
+        case CMOD_OFFSET_HD_TYPE:
+        case CMOD_OFFSET_EQUIPMENT:
+        case CMOD_OFFSET_BASE_MEM_LOW:
+        case CMOD_OFFSET_BASE_MEM_HIGH:
+        case CMOD_OFFSET_EXT_MEM_LOW:
+        case CMOD_OFFSET_EXT_MEM_HIGH:
+        case CMOD_OFFSET_HD_EXT_TYPE:
+        case CMOD_OFFSET_HD_T47_CYL_LOW:
+        case CMOD_OFFSET_HD_T47_CYL_HIGH:
+        case CMOD_OFFSET_HD_T47_HEADS:
+        case CMOD_OFFSET_HD_T47_SECTORS:
+        case CMOD_OFFSET_EXT_MEM_LOW_ALIAS:
+        case CMOD_OFFSET_EXT_MEM_HIGH_ALIAS:
+        case CMOD_OFFSET_MEM_ABOVE_16M_LOW:
+        case CMOD_OFFSET_MEM_ABOVE_16M_HIGH:
+        case CMOD_OFFSET_BOOT_DEV_LOW:
+        case CMOD_OFFSET_MEM_ABOVE_4G_LOW:
+        case CMOD_OFFSET_MEM_ABOVE_4G_MID:
+        case CMOD_OFFSET_MEM_ABOVE_4G_HIGH:
+        case CMOD_OFFSET_NUM_CPUS:
+            _user_ares[_index - USER_0] = val;
             break;
         default:
             W_MESSAGE("user 0x%x", _index);
@@ -120,6 +169,29 @@ uint8_t CMOS::read_byte(uint16_t port)
         case REGD:
             PANIC("implement me");
             break;
+        case CMOD_OFFSET_SHUTDOWN:
+        case CMOD_OFFSET_FLOPPY_TYPE:
+        case CMOD_OFFSET_HD_TYPE:
+        case CMOD_OFFSET_EQUIPMENT:
+        case CMOD_OFFSET_BASE_MEM_LOW:
+        case CMOD_OFFSET_BASE_MEM_HIGH:
+        case CMOD_OFFSET_EXT_MEM_LOW:
+        case CMOD_OFFSET_EXT_MEM_HIGH:
+        case CMOD_OFFSET_HD_EXT_TYPE:
+        case CMOD_OFFSET_HD_T47_CYL_LOW:
+        case CMOD_OFFSET_HD_T47_CYL_HIGH:
+        case CMOD_OFFSET_HD_T47_HEADS:
+        case CMOD_OFFSET_HD_T47_SECTORS:
+        case CMOD_OFFSET_EXT_MEM_LOW_ALIAS:
+        case CMOD_OFFSET_EXT_MEM_HIGH_ALIAS:
+        case CMOD_OFFSET_MEM_ABOVE_16M_LOW:
+        case CMOD_OFFSET_MEM_ABOVE_16M_HIGH:
+        case CMOD_OFFSET_BOOT_DEV_LOW:
+        case CMOD_OFFSET_MEM_ABOVE_4G_LOW:
+        case CMOD_OFFSET_MEM_ABOVE_4G_MID:
+        case CMOD_OFFSET_MEM_ABOVE_4G_HIGH:
+        case CMOD_OFFSET_NUM_CPUS:
+            return _user_ares[_index - USER_0];
         default:
             W_MESSAGE("user 0x%x", _index);
             return _user_ares[_index - USER_0];

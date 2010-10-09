@@ -81,6 +81,42 @@ PlaceHolder::PlaceHolder(NoxVM& nox)
                                       (io_read_byte_proc_t)&PlaceHolder::read_byte,
                                       (io_write_byte_proc_t)&PlaceHolder::write_byte));
 
+    // VGA
+    add_io_region(_io.register_region(*this, 0x03c0, 10, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
+                                      (io_read_word_proc_t)&PlaceHolder::read_word,
+                                      (io_write_word_proc_t)&PlaceHolder::write_word));
+    add_io_region(_io.register_region(*this, 0x03cc, 2, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
+                                      (io_read_word_proc_t)&PlaceHolder::read_word,
+                                      (io_write_word_proc_t)&PlaceHolder::write_word));
+    add_io_region(_io.register_region(*this, 0x03ce, 2, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
+                                      (io_read_word_proc_t)&PlaceHolder::read_word,
+                                      (io_write_word_proc_t)&PlaceHolder::write_word));
+
+    add_io_region(_io.register_region(*this, 0x03d4, 2, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
+                                      (io_read_word_proc_t)&PlaceHolder::read_word,
+                                      (io_write_word_proc_t)&PlaceHolder::write_word));
+    add_io_region(_io.register_region(*this, 0x03da, 2, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
+                                      (io_read_word_proc_t)&PlaceHolder::read_word,
+                                      (io_write_word_proc_t)&PlaceHolder::write_word));
+
+    // VBE
+    add_io_region(_io.register_region(*this, 0x01ce, 3, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
+                                      (io_read_word_proc_t)&PlaceHolder::read_word,
+                                      (io_write_word_proc_t)&PlaceHolder::write_word));
+
+
     t2 = Timer::create((void_callback_t)&PlaceHolder::timer_call_2222222222, this);
     //t2->arm(1000ULL * NUM_MICRO , true);
 
@@ -114,6 +150,16 @@ void PlaceHolder::write_byte(uint16_t port, uint8_t val)
 
 }
 
+uint16_t PlaceHolder::read_word(uint16_t port)
+{
+    return 0xff;
+}
+
+
+void PlaceHolder::write_word(uint16_t port, uint16_t val)
+{
+
+}
 
 void PlaceHolder::trigger_call()
 {

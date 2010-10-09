@@ -68,6 +68,7 @@ private:
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
+    void vgabios_port_write(uint16_t port, uint8_t val);
     void bochs_port_write(uint16_t port, uint8_t val);
     void post_diagnostic(uint16_t port, uint8_t val);
 
@@ -75,6 +76,7 @@ private:
     KVM _kvm;
     std::auto_ptr<IOBus> _io_bus;
     MemoryBus _mem_bus;
+    std::auto_ptr<PlaceHolder> _holder;
     std::auto_ptr<PIC> _pic;
     std::auto_ptr<PCIBus> _pci;
     std::auto_ptr<CMOS> _cmos;
@@ -88,7 +90,6 @@ private:
     PIT _pit;
     IORegion* _post_diagnostic;
     std::auto_ptr<KbdController> _kbd;
-    std::auto_ptr<PlaceHolder> _holder;
     std::auto_ptr<ATAController> _ata;
     uint64_t _ram_size;
 };

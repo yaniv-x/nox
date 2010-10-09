@@ -50,6 +50,8 @@ public:
 private:
     uint8_t read_byte(uint16_t port);
     void write_byte(uint16_t port, uint8_t val);
+    uint16_t read_word(uint16_t port);
+    void write_word(uint16_t port, uint16_t val);
     void timer_call();
     void timer_call_2222222222();
     void trigger_call();
