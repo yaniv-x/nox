@@ -28,18 +28,40 @@
 #include "nox_vm.h"
 
 
+IOBus* io_bus = NULL;
+
 /*
 
-Any two consecutive 8-bit ports can be treated as a 16-bit port, and any four consec-
+quote from Intel® 64 and IA-32 Architectures Software Developer's Manual
+
+"Any two consecutive 8-bit ports can be treated as a 16-bit port, and any four consec-
 utive ports can be a 32-bit port. In this manner, the processor can transfer 8, 16, or
 32 bits to or from a device in the I/O address space. Like words in memory, 16-bit
 ports should be aligned to even addresses (0, 2, 4, ...) so that all 16 bits can be
 transferred in a single bus cycle. Likewise, 32-bit ports should be aligned to
 addresses that are multiples of four (0, 4, 8, ...). The processor supports data trans-
 fers to unaligned ports, but there is a performance penalty because one or more
-extra bus cycle must be used.
+extra bus cycle must be used."
 
 */
+
+
+/*
+
+quote from Intel® 64 and IA-32 Architectures Software Developer's Manual
+
+"If hardware or software requires that I/O ports be written to in a particular order, that order
+must be specified explicitly. For example, to load a word-length I/O port at address 2H and then
+another word port at 4H, two word-length writes must be used, rather than a single
+doubleword write at 2H."
+
+*/
+
+
+// Not sure if splitting in/out is the right way to go. Splitting was added
+// because vgabios is using one outw instead of two outb. Need better
+// understanding of the io bus in order to take the right decision.
+
 
 static const uint32_t num_ports = 1 << 16;
 static const uint32_t max_port = max_port - 1;
@@ -62,15 +84,29 @@ static uint8_t default_read_byte(void*, uint16_t port)
 
 uint16_t default_read_word(void*, uint16_t port)
 {
-    D_MESSAGE("unmapped port 0x%x", port);
-    return ~0;
+    //D_MESSAGE("unmapped port 0x%x", port);
+
+    uint8_t b1;
+    uint8_t b2;
+
+    io_bus->read_byte(port, &b1, 1);
+    io_bus->read_byte(port + 1, &b2, 1);
+
+    return uint16_t(b2) << 8 | b1;
 }
 
 
 uint32_t default_read_dword(void*, uint16_t port)
 {
-    D_MESSAGE("unmapped port 0x%x", port);
-    return ~0;
+    //D_MESSAGE("unmapped port 0x%x", port);
+
+    uint16_t w1;
+    uint16_t w2;
+
+    io_bus->read_word(port, &w1, 1);
+    io_bus->read_word(port + 2, &w2, 1);
+
+    return uint32_t(w2) << 16 | w1;
 }
 
 
@@ -82,13 +118,19 @@ void default_write_byte(void*, uint16_t port, uint8_t val)
 
 void default_write_word(void*, uint16_t port, uint16_t val)
 {
-    D_MESSAGE("unmapped port 0x%x val %u (0x%x)", port, val, val);
+    //D_MESSAGE("unmapped port 0x%x val %u (0x%x)", port, val, val);
+
+    io_bus->write_byte(port, (uint8_t*)&val, 1);
+    io_bus->write_byte(port + 1, ((uint8_t*)&val) + 1, 1);
 }
 
 
 void default_write_dword(void*, uint16_t port, uint32_t val)
 {
-    D_MESSAGE("unmapped port 0x%x val %u (0x%x)", port, val, val);
+    //D_MESSAGE("unmapped port 0x%x val %u (0x%x)", port, val, val);
+
+    io_bus->write_word(port, (uint16_t*)&val, 1);
+    io_bus->write_word(port + 2, ((uint16_t*)&val) + 1, 1);
 }
 
 class IORegion: public IOBus::MapItem {
@@ -135,6 +177,8 @@ IOBus::IOBus(NoxVM& nox)
     : VMPart("io bus", nox)
 {
     fill_gap(0, num_ports);
+
+    io_bus = this;
 }
 
 
@@ -202,7 +246,12 @@ void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 2) {
-        W_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+
+        read_byte(port, (uint8_t*)dest, 1);
+        read_byte(port + 1, (uint8_t*)dest + 1, 1);
+
+        return;
     }
 
     uint16_t* end = dest + n;
@@ -219,7 +268,12 @@ void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 4) {
-        W_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+
+        read_word(port, (uint16_t*)dest, 1);
+        read_word(port + 2, (uint16_t*)dest + 1, 1);
+
+        return;
     }
 
     uint32_t* end = dest + n;
@@ -248,7 +302,12 @@ void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 2) {
-        W_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+
+        write_byte(port, (uint8_t*)src, 1);
+        write_byte(port + 1, (uint8_t*)src + 1, 1);
+
+        return;
     }
 
     uint16_t* end = src + n;
@@ -265,7 +324,12 @@ void IOBus::write_dword(uint16_t port, uint32_t* src, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 4) {
-        W_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+
+        write_word(port, (uint16_t*)src, 1);
+        write_word(port + 2, (uint16_t*)src + 1, 1);
+
+        return;
     }
 
     uint32_t* end = src + n;

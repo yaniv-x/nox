@@ -101,5 +101,7 @@ private:
     RegionList _regions;
 };
 
+extern IOBus* io_bus;
+
 #endif
 
