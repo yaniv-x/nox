@@ -26,6 +26,8 @@
 
 #include "ata_controller.h"
 #include "pic.h"
+#include "disk.h"
+#include "io_bus.h"
 
 
 //Command Block registers include the
@@ -88,10 +90,18 @@ enum {
     DIAGNOSTIC_D0_FAILED_D1_NOT_PRESENT = 0x02,
 
     DEVICE_MUST_BE_ONE_MASK = 0,//(1 << 7) | (1 << 5),
+    DEVICE_SELECT_MASK = (1 << 4),
+    DEVICE_LBA_MASK = (1 << 6),
+    DEVICE_ADDRESS_MASK = ((1 << 4) - 1),
+};
+
+enum {
+    SECTOR_SIZE = 512,
 };
 
 ATAController::ATAController(NoxVM& nox, uint irq)
     : VMPart("ata", nox)
+    , _disk (_disk)
     , _irq (pic->wire(*this, irq))
 {
     IOBus& bus = nox.get_io_bus();
@@ -154,22 +164,27 @@ void ATAController::io_control(uint16_t port, uint8_t val)
     _control = val;
 
     if (val & CONTROL_RESET_MASK) {
+
          if ((_status & INTERNAL_STATUS_RESET_MASK) && (_status & STATUS_BUSY_MASK)) {
              return;
          }
 
          soft_reset();
-
          return;
-    } else if (_status & INTERNAL_STATUS_RESET_MASK) {
+    }
+
+    if (_status & INTERNAL_STATUS_RESET_MASK) {
         set_signature();
         _status &= ~(STATUS_BUSY_MASK | INTERNAL_STATUS_RESET_MASK);
-        _status |= STATUS_READY_MASK;
+        if (_disk) {
+            _status |= STATUS_READY_MASK;
+        }
     }
 }
 
 
 enum {
+    CMD_READ_SECTORS = 0x20,
     CMD_CHECK_POWER_MODE = 0xe5,
     CMD_DEVICE_CONFIGURATION = 0xb1,
     CMD_DEVICE_RESET = 0x08, //Use prohibited when the PACKET Command feature set is not implemented
@@ -345,8 +360,8 @@ enum {
 
 uint64_t ATAController::get_num_sectors()
 {
-    D_MESSAGE("for now");
-    return 1 * GB / 512;
+    ASSERT(_disk && !(_device & DEVICE_SELECT_MASK));
+    return _disk->get_size() / 512;
 }
 
 
@@ -389,8 +404,8 @@ void ATAController::identify_device()
     uint64_t sectors = get_num_sectors();
     uint64_t cyl = sectors / (ATA3_MAX_HEAD * ATA3_MAX_SEC);
     _identity[COMPAT_ID_OFFSET_CYL] = (cyl > ATA3_MAX_CYL) ? ATA3_MAX_CYL : cyl;
-    _identity[COMPAT_ID_OFFSET_HEAD] = ATA3_MAX_HEAD;
-    _identity[COMPAT_ID_OFFSET_SECTORS] = ATA3_MAX_SEC;
+    _identity[COMPAT_ID_OFFSET_HEAD] = _heads_per_cylinder = ATA3_MAX_HEAD;
+    _identity[COMPAT_ID_OFFSET_SECTORS] = _sectors_per_track = ATA3_MAX_SEC;
 
     _identity[ID_OFFSET_MAX_SECTORS_PER_BLOCK] = 0x8000 | (4096 / 512);
     _identity[ID_OFFSET_CAP1] = ID_CAP1_DMA_MASK |
@@ -403,7 +418,6 @@ void ATAController::identify_device()
 
     uint32_t sectors_28 = (sectors > (1 << 28) - 1) ? (1 << 28) - 1 : sectors;
 
-    //*(uint32_t*)&_identity[ID_OFFSET_ADDRESABEL_SECTORS] = sectors_28;
     _identity[ID_OFFSET_ADDRESABEL_SECTORS] = sectors_28;
     _identity[ID_OFFSET_ADDRESABEL_SECTORS + 1] = sectors_28 >> 16;
 
@@ -452,8 +466,10 @@ void ATAController::identify_device()
                                   ID_HRESET_JUMPER_MASK;
 
 
-    _identity[ID_OFFSET_ADDR_SECTORS_48] = (sectors > (1ULL << 48) - 1) ? (1ULL << 48) - 1 :
-                                                                           sectors;
+    uint64_t sectors_48 = (sectors > (1ULL << 48) - 1) ? (1ULL << 48) - 1 : sectors;
+    _identity[ID_OFFSET_ADDR_SECTORS_48] = sectors_48;
+    _identity[ID_OFFSET_ADDR_SECTORS_48 + 1] = sectors_48 >> 16;
+    _identity[ID_OFFSET_ADDR_SECTORS_48 + 2] = sectors_48 >> 32;
 
     _identity[ID_OFFSET_INTEGRITY] = ID_INTEGRITY_SIGNATURE;
     _identity[ID_OFFSET_INTEGRITY] |= checksum8(_identity, sizeof(_identity)) << 8;
@@ -465,8 +481,50 @@ void ATAController::identify_device()
 
     _data_in = _identity;
     _data_in_end = _data_in + 256;
+    _next_sector = _end_sector = 0;
     raise();
 }
+
+
+void ATAController::do_read_sectors()
+{
+    bool lba = _device & DEVICE_LBA_MASK;
+    uint64_t sector;
+
+    if (lba) {
+        sector = _lba_low & 0xff;
+        sector += (_lba_mid & 0xff) << 8;
+        sector += (_lba_high & 0xff) << 16;
+        sector += (_device & DEVICE_ADDRESS_MASK) << 24;
+    } else {
+        uint cylinder = (_lba_mid & 0xff)  + ((_lba_high & 0xff) << 8);
+        uint head = _device & DEVICE_ADDRESS_MASK;
+        sector = (_lba_low & 0xff);
+        sector = (cylinder * _heads_per_cylinder + head) * _sectors_per_track + sector - 1;
+    }
+
+    _end_sector = (_count & 0xff) ? (_count & 0xff) : 256;
+    _end_sector += sector;
+
+    if (sector * SECTOR_SIZE >= _end_sector * SECTOR_SIZE ||
+        _end_sector * SECTOR_SIZE > _disk->get_size()) {
+        command_abort_error();
+        return;
+    }
+
+    if (!_disk->read(sector, _sector)) {
+        command_abort_error();
+        return;
+    }
+
+    _data_in = (uint16_t*)_sector;
+    _data_in_end = _data_in + 256;
+    _next_sector = sector + 1;
+
+    _status |= STATUS_DATA_REQUEST_MASK;
+    raise();
+}
+
 
 void ATAController::do_command(uint8_t command)
 {
@@ -481,6 +539,14 @@ void ATAController::do_command(uint8_t command)
     _irq->drop();
 
     switch (command) {
+    case CMD_READ_SECTORS: {
+        if (!(_status & STATUS_READY_MASK)) {
+            command_abort_error();
+        } else {
+            do_read_sectors();
+        }
+        break;
+    }
     case CMD_FLUSH_CACHE_EXT:
     case CMD_FLUSH_CACHE:
         if (!(_status & STATUS_READY_MASK)) {
@@ -595,6 +661,13 @@ void ATAController::io_write(uint16_t port, uint8_t val)
         return;
     case IO_DEVICE:
         _device = val | DEVICE_MUST_BE_ONE_MASK;
+
+        if (!(_device & DEVICE_SELECT_MASK) && _disk) {
+            _status |= STATUS_READY_MASK;
+        } else {
+            _status &= ~STATUS_READY_MASK;
+        }
+
         return;
     default:
         W_MESSAGE("waiting 0x%x %u", port, port);
@@ -609,7 +682,7 @@ uint16_t ATAController::io_read_word(uint16_t port)
 {
     port -= IO_BASE;
 
-    if (port != IO_DATA) {
+    if (port != IO_DATA || !(_status & STATUS_DATA_REQUEST_MASK)) {
         W_MESSAGE("waiting 0x%x %u", port, port);
         return ~0;
     }
@@ -618,7 +691,18 @@ uint16_t ATAController::io_read_word(uint16_t port)
         uint16_t val = *_data_in;
 
         if (++_data_in == _data_in_end) {
-            _status &= ~STATUS_DATA_REQUEST_MASK;
+            raise(); // todo: rais according to block size
+            if (_next_sector < _end_sector) {
+                if (!_disk->read(_next_sector, _sector)) {
+                    command_abort_error();
+                    // clear STATUS_DATA_REQUEST_MASK ???
+                }
+                _data_in = (uint16_t*)_sector;
+                _next_sector++;
+
+            } else {
+                _status &= ~STATUS_DATA_REQUEST_MASK;
+            }
         }
 
         return val;
