@@ -88,6 +88,7 @@ private:
     KbdController _kbd;
     std::auto_ptr<PlaceHolder> _holder;
     std::auto_ptr<ATAController> _ata;
+    uint64_t _ram_size;
 };
 
 
