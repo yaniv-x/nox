@@ -172,6 +172,8 @@ public:
         }
     }
 
+    bool is_high() { return _high;}
+
 private:
     VMPart& _owner;
     uint_b _pin;

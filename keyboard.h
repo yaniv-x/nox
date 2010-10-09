@@ -28,11 +28,11 @@
 #define _H_KEYBOARD
 
 #include "vm_part.h"
-#include "io_bus.h"
 #include "threads.h"
 
 class NoxVM;
 class IORegion;
+class PICWire;
 
 class CyclicBuffer {
 public:
@@ -79,23 +79,48 @@ private:
     void io_write_port_a(uint16_t port, uint8_t val);
     uint8_t io_read_status(uint16_t port);
     void io_write_command(uint16_t port, uint8_t val);
+    void put_mouse_data(uint data);
     void put_data(uint data);
-    void enable_keyboard();
-    void disable_keyboard();
     void restore_keyboard_defaults();
-    void clear_outputs();
-    void reset_keybord();
-    void set_command_byte(uint command_byte);
+    void reset_keyboard();
+    void restore_mouse_defaults();
+    void reset_mouse();
+    void set_command_byte(uint8_t command_byte);
+    void write_output_port(uint8_t val);
+    void write_to_mouse(uint8_t val);
+    void refill_outgoing();
+    bool mouse_is_active();
+    bool keyboard_is_active();
 
-public:
+private:
     Mutex _mutex;
     IORegion *_io_region_a;
     IORegion *_io_region_b;
+
+    struct KBCOutput {
+        PICWire* irq;
+        CyclicBuffer buf;
+    };
+
+    uint8_t _outgoing;
+
+    KBCOutput _keyboard_output;
+    bool _kbd_enabled;
+    uint8_t _kbd_leds;
+    uint8_t _kbd_rate;
+
+    KBCOutput _mouse_output;
+    bool _mouse_scaling;
+    bool _mouse_reporting;
+    bool _mouse_reomte_mode;
+    bool _mouse_warp_mode;
+    uint8_t _mouse_resolution;
+    uint8_t _mouse_sample_rate;
+    uint8_t _mouse_button;
+
     uint8_t _state;
-    CyclicBuffer _output;
-    bool _keyboard_line_enabled;
-    bool _mouse_line_enabled;
-    bool _expect_command_byte;
+    uint8_t _command_byte;
+    int _write_state;
 };
 
 #endif
