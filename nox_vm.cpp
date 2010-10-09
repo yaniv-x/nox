@@ -37,6 +37,7 @@
 #include "pci_bus.h"
 #include "ata_controller.h"
 #include "cmos.h"
+#include "disk.h"
 
 
 enum {
@@ -152,10 +153,10 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 
 void NoxVM::init_ram()
 {
-    static const uint64_t ram_size = 256 * MB;
+    _ram_size = 256 * MB;
 
-    uint64_t low_ram_size = MIN(ram_size, 3ULL * GB);
-    uint64_t high_ram_size = ram_size - low_ram_size;
+    uint64_t low_ram_size = MIN(_ram_size, 3ULL * GB);
+    uint64_t high_ram_size = _ram_size - low_ram_size;
     _ram = _mem_bus.alloc_physical_ram(*this, low_ram_size >> GUEST_PAGE_SHIFT, "ram");
     _mem_bus.map_physical_ram(_ram, 0, false);
 
@@ -209,7 +210,7 @@ void NoxVM::init_bios()
         THROW("read failed");
     }
 
-    AutoFD _vga_fd(::open("/home/yaniv/bochs-2.4.5/bios/BIOS-bochs-latest", O_RDONLY));
+    AutoFD _vga_fd(::open("/home/yaniv/bochs-2.4.5/bios/VGABIOS-lgpl-latest", O_RDONLY));
 
     if (fstat(_vga_fd.get(), &stat) == -1) {
         THROW("fstat failed");
@@ -249,13 +250,10 @@ bool NoxVM::init()
 //    init_pci_bus();
 //    init_usb_bus();
     init_bios();
-    init_cpus();
-
 
     _cmos->host_write(0x10, 0);      // no floppy
     _cmos->host_write(0x12, 0xf0);   // hard disk 0 in extended cmos
-    _cmos->host_write(0x19, 47);     // user define hd params start in 0x1b
-
+    _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
 
     uint cyl = MIN(MAX_CYL, DISK_SIZE / MAX_HEADS / MAX_SECTORS_PER_CYL);
 
@@ -265,11 +263,54 @@ bool NoxVM::init()
     _cmos->host_write(0x1d, MAX_HEADS);
     _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
 
-
-
     //boot device
     _cmos->host_write(0x3d, 0x02); //first boot device is first HD
+    _ata->set_disk(new Disk("/home/yaniv/images/winxp_nox_test.raw"));
 
+    //640k base memory
+    _cmos->host_write(0x15, 640);
+    _cmos->host_write(0x16, 640 >> 8);
+
+    //extended memory
+    uint64_t ram_size_kb = _ram_size / 1024;
+    ram_size_kb -= 1024;
+    ram_size_kb = (ram_size_kb > ((1 << 16) - 1)) ? ((1 << 16) - 1) : ram_size_kb;
+    _cmos->host_write(0x17, ram_size_kb);
+    _cmos->host_write(0x18, ram_size_kb >> 8);
+    _cmos->host_write(0x30, ram_size_kb);
+    _cmos->host_write(0x31, ram_size_kb >> 8);
+
+    uint64_t below_4G;
+    uint64_t above_4G;
+    if (_ram_size > 0xe0000000) {
+        below_4G = 0xe0000000;
+        above_4G = _ram_size - 0xe0000000;
+    } else {
+        below_4G = _ram_size;
+        above_4G = 0;
+    }
+
+    //above 16MB
+    uint64_t above_16M;
+
+    if (below_4G > 16 * MB) {
+        above_16M = (below_4G - 16 * MB) / (1 << 16);
+    } else {
+        above_16M = 0;
+    }
+
+    _cmos->host_write(0x34, above_16M);
+    _cmos->host_write(0x35, above_16M >> 8);
+
+    //abov 4g
+    _cmos->host_write(0x5b, above_4G >> 16);
+    _cmos->host_write(0x5c, above_4G >> 24);
+    _cmos->host_write(0x5d, above_4G >> 32);
+
+    //num of cpus (is num of cpus - 1)
+    _cmos->host_write(0x5f, 0);
+
+    init_cpus();
 
     return true;
 }
