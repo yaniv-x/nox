@@ -30,10 +30,13 @@
 #include "cpu.h"
 
 #include "nox_vm.h"
+#include "memory_bus.h"
 #include "io_bus.h"
 #include "kvm.h"
+#include "dma.h"
 #include "place_holder.h"
 #include "pic.h"
+#include "pit.h"
 #include "pci_bus.h"
 #include "ata_controller.h"
 #include "cmos.h"
@@ -59,8 +62,9 @@ enum {
 
 NoxVM::NoxVM()
     : VMPart ("Nox")
+    , _kvm (new KVM())
     , _io_bus (new IOBus(*this))
-    , _mem_bus (*this)
+    , _mem_bus (new MemoryBus(*this))
     , _holder (new PlaceHolder(*this))
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
@@ -70,9 +74,9 @@ NoxVM::NoxVM()
     , _high_ram (NULL)
     , _a20_io_region (NULL)
     , _a20_port_val (0)
-    , _dma (*this)
+    , _dma (new DMA(*this))
     , _bochs_io_region (NULL)
-    , _pit (*this)
+    , _pit (new PIT(*this))
     , _kbd (new KbdController(*this))
     , _ata (new ATAController(*this, ATA0_IRQ))
 {
@@ -101,12 +105,12 @@ NoxVM::~NoxVM()
     _io_bus->unregister_region(_bochs_io_region);
     _io_bus->unregister_region(_post_diagnostic);
 
-    _mem_bus.unmap_physical_ram(_ram);
-    _mem_bus.release_physical_ram(_ram);
-    _mem_bus.unmap_physical_ram(_high_bios);
-    _mem_bus.release_physical_ram(_high_bios);
-    _mem_bus.unmap_physical_ram(_high_ram);
-    _mem_bus.release_physical_ram(_high_ram);
+    _mem_bus->unmap_physical_ram(_ram);
+    _mem_bus->release_physical_ram(_ram);
+    _mem_bus->unmap_physical_ram(_high_bios);
+    _mem_bus->release_physical_ram(_high_bios);
+    _mem_bus->unmap_physical_ram(_high_ram);
+    _mem_bus->release_physical_ram(_high_ram);
 }
 
 void NoxVM::a20_port_write(uint16_t port, uint8_t val)
@@ -119,9 +123,9 @@ void NoxVM::a20_port_write(uint16_t port, uint8_t val)
     bool enable_A20 = !!(val & 2);
 
     if (enable_A20) {
-        _mem_bus.enable_address_line_20();
+        _mem_bus->enable_address_line_20();
     } else {
-        _mem_bus.disable_address_line_20();
+        _mem_bus->disable_address_line_20();
     }
 }
 
@@ -130,7 +134,7 @@ uint8_t NoxVM::a20_port_read(uint16_t port)
 {
     ASSERT(port == 0x92);
 
-    return _mem_bus.line_20_is_set() ? 0x02 : 0;
+    return _mem_bus->line_20_is_set() ? 0x02 : 0;
 }
 
 
@@ -170,16 +174,16 @@ void NoxVM::init_ram()
 
     uint64_t low_ram_size = MIN(_ram_size, 3ULL * GB);
     uint64_t high_ram_size = _ram_size - low_ram_size;
-    _ram = _mem_bus.alloc_physical_ram(*this, low_ram_size >> GUEST_PAGE_SHIFT, "ram");
-    _mem_bus.map_physical_ram(_ram, 0, false);
+    _ram = _mem_bus->alloc_physical_ram(*this, low_ram_size >> GUEST_PAGE_SHIFT, "ram");
+    _mem_bus->map_physical_ram(_ram, 0, false);
 
-    _high_bios = _mem_bus.alloc_physical_ram(*this, (MB) >> GUEST_PAGE_SHIFT, "high bios");
-    _mem_bus.map_physical_ram(_high_bios, ((4ULL * GB) - (MB)) >> GUEST_PAGE_SHIFT, false);
+    _high_bios = _mem_bus->alloc_physical_ram(*this, (MB) >> GUEST_PAGE_SHIFT, "high bios");
+    _mem_bus->map_physical_ram(_high_bios, ((4ULL * GB) - (MB)) >> GUEST_PAGE_SHIFT, false);
 
     if (high_ram_size) {
-        _high_ram = _mem_bus.alloc_physical_ram(*this, high_ram_size >> GUEST_PAGE_SHIFT,
+        _high_ram = _mem_bus->alloc_physical_ram(*this, high_ram_size >> GUEST_PAGE_SHIFT,
                                                 "high ram");
-        _mem_bus.map_physical_ram(_high_ram, (4ULL * GB) >> GUEST_PAGE_SHIFT, false);
+        _mem_bus->map_physical_ram(_high_ram, (4ULL * GB) >> GUEST_PAGE_SHIFT, false);
     }
 }
 
@@ -198,13 +202,13 @@ void NoxVM::init_bios()
     //   3         ROM initialization entry point (FAR CALL)
 
     uint8_t jump[] = {0xea, 0x5b, 0xe0, 0x00, 0xf0};
-    uint8_t* ptr = _mem_bus.get_physical_ram_ptr(_high_bios);
+    uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_high_bios);
     ptr += MB;
     ptr -= 16;
 
     memcpy(ptr, jump, sizeof(jump));
 
-    ptr = _mem_bus.get_physical_ram_ptr(_ram);
+    ptr = _mem_bus->get_physical_ram_ptr(_ram);
     ptr += MB;
     AutoFD _bios_fd(::open("/home/yaniv/bochs-2.4.5/bios/BIOS-bochs-latest", O_RDONLY));
 
@@ -229,7 +233,7 @@ void NoxVM::init_bios()
         THROW("fstat failed");
     }
 
-    ptr = _mem_bus.get_physical_ram_ptr(_ram);
+    ptr = _mem_bus->get_physical_ram_ptr(_ram);
     ptr += 0xc0000;
     if (read(_vga_fd.get(), ptr, stat.st_size) != stat.st_size) {
         THROW("read failed");
@@ -254,7 +258,7 @@ enum {
 
 bool NoxVM::init()
 {
-    if (!_kvm.init()) {
+    if (!_kvm->init()) {
         return false;
     }
 
