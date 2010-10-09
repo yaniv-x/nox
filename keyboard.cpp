@@ -28,6 +28,7 @@
 #include "nox_vm.h"
 #include "pic.h"
 #include "io_bus.h"
+#include "memory_bus.h"
 
 enum {
     IO_PORT_KBD_DATA = 0x60,

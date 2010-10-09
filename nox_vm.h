@@ -28,20 +28,21 @@
 #define _H_NOX_VM
 
 #include "vm_part.h"
-#include "kvm.h"
-#include "memory_bus.h"
-#include "dma.h"
-#include "pit.h"
 
 class KVM;
+class MemoryBus;
+class PhysicalRam;
+class DMA;
 class PlaceHolder;
 class PIC;
+class PIT;
 class IORegion;
 class PCIBus;
 class CMOS;
 class ATAController;
 class KbdController;
 class IOBus;
+
 
 class NoxVM: public VMPart {
 public:
@@ -50,7 +51,7 @@ public:
 
     bool init();
 
-    KVM& get_kvm() { return _kvm;}
+    KVM& get_kvm() { return *_kvm.get();}
     IOBus& get_io_bus() { return *_io_bus.get();}
 
 
@@ -73,9 +74,9 @@ private:
     void post_diagnostic(uint16_t port, uint8_t val);
 
 private:
-    KVM _kvm;
+    std::auto_ptr<KVM> _kvm;
     std::auto_ptr<IOBus> _io_bus;
-    MemoryBus _mem_bus;
+    std::auto_ptr<MemoryBus> _mem_bus;
     std::auto_ptr<PlaceHolder> _holder;
     std::auto_ptr<PIC> _pic;
     std::auto_ptr<PCIBus> _pci;
@@ -85,9 +86,9 @@ private:
     PhysicalRam* _high_ram;
     IORegion* _a20_io_region;
     uint8_t _a20_port_val;
-    DMA _dma;
+    std::auto_ptr<DMA> _dma;
     IORegion* _bochs_io_region;
-    PIT _pit;
+    std::auto_ptr<PIT> _pit;
     IORegion* _post_diagnostic;
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAController> _ata;
