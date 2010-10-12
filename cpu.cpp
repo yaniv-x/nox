@@ -34,6 +34,7 @@
 #include "kvm.h"
 #include "pic.h"
 #include "io_bus.h"
+#include "memory_bus.h"
 
 CPU::CPU(NoxVM& vm, uint id)
     : VMPart ("cpu", vm)
@@ -217,6 +218,22 @@ void CPU::halt()
      _halt = false;
 }
 
+void CPU::handle_mmio()
+{
+    uint len = _kvm_run->mmio.len;
+
+    if (len > sizeof(_kvm_run->mmio.data) ||
+        _kvm_run->mmio.phys_addr + len < _kvm_run->mmio.phys_addr) {
+        THROW("invalid args");
+    }
+
+    if (_kvm_run->mmio.is_write) {
+        memory_bus->write(_kvm_run->mmio.data, len, _kvm_run->mmio.phys_addr);
+    } else {
+        memory_bus->read(_kvm_run->mmio.phys_addr, len, _kvm_run->mmio.data);
+    }
+}
+
 void CPU::run_loop()
 {
     while (!_execution_break) {
@@ -268,6 +285,9 @@ void CPU::run_loop()
             handle_io();
             break;
         case KVM_EXIT_IRQ_WINDOW_OPEN:
+            break;
+        case KVM_EXIT_MMIO:
+            handle_mmio();
             break;
         case KVM_EXIT_INTR:
             break;

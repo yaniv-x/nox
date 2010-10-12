@@ -71,6 +71,7 @@ private:
     void create();
     void output_trigger();
     void halt();
+    void handle_mmio();
 
     static void* thread_main(void *);
 
