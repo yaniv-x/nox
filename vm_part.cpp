@@ -84,6 +84,16 @@ void VMPart::add_io_region(IORegion* region)
 }
 
 
+void VMPart::remup_regions()
+{
+    std::list<IORegion*>::iterator iter =  _regions.begin();
+
+    for (; iter != _regions.end(); iter++) {
+        get_nox().get_io_bus().remap_region(*iter);
+    }
+}
+
+
 void VMPart::unregister_regions()
 {
     while (!_regions.empty()) {

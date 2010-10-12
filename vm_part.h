@@ -55,6 +55,7 @@ public:
     virtual void load(InStream& stream) = 0;
 
     void add_io_region(IORegion* region);
+    void remup_regions();
 
     /*enum State {
         todo add states values
