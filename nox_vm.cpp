@@ -56,9 +56,13 @@ enum {
     IO_PORT_VGA_BIOS_MESSAGE = 0x500,
 
     ATA0_IRQ = 14,
+
+    LOW_RAM_SIZE = 640 * KB,
+    MID_RAM_START = 768 * KB,
+    MID_RAM_MAX_ADDRESS = 0xe0000000,
+    MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
 };
 
-//nox.org Expiration Date: 2011-01-14 00:34:28
 
 NoxVM::NoxVM()
     : VMPart ("Nox")
@@ -69,7 +73,8 @@ NoxVM::NoxVM()
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
     , _cmos (new CMOS(*this))
-    , _ram (NULL)
+    , _low_ram (NULL)
+    , _mid_ram (NULL)
     , _high_bios (NULL)
     , _high_ram (NULL)
     , _a20_io_region (NULL)
@@ -105,8 +110,10 @@ NoxVM::~NoxVM()
     _io_bus->unregister_region(_bochs_io_region);
     _io_bus->unregister_region(_post_diagnostic);
 
-    _mem_bus->unmap_physical_ram(_ram);
-    _mem_bus->release_physical_ram(_ram);
+    _mem_bus->unmap_physical_ram(_low_ram);
+    _mem_bus->release_physical_ram(_low_ram);
+    _mem_bus->unmap_physical_ram(_mid_ram);
+    _mem_bus->release_physical_ram(_mid_ram);
     _mem_bus->unmap_physical_ram(_high_bios);
     _mem_bus->release_physical_ram(_high_bios);
     _mem_bus->unmap_physical_ram(_high_ram);
@@ -157,6 +164,10 @@ void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
 
 void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
 {
+    if (val == '\r') {
+        return;
+    }
+
     printf("%c", val);
 }
 
@@ -170,21 +181,29 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 
 void NoxVM::init_ram()
 {
-    _ram_size = 256 * MB;
+    uint64_t ram_size = 256 * MB;
 
-    uint64_t low_ram_size = MIN(_ram_size, 3ULL * GB);
-    uint64_t high_ram_size = _ram_size - low_ram_size;
-    _ram = _mem_bus->alloc_physical_ram(*this, low_ram_size >> GUEST_PAGE_SHIFT, "ram");
-    _mem_bus->map_physical_ram(_ram, 0, false);
+    _ram_size = ram_size;
 
-    _high_bios = _mem_bus->alloc_physical_ram(*this, (MB) >> GUEST_PAGE_SHIFT, "high bios");
-    _mem_bus->map_physical_ram(_high_bios, ((4ULL * GB) - (MB)) >> GUEST_PAGE_SHIFT, false);
+    _low_ram = _mem_bus->alloc_physical_ram(*this, LOW_RAM_SIZE >> GUEST_PAGE_SHIFT, "low ram");
+    _mem_bus->map_physical_ram(_low_ram, 0, false);
 
-    if (high_ram_size) {
-        _high_ram = _mem_bus->alloc_physical_ram(*this, high_ram_size >> GUEST_PAGE_SHIFT,
+    ram_size -= LOW_RAM_SIZE;
+
+    uint64_t ext_ram_size = MIN(ram_size, MID_RAM_MAX);
+    _mid_ram = _mem_bus->alloc_physical_ram(*this, ext_ram_size >> GUEST_PAGE_SHIFT, "mid ram");
+    _mem_bus->map_physical_ram(_mid_ram, MID_RAM_START >> GUEST_PAGE_SHIFT, false);
+
+    ram_size -= ext_ram_size;
+
+    if (ram_size) {
+        _high_ram = _mem_bus->alloc_physical_ram(*this, ram_size >> GUEST_PAGE_SHIFT,
                                                 "high ram");
         _mem_bus->map_physical_ram(_high_ram, (4ULL * GB) >> GUEST_PAGE_SHIFT, false);
     }
+
+    _high_bios = _mem_bus->alloc_physical_ram(*this, MB >> GUEST_PAGE_SHIFT, "high bios");
+    _mem_bus->map_physical_ram(_high_bios, ((4ULL * GB) - MB) >> GUEST_PAGE_SHIFT, false);
 }
 
 void NoxVM::init_bios()
@@ -208,8 +227,8 @@ void NoxVM::init_bios()
 
     memcpy(ptr, jump, sizeof(jump));
 
-    ptr = _mem_bus->get_physical_ram_ptr(_ram);
-    ptr += MB;
+    ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
+    ptr += MB - MID_RAM_START;
     AutoFD _bios_fd(::open("/home/yaniv/bochs-2.4.5/bios/BIOS-bochs-latest", O_RDONLY));
 
     if (!_bios_fd.is_valid()) {
@@ -233,8 +252,8 @@ void NoxVM::init_bios()
         THROW("fstat failed");
     }
 
-    ptr = _mem_bus->get_physical_ram_ptr(_ram);
-    ptr += 0xc0000;
+    ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
+    ptr += 0xc0000 - MID_RAM_START;
     if (read(_vga_fd.get(), ptr, stat.st_size) != stat.st_size) {
         THROW("read failed");
     }
@@ -285,8 +304,8 @@ bool NoxVM::init()
     _ata->set_disk(new Disk("/home/yaniv/images/winxp_nox_test.raw"));
 
     //640k base memory
-    _cmos->host_write(0x15, 640);
-    _cmos->host_write(0x16, 640 >> 8);
+    _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
+    _cmos->host_write(0x16, (LOW_RAM_SIZE / KB) >> 8);
 
     //extended memory
     uint64_t ram_size_kb = _ram_size / 1024;

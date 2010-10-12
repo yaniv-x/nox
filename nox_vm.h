@@ -81,7 +81,8 @@ private:
     std::auto_ptr<PIC> _pic;
     std::auto_ptr<PCIBus> _pci;
     std::auto_ptr<CMOS> _cmos;
-    PhysicalRam* _ram;
+    PhysicalRam* _low_ram;
+    PhysicalRam* _mid_ram;
     PhysicalRam* _high_bios;
     PhysicalRam* _high_ram;
     IORegion* _a20_io_region;
