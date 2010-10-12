@@ -34,6 +34,7 @@
 class NoxVM;
 class PhysicalRam;
 class MMIORegion;
+class MapSection;
 
 typedef uint64_t page_address_t;
 
@@ -68,11 +69,17 @@ public:
     void unregister_mmio(MMIORegion* mmio);
 
     void map_physical_ram(PhysicalRam* ram, page_address_t address, bool rom);
+    void map_physical_ram_section(PhysicalRam* ram, page_address_t address, bool rom,
+                                  page_address_t section_start_page, uint64_t section_pages);
     void unmap_physical_ram(PhysicalRam* ram);
 
     PhysicalRam* alloc_physical_ram(VMPart& owner, uint64_t num_pages, const char* name);
     void release_physical_ram(PhysicalRam* ram);
     uint8_t* get_physical_ram_ptr(PhysicalRam* ram);
+
+    MapSection* map_section(PhysicalRam* ram, page_address_t address, bool rom,
+                            page_address_t start_page, uint64_t num_pages);
+    void release_section(MapSection* section);
 
     NoxVM& get_nox() { return *(NoxVM*)get_container();}
 
@@ -135,6 +142,8 @@ private:
     typedef std::pair<page_address_t, MappedMemory> MemoryMapPair;
 
     typedef std::list<PhysicalRam*> PhysicalRamList;
+    typedef std::list<MapSection*> SectionsList;
+
     typedef std::list<MMIORegion*> MMIORegionList;
 
     void clear_area(page_address_t start, uint64_t num_pages);
@@ -152,6 +161,7 @@ private:
 private:
     MemoryMap _memory_map;
     PhysicalRamList _pysical_list;
+    SectionsList _sections_list;
     MMIORegionList _mmio_list;
     uint64_t _address_mask;
 };
