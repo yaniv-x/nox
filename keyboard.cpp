@@ -285,11 +285,17 @@ void KbdController::write_output_port(uint8_t output_port)
     if (output_port & OUTPUT_PORT_IRQ1_MASK) {
         D_MESSAGE("raising keyboard irq");
         _keyboard_output.irq->raise();
+    } else {
+        D_MESSAGE("dropping keyboard irq");
+        _keyboard_output.irq->drop();
     }
 
     if (output_port & OUTPUT_PORT_IRQ12_MASK) {
         D_MESSAGE("raising mouse irq");
         _mouse_output.irq->raise();
+    } else {
+        D_MESSAGE("dropping mouse irq");
+        _mouse_output.irq->drop();
     }
 }
 
