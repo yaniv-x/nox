@@ -42,7 +42,8 @@
 #include "cmos.h"
 #include "disk.h"
 #include "keyboard.h"
-
+#include "vga.h"
+#include "display.h"
 
 enum {
     IO_PORT_POST_DIAGNOSTIC = 0x80,
@@ -84,6 +85,7 @@ NoxVM::NoxVM()
     , _pit (new PIT(*this))
     , _kbd (new KbdController(*this))
     , _ata (new ATAController(*this, ATA0_IRQ))
+    , _vga (new VGA(*this))
 {
     _a20_io_region = _io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                              (io_read_byte_proc_t)&NoxVM::a20_port_read,
@@ -246,7 +248,7 @@ void NoxVM::init_bios()
         THROW("read failed");
     }
 
-    AutoFD _vga_fd(::open("/home/yaniv/bochs-2.4.5/bios/VGABIOS-lgpl-latest", O_RDONLY));
+    AutoFD _vga_fd(::open("/home/yaniv/vgabios-0.6c/VGABIOS-lgpl-latest.bin", O_RDONLY));
 
     if (fstat(_vga_fd.get(), &stat) == -1) {
         THROW("fstat failed");
@@ -277,6 +279,8 @@ enum {
 
 bool NoxVM::init()
 {
+    new NoxDisplay(*_vga.get());
+
     if (!_kvm->init()) {
         return false;
     }

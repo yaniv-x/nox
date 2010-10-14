@@ -42,6 +42,7 @@ class CMOS;
 class ATAController;
 class KbdController;
 class IOBus;
+class VGA;
 
 
 class NoxVM: public VMPart {
@@ -93,6 +94,7 @@ private:
     IORegion* _post_diagnostic;
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAController> _ata;
+    std::auto_ptr<VGA> _vga;
     uint64_t _ram_size;
 };
 

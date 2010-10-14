@@ -18,17 +18,20 @@ nox_SOURCES =					\
 	place_holder.cpp			\
 	pic.cpp					\
 	pci_bus.cpp				\
-	ata_controller.cpp		\
-	disk.cpp					\
+	ata_controller.cpp			\
+	disk.cpp				\
+	vga.cpp					\
+	display.cpp				\
 	run_loop.cpp
 
 INCLUDES =												\
 	-Wall -Werror -Wno-sign-compare -Wno-switch-enum						\
 	-Wno-pmf-conversions										\
-	-DNOX_DEBUG
+	-DNOX_DEBUG											\
+	$(X11_CFLAGS)
 
 nox_LDADD = \
-	-lrt -lpthread
+	-lrt -lpthread $(X11_LIBS)
 
 #nox_DEPENDENCIES = yaniv
 
