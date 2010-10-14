@@ -135,11 +135,11 @@ void RunLoop::wakeup()
 }
 
 
-class _IntervalTimer: public RunLoop::InternalItem, public RLTimer {
+class IntervalTimer: public RunLoop::InternalItem, public Timer {
 public:
     typedef void (*callback_t)(void*);
 
-    _IntervalTimer(RunLoop& loop, void_callback_t proc, void* opaque)
+    IntervalTimer(RunLoop& loop, void_callback_t proc, void* opaque)
         : _loop (loop)
         , _proc (proc)
         , _opaque (opaque)
@@ -148,7 +148,7 @@ public:
     {
     }
 
-    virtual ~_IntervalTimer()
+    virtual ~IntervalTimer()
     {
         Lock lock(_loop._timers_mutex);
         if (_loop._timers.is_linked(_link)) {
@@ -216,14 +216,14 @@ public:
     RingItem& get_link() { return _link;}
     nox_time_t get_next_time() {return _next_time;}
 
-    static inline _IntervalTimer* convert(RingItem* item)
+    static inline IntervalTimer* convert(RingItem* item)
     {
         if (item == NULL) {
             return NULL;
         }
 
-        _IntervalTimer* timer = NULL;
-        return (_IntervalTimer*)((unsigned long)item - (unsigned long)&timer->_link);
+        IntervalTimer* timer = NULL;
+        return (IntervalTimer*)((unsigned long)item - (unsigned long)&timer->_link);
     }
 
 private:
@@ -239,13 +239,13 @@ private:
 };
 
 
-void _IntervalTimer::push()
+void IntervalTimer::push()
 {
     RingItem* now = _loop._timers.head();
 
     for (; now; now = _loop._timers.next(*now)) {
 
-        _IntervalTimer* timer = _IntervalTimer::convert(now);
+        IntervalTimer* timer = IntervalTimer::convert(now);
 
         if (timer->_next_time > _next_time) {
             _loop._timers.insert_before(_link, *now);
@@ -257,7 +257,7 @@ void _IntervalTimer::push()
 }
 
 
-void _IntervalTimer::rearm()
+void IntervalTimer::rearm()
 {
     if (!_interval || Ring::is_linked(_link)) {
         return;
@@ -268,7 +268,7 @@ void _IntervalTimer::rearm()
 }
 
 
-void _IntervalTimer::arm(nox_time_t delte, bool auto_arm)
+void IntervalTimer::arm(nox_time_t delte, bool auto_arm)
 {
     Lock lock(_loop._timers_mutex);
 
@@ -286,13 +286,13 @@ void _IntervalTimer::arm(nox_time_t delte, bool auto_arm)
 }
 
 
-RLTimer* RunLoop::create_timer(void_callback_t proc, void* opaque)
+Timer* RunLoop::create_timer(void_callback_t proc, void* opaque)
 {
-    return new _IntervalTimer(*this, proc, opaque);
+    return new IntervalTimer(*this, proc, opaque);
 }
 
 
-class RunLoop::InternalEvent: public RunLoop::EpollEvent, public RLEvent {
+class RunLoop::InternalEvent: public RunLoop::EpollEvent, public Event {
 public:
     InternalEvent(RunLoop& loop, void_callback_t proc, void* opaque)
         : EpollEvent(loop, eventfd(0, EFD_NONBLOCK))
@@ -368,7 +368,7 @@ private:
 };
 
 
-RLEvent* RunLoop::create_event(void_callback_t proc, void* opaque)
+Event* RunLoop::create_event(void_callback_t proc, void* opaque)
 {
     return new InternalEvent(*this, proc, opaque);
 }
@@ -421,7 +421,7 @@ void RunLoop::run_timers()
             return;
         }
 
-        _IntervalTimer* timer = _IntervalTimer::convert(_timers.head());
+        IntervalTimer* timer = IntervalTimer::convert(_timers.head());
 
         if (!timer->expired(now)) {
             return;
@@ -447,7 +447,7 @@ int RunLoop::get_timeout_val()
 {
     Lock lock(_timers_mutex);
 
-    _IntervalTimer* timer = _IntervalTimer::convert(_timers.head());
+    IntervalTimer* timer = IntervalTimer::convert(_timers.head());
 
     if (!timer) {
         return -1;

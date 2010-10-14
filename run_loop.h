@@ -31,7 +31,7 @@
 #include "threads.h"
 #include "ring.h"
 
-class RLTimer {
+class Timer {
 public:
     virtual void destroy(bool sync = false) = 0;
     virtual void arm(nox_time_t delte, bool auto_arm) = 0;
@@ -39,18 +39,18 @@ public:
     virtual void modifay(nox_time_t delte) = 0;
 
 protected:
-    RLTimer() {}
-    virtual ~RLTimer() {}
+    Timer() {}
+    virtual ~Timer() {}
 };
 
-class RLEvent {
+class Event {
 public:
     virtual void trigger() = 0;
     virtual void destroy(bool sync = false) = 0;
 
 protected:
-    RLEvent() {}
-    virtual ~RLEvent() {}
+    Event() {}
+    virtual ~Event() {}
 };
 
 class FDEvent {
@@ -70,13 +70,17 @@ public:
     void run();
     void wakeup();
 
-    RLTimer* create_timer(void_callback_t proc, void* opaque);
-    RLEvent* create_event(void_callback_t proc, void* opaque);
+    Timer* create_timer(void_callback_t proc, void* opaque);
+    Event* create_event(void_callback_t proc, void* opaque);
     FDEvent* create_fd_event(int fd, void_callback_t proc, void* opaque);
 
     class InternalItem;
     class InternalEvent;
     class EpollEvent;
+
+protected:
+    void set_exit_code(ErrorCode code) { _exit_code = code;}
+    ErrorCode get_exit_code() { return _exit_code;}
 
 private:
     int get_timeout_val();
@@ -88,7 +92,7 @@ private:
     AutoFD _epoll;
     AutoFD _timer_fd;
     ErrorCode _exit_code;
-    RLEvent* _wakeup_event;
+    Event* _wakeup_event;
     pthread_t _run_loop_thread;
 
     Mutex _dead_list_mutex;
@@ -102,7 +106,7 @@ private:
     Condition _sync_condition;
 
     friend class EpollEvent;
-    friend class _IntervalTimer;
+    friend class IntervalTimer;
 };
 
 

@@ -28,78 +28,25 @@
 #define _H_APPLICATION
 
 #include "common.h"
-#include "threads.h"
-
-#define USE_TIMER_FD
+#include "run_loop.h"
 
 class NoxVM;
 
-class Timer {
-public:
-    static Timer* create(void_callback_t proc, void* opaque);
-
-    virtual void destroy(bool sync = false) = 0;
-    virtual void arm(nox_time_t delte, bool auto_arm) = 0;
-    virtual void disarm(bool sync = false) = 0;
-    virtual void modifay(nox_time_t delte) = 0;
-
-protected:
-    Timer() {}
-    virtual ~Timer() {}
-};
-
-class Event {
-public:
-    static Event* create_event(void_callback_t proc, void* opaque);
-
-    virtual void trigger() = 0;
-    virtual void destroy(bool sync = false) = 0;
-
-protected:
-    Event() {}
-    virtual ~Event() {}
-};
-
-class Application: private NonCopyable {
+class Application: public RunLoop {
 public:
     Application();
 
-    void wakeup();
-
     static ErrorCode Main(int argc, const char** argv);
 
-    class InternalItem;
-    class EpollEvent;
-    class InternalEvent;
-
 private:
-    int get_timeout_val();
-    void run_timers();
     void init();
-    void run();
-    void sync();
 
 private:
-    AutoFD _epoll;
-#ifdef USE_TIMER_FD
-    AutoFD _timer_fd;
-#endif
     std::auto_ptr<NoxVM> _vm;
-    ErrorCode _exit_code;
-    Mutex _dead_list_mutex;
 
-    std::list<InternalItem*> _dead_list;
-    Mutex _sync_lock;
-    Condition _sync_condition;
-    Event* _wakeup_event;
-
-#ifndef USE_TIMER_FD
-    struct timespec _poll_timeout;
-#endif
-
-    friend class EpollEvent;
-    friend class IntervalTimer;
 };
+
+extern Application* application;
 
 #endif
 
