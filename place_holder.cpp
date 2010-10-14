@@ -73,7 +73,7 @@ PlaceHolder::PlaceHolder(NoxVM& nox)
                                       (io_read_byte_proc_t)&PlaceHolder::read_byte,
                                       (io_write_byte_proc_t)&PlaceHolder::write_byte));
 
-        //disk controller 2
+    //disk controller 2
     add_io_region(_io.register_region(*this, 0x0168, 8, this,
                                       (io_read_byte_proc_t)&PlaceHolder::read_byte,
                                       (io_write_byte_proc_t)&PlaceHolder::write_byte));
@@ -117,12 +117,12 @@ PlaceHolder::PlaceHolder(NoxVM& nox)
                                       (io_write_word_proc_t)&PlaceHolder::write_word));
 
 
-    t2 = Timer::create((void_callback_t)&PlaceHolder::timer_call_2222222222, this);
+    t2 = application->create_timer((void_callback_t)&PlaceHolder::timer_call_2222222222, this);
     //t2->arm(1000ULL * NUM_MICRO , true);
 
-    t = Timer::create((void_callback_t)&PlaceHolder::timer_call, this);
+    t = application->create_timer((void_callback_t)&PlaceHolder::timer_call, this);
     //t->arm(1000ULL * 1000 * 1000 * 1, true);
-    event = Event::create_event((void_callback_t)&PlaceHolder::trigger_call, this);
+    event = application->create_event((void_callback_t)&PlaceHolder::trigger_call, this);
 }
 
 
