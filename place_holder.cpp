@@ -81,34 +81,6 @@ PlaceHolder::PlaceHolder(NoxVM& nox)
                                       (io_read_byte_proc_t)&PlaceHolder::read_byte,
                                       (io_write_byte_proc_t)&PlaceHolder::write_byte));
 
-    // VGA
-    add_io_region(_io.register_region(*this, 0x03c0, 10, this,
-                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
-                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
-                                      (io_read_word_proc_t)&PlaceHolder::read_word,
-                                      (io_write_word_proc_t)&PlaceHolder::write_word));
-    add_io_region(_io.register_region(*this, 0x03cc, 2, this,
-                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
-                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
-                                      (io_read_word_proc_t)&PlaceHolder::read_word,
-                                      (io_write_word_proc_t)&PlaceHolder::write_word));
-    add_io_region(_io.register_region(*this, 0x03ce, 2, this,
-                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
-                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
-                                      (io_read_word_proc_t)&PlaceHolder::read_word,
-                                      (io_write_word_proc_t)&PlaceHolder::write_word));
-
-    add_io_region(_io.register_region(*this, 0x03d4, 2, this,
-                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
-                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
-                                      (io_read_word_proc_t)&PlaceHolder::read_word,
-                                      (io_write_word_proc_t)&PlaceHolder::write_word));
-    add_io_region(_io.register_region(*this, 0x03da, 2, this,
-                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
-                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
-                                      (io_read_word_proc_t)&PlaceHolder::read_word,
-                                      (io_write_word_proc_t)&PlaceHolder::write_word));
-
     // VBE
     add_io_region(_io.register_region(*this, 0x01ce, 3, this,
                                       (io_read_byte_proc_t)&PlaceHolder::read_byte,
