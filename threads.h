@@ -175,6 +175,70 @@ private:
 };
 
 
+class RWLock: public NonCopyable {
+public:
+    RWLock()
+    {
+        if (pthread_rwlock_init(&_rwlock, NULL)) {
+            THROW("failed");
+        }
+    }
+
+    ~RWLock()
+    {
+        pthread_rwlock_destroy(&_rwlock);
+    }
+
+    pthread_rwlock_t* get() {return &_rwlock;}
+
+private:
+    pthread_rwlock_t _rwlock;
+};
+
+class RLock : public NonCopyable {
+public:
+    RLock(RWLock& lock)
+        : _rwlock (lock.get())
+    {
+        if (pthread_rwlock_rdlock(_rwlock)) {
+            THROW("failed");
+        }
+    }
+
+    ~RLock()
+    {
+        if (pthread_rwlock_unlock(_rwlock)) {
+            THROW("failed");
+        }
+    }
+
+private:
+    pthread_rwlock_t* _rwlock;
+};
+
+
+class WLock : public NonCopyable {
+public:
+    WLock(RWLock& lock)
+        : _rwlock (lock.get())
+    {
+        if (pthread_rwlock_wrlock(_rwlock)) {
+            THROW("failed");
+        }
+    }
+
+    ~WLock()
+    {
+        if (pthread_rwlock_unlock(_rwlock)) {
+            THROW("failed");
+        }
+    }
+
+private:
+    pthread_rwlock_t* _rwlock;
+};
+
+
 class Thread: public NonCopyable {
 public:
     typedef void* (*start_proc_t)(void*);
