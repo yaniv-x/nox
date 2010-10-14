@@ -64,5 +64,26 @@ static inline std::string strip_pretty_function(const std::string& pretty_functi
 #define D_MESSAGE(format, ...) OUTPUT_MESSAGE(DEBUG, format, ## __VA_ARGS__)
 
 
+#define OUTPUT_MESSAGE_SOME(how_much, type, format, ...)   {        \
+    static uint show_count = how_much;                              \
+    if (show_message) {                                             \
+        show_count--;                                               \
+        W_MESSAGE(format, ## __VA_ARGS__);                          \
+    }                                                               \
+}
+
+#define W_MESSAGE_SOME(how_much, format, ...) \
+    OUTPUT_MESSAGE_SOME(how_much, WARNING, format, ## __VA_ARGS__)
+
+
+#define OUTPUT_MESSAGE_ONCE(type, format, ...)   {          \
+    static bool show_message = true;                        \
+    if (show_message) {                                     \
+        W_MESSAGE(format, ## __VA_ARGS__);                  \
+    }                                                       \
+}
+
+#define W_MESSAGE_ONCE(format, ...) OUTPUT_MESSAGE_ONCE(WARNING, format, ## __VA_ARGS__)
+
 #endif
 
