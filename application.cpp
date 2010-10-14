@@ -24,35 +24,11 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <sys/types.h>
-#include <sys/syscall.h>
-#include <sys/timerfd.h>
-#include <unistd.h>
-#include <signal.h>
-#include <time.h>
-#include "common.h"
 #include "application.h"
 #include "nox_vm.h"
-#include "utils.h"
-#include "ring.h"
-
-
-
-/*enum {
-    EPOLL_INIT_SIZE = 20,
-    EPOLL_NUM_EVENTS = 20,
-};
-
-static pthread_t main_pthread;
-
-static Mutex _timers_mutex;
-static Ring _timers;*/
 
 
 Application* application = NULL;
-
 
 
 Application::Application()
@@ -78,6 +54,7 @@ void Application::init()
 static void sig_handler(int sig)
 {
 }
+
 
 static void init_sig_handlers()
 {
