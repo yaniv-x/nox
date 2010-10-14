@@ -70,6 +70,19 @@ private:
     T* _array;
 };
 
+template<class T>
+class AutoRef {
+public:
+    AutoRef(T* obj) : _obj (obj) {}
+    ~AutoRef() { _obj->unref();}
+
+    T* get() {return _obj;}
+    T* operator -> () {return _obj;}
+
+private:
+    T* _obj;
+};
+
 
 void sprintf(std::string& str, const char* format, ...);
 void wsprintf(std::wstring& str, const wchar_t* format, ...);
@@ -83,6 +96,8 @@ inline nox_time_t get_monolitic_time()
     clock_gettime(CLOCK_MONOTONIC , &ts);
     return nox_time_t(ts.tv_nsec) + nox_time_t(ts.tv_sec) * 1000 * 1000 * 1000;
 }
+
+struct OOMException {};
 
 #endif
 
