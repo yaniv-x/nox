@@ -38,7 +38,6 @@ Thread::Thread(start_proc_t start_proc, void* opaque)
     sigset_t curr_sig_mask;
 
     sigfillset(&sig_mask);
-    //sigdelset(&sig_mask, SIGUSR1);
     sigdelset(&sig_mask, SIGKILL);
     sigdelset(&sig_mask, SIGSTOP);
     sigdelset(&sig_mask, SIGSEGV);
@@ -54,6 +53,8 @@ Thread::Thread(start_proc_t start_proc, void* opaque)
     if (error) {
         THROW("failed %d", error);
     }
+
+    ASSERT(_thread != -1);
 }
 
 void Thread::join()
