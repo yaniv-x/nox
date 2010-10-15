@@ -48,6 +48,9 @@ public:
 private:
     AutoFD _file;
     uint64_t _size;
+
+    typedef std::map<uint64_t, uint8_t*> SectorsMap;
+    SectorsMap _sectors;
 };
 
 
