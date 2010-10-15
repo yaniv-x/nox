@@ -185,6 +185,7 @@ void ATAController::io_control(uint16_t port, uint8_t val)
 
 enum {
     CMD_READ_SECTORS = 0x20,
+    CMD_WRITE_SECTORS = 0x30,
     CMD_CHECK_POWER_MODE = 0xe5,
     CMD_DEVICE_CONFIGURATION = 0xb1,
     CMD_DEVICE_RESET = 0x08, //Use prohibited when the PACKET Command feature set is not implemented
@@ -361,7 +362,7 @@ enum {
 uint64_t ATAController::get_num_sectors()
 {
     ASSERT(_disk && !(_device & DEVICE_SELECT_MASK));
-    return _disk->get_size() / 512;
+    return _disk->get_size() / SECTOR_SIZE;
 }
 
 
@@ -407,7 +408,8 @@ void ATAController::identify_device()
     _identity[COMPAT_ID_OFFSET_HEAD] = _heads_per_cylinder = ATA3_MAX_HEAD;
     _identity[COMPAT_ID_OFFSET_SECTORS] = _sectors_per_track = ATA3_MAX_SEC;
 
-    _identity[ID_OFFSET_MAX_SECTORS_PER_BLOCK] = 0x8000 | (4096 / 512);
+    _identity[ID_OFFSET_MAX_SECTORS_PER_BLOCK] = 0x8000 | 1; // test the performace benefit of
+                                                             // making it larger
     _identity[ID_OFFSET_CAP1] = ID_CAP1_DMA_MASK |
                                 ID_CAP1_LBA_MASK |
                                 ID_CAP1_IORDY_MASK |
@@ -486,7 +488,7 @@ void ATAController::identify_device()
 }
 
 
-void ATAController::do_read_sectors()
+uint64_t ATAController::get_sector_address()
 {
     bool lba = _device & DEVICE_LBA_MASK;
     uint64_t sector;
@@ -503,11 +505,30 @@ void ATAController::do_read_sectors()
         sector = (cylinder * _heads_per_cylinder + head) * _sectors_per_track + sector - 1;
     }
 
-    _end_sector = (_count & 0xff) ? (_count & 0xff) : 256;
-    _end_sector += sector;
+    return sector;
+}
 
-    if (sector * SECTOR_SIZE >= _end_sector * SECTOR_SIZE ||
-        _end_sector * SECTOR_SIZE > _disk->get_size()) {
+
+uint ATAController::get_sector_count()
+{
+    return (_count & 0xff) ? (_count & 0xff) : 256;
+}
+
+
+bool ATAController::is_valid_sectors_range(uint64_t start, uint64_t end)
+{
+    return start < end && start + end <= _disk->get_size() / SECTOR_SIZE;
+}
+
+
+void ATAController::do_read_sectors()
+{
+    uint64_t sector = get_sector_address();
+
+    _end_sector = (_count & 0xff) ? (_count & 0xff) : 256;
+    _end_sector = sector + get_sector_count();
+
+    if (!is_valid_sectors_range(sector, _end_sector)) {
         command_abort_error();
         return;
     }
@@ -522,6 +543,25 @@ void ATAController::do_read_sectors()
     _next_sector = sector + 1;
 
     _status |= STATUS_DATA_REQUEST_MASK;
+    raise();
+}
+
+
+void ATAController::do_write_sectors()
+{
+    _next_sector = get_sector_address();
+    _end_sector = _next_sector + get_sector_count();
+
+    if (!is_valid_sectors_range(_next_sector, _end_sector)) {
+        command_abort_error();
+        return;
+    }
+
+    _data_in = (uint16_t*)_sector;
+    _data_in_end = _data_in + 256;
+
+    _status |= STATUS_DATA_REQUEST_MASK;
+
     raise();
 }
 
@@ -547,6 +587,13 @@ void ATAController::do_command(uint8_t command)
         }
         break;
     }
+    case CMD_WRITE_SECTORS:
+        if (!(_status & STATUS_READY_MASK)) {
+            command_abort_error();
+        } else {
+            do_write_sectors();
+        }
+        break;
     case CMD_FLUSH_CACHE_EXT:
     case CMD_FLUSH_CACHE:
         if (!(_status & STATUS_READY_MASK)) {
@@ -718,12 +765,28 @@ void ATAController::io_write_word(uint16_t port, uint16_t val)
 {
     port -= IO_BASE;
 
-    if (port != IO_DATA) {
+    if (port != IO_DATA || !(_status & STATUS_DATA_REQUEST_MASK)) {
         W_MESSAGE("waiting 0x%x %u", port, port);
-        for (;;) sleep(2);
+        return;
     }
 
-    W_MESSAGE("IO_DATA waiting 0x%x %u", port, port);
-    for (;;) sleep(2);
+    ASSERT(_data_in < _data_in_end);
+
+    *_data_in = val;
+
+    if (++_data_in == _data_in_end) {
+        if (!_disk->write(_next_sector, _sector)) {
+            // clear STATUS_DATA_REQUEST_MASK ???
+            command_abort_error();
+            return;
+        }
+
+        _data_in = (uint16_t*)_sector;
+
+        if (++_next_sector == _end_sector) {
+            _status &= ~STATUS_DATA_REQUEST_MASK;
+        }
+        raise(); // todo: rais according to block size
+    }
 }
 

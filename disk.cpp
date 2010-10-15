@@ -64,6 +64,13 @@ Disk::~Disk()
 
 bool Disk::read(uint64_t sector, uint8_t* buf)
 {
+    SectorsMap::iterator iter = _sectors.find(sector);
+
+    if (iter != _sectors.end()) {
+        memcpy(buf, (*iter).second, SECTOR_SIZE);
+        return true;
+    }
+
     sector <<= SECTOR_SHIFT;
 
     if (sector + SECTOR_SIZE > _size) {
@@ -94,19 +101,33 @@ bool Disk::read(uint64_t sector, uint8_t* buf)
 
 bool Disk::write(uint64_t sector, const uint8_t* buf)
 {
+    SectorsMap::iterator iter = _sectors.find(sector);
+
+    if (iter != _sectors.end()) {
+        memcpy((*iter).second, buf, SECTOR_SIZE);
+        return true;
+    }
+
+    uint8_t* sec_buf = new uint8_t[SECTOR_SIZE];
+    memcpy(sec_buf, buf, SECTOR_SIZE);
+
+    _sectors[sector] = sec_buf;
+
+#if 0
     sector <<= SECTOR_SHIFT;
 
     if (sector + SECTOR_SIZE > _size) {
         return false;
     }
 
-    if (::lseek(_file.get(), SEEK_SET, sector) != sector) {
+    if (::lseek(_file.get(), sector, SEEK_SET) != sector) {
         return false;
     }
 
     if (::write(_file.get(), buf, SECTOR_SIZE) != SECTOR_SIZE) {
         return false;
     }
+#endif
 
     return true;
 }
