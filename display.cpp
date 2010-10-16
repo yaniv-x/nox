@@ -174,7 +174,7 @@ void NoxDisplay::on_size_changed(uint32_t width, uint32_t hight)
         XFree(hints);
     }
 
-    D_MESSAGE("%u %u --------------------------------------------------------------", width, hight);
+    D_MESSAGE("%u %u", width, hight);
 }
 
 void NoxDisplay::invalid()

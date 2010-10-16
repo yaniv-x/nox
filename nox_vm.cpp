@@ -308,7 +308,7 @@ bool NoxVM::init()
 
     //boot device
     _cmos->host_write(0x3d, 0x02); //first boot device is first HD
-    _ata->set_disk(new Disk("/home/yaniv/images/f13_64.raw"/*winxp_nox_test.raw*/));
+    _ata->set_disk(new Disk("/home/yaniv/images/f13_64.raw"));
 
     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
