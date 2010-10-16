@@ -66,7 +66,7 @@ static inline std::string strip_pretty_function(const std::string& pretty_functi
 
 #define OUTPUT_MESSAGE_SOME(how_much, type, format, ...)   {        \
     static uint show_count = how_much;                              \
-    if (show_message) {                                             \
+    if (show_count) {                                               \
         show_count--;                                               \
         W_MESSAGE(format, ## __VA_ARGS__);                          \
     }                                                               \
@@ -79,6 +79,7 @@ static inline std::string strip_pretty_function(const std::string& pretty_functi
 #define OUTPUT_MESSAGE_ONCE(type, format, ...)   {          \
     static bool show_message = true;                        \
     if (show_message) {                                     \
+        show_message = false;                               \
         W_MESSAGE(format, ## __VA_ARGS__);                  \
     }                                                       \
 }
