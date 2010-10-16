@@ -86,6 +86,7 @@ NoxVM::NoxVM()
     , _kbd (new KbdController(*this))
     , _ata (new ATAController(*this, ATA0_IRQ))
     , _vga (new VGA(*this))
+    , _nmi_mask (false)
 {
     _a20_io_region = _io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                              (io_read_byte_proc_t)&NoxVM::a20_port_read,
@@ -173,6 +174,7 @@ void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
     printf("%c", val);
 }
 
+
 void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 {
     ASSERT(port == IO_PORT_POST_DIAGNOSTIC);
@@ -183,7 +185,7 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 
 void NoxVM::init_ram()
 {
-    uint64_t ram_size = 256 * MB;
+    uint64_t ram_size = 512 * MB;
 
     _ram_size = ram_size;
 
@@ -207,6 +209,7 @@ void NoxVM::init_ram()
     _high_bios = _mem_bus->alloc_physical_ram(*this, MB >> GUEST_PAGE_SHIFT, "high bios");
     _mem_bus->map_physical_ram(_high_bios, ((4ULL * GB) - MB) >> GUEST_PAGE_SHIFT, false);
 }
+
 
 void NoxVM::init_bios()
 {
@@ -305,7 +308,7 @@ bool NoxVM::init()
 
     //boot device
     _cmos->host_write(0x3d, 0x02); //first boot device is first HD
-    _ata->set_disk(new Disk("/home/yaniv/images/winxp_nox_test.raw"));
+    _ata->set_disk(new Disk("/home/yaniv/images/f13_64.raw"/*winxp_nox_test.raw*/));
 
     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));

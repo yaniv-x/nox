@@ -99,5 +99,31 @@ inline nox_time_t get_monolitic_time()
 
 struct OOMException {};
 
+static inline uint to_bcd(uint val)
+{
+    uint ret = 0;
+    uint shift = 0;
+
+    for (; val; shift += 4) {
+        ret |= (val % 10) << shift;
+        val = val / 10;
+    }
+
+    return ret;
+}
+
+static inline uint from_bcd(uint val)
+{
+    uint ret = 0;
+    uint factor = 1;
+
+    for (; val; factor *= 10) {
+        ret += (val & 0x0f) * factor;
+        val = val >> 4;
+    }
+
+    return ret;
+}
+
 #endif
 

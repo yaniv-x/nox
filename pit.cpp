@@ -88,33 +88,6 @@ enum {
 };
 
 
-static uint to_bcd(uint val)
-{
-    uint ret = 0;
-    uint shift = 0;
-
-    for (; val; shift += 4) {
-        ret |= (val % 10) << shift;
-        val = val / 10;
-    }
-
-    return ret;
-}
-
-static uint from_bcd(uint val)
-{
-    uint ret = 0;
-    uint factor = 1;
-
-    for (; val; factor *= 10) {
-        ret += (val & 0x0f) * factor;
-        val = val >> 4;
-    }
-
-    return ret;
-}
-
-
 PIT::PIT(NoxVM& nox)
     : VMPart("pit", nox)
     , _io_region ( NULL)
