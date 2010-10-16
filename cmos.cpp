@@ -200,7 +200,7 @@ void CMOS::update_date()
 
     uint64_t delta = get_monolitic_time() - _date_base_time;
 
-    time_t time = mktime(&_date);
+    time_t time = timegm(&_date);
     time += delta / (1000 * 1000 * 1000);
     gmtime_r(&time, &_date);
     _date_base_time += delta - delta % (1000 * 1000 * 1000);
