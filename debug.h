@@ -40,9 +40,9 @@
 
 #endif
 
-#define PANIC(str)  {                                   \
-    printf("PANIC: %s: %s\n", FUNC_NAME, str);          \
-    ::abort();                                          \
+#define PANIC(str, ...)  {                                          \
+    printf("PANIC: %s: "str"\n", FUNC_NAME, ## __VA_ARGS__);        \
+    ::abort();                                                      \
 }
 
 #endif
