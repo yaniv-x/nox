@@ -92,6 +92,7 @@ private:
     void io_write_byte(uint16_t port, uint8_t val);
     void set_misc_reg(uint8_t val);
     void reset_sequencer();
+    uint8_t fetch_pix_16(uint offset);
     void update();
     void reset_io();
     void reset_fb();
@@ -137,9 +138,9 @@ private:
     uint8_t _color_index_mask;
     uint8_t _dac_state;
     uint8_t _palette_read_index;
-    uint8_t _palette_read_comp;
+    int8_t _palette_read_comp;
     uint8_t _palette_write_index;
-    uint8_t _palette_write_comp;
+    int8_t _palette_write_comp;
 
     uint8_t _graphics_index;
     uint8_t _graphics_regs[GRAPHICS_NUM_REGS];
@@ -150,7 +151,10 @@ private:
     uint8_t _crt_regs[CRT_NUM_REGS];
 
     struct PaletteEnt {
-        uint8_t components[4];
+        union {
+            uint8_t components[4];
+            uint32_t color;
+        };
     } _palette[PALETTE_SIZE];
 
     AutoRef<SharedBuf> _fb;

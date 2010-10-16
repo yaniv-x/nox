@@ -30,6 +30,8 @@
 #include "memory_bus.h"
 #include "application.h"
 
+#define VGA_D_MESSAGE(format, ...)
+
 
 enum {
     IO_VGA_BASE = 0x3c0,
@@ -104,8 +106,10 @@ enum {
     ATTRIB_REG_MODE = 0x10,
     ATTRIB_REG_OVERSCAN = 0x11,
     ATTRIB_REG_MEM_PLANE = 0x12,
+    ATTRIB_REG_COLOR_SELECT = 0x14,
 
     ATTRIB_INDEX_DISABLE_MASK =  (1 << 5),
+    ATTRIB_MODE_PAL_FIXED_4_5_MASK = (1 << 7),
     ATTRIB_MODE_GRAPHICS_BIT = 0,
     ATTRIB_MEM_PLANE_STATUS_MUX_SHIFT = 4,
     ATTRIB_MEM_PLANE_STATUS_MUX_MASK = (0x3 << ATTRIB_MEM_PLANE_STATUS_MUX_SHIFT),
@@ -132,7 +136,12 @@ enum {
 
     GRAPHICS_INDEX_MASK = (1 << 4) - 1,
 
+    GRAPHICS_REG_MODE = 0x05,
     GRAPHICS_REG_MISC = 0x06,
+
+    GRAPHICS_REG_256C_MASK = (1 << 6),
+    GRAPHICS_REG_4C_MASK = (1 << 5),
+
     GRAPHICS_MISK_ODD_EVANE_BIT = 5,
     GRAPHICS_MISK_FB_ADDR_MASK_SHIFT = 2,
     GRAPHICS_MISK_FB_ADDR_A0000_BFFFF = 0,
@@ -278,6 +287,18 @@ void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uin
     }
 }
 
+uint8_t VGA::fetch_pix_16(uint offset)
+{
+    uint bit = 7 - offset % 8;
+    uint mask = 1 << bit;
+    uint8_t* byte = _vram + offset / 8 * 4;
+
+    return  ((byte[0] & mask) >> bit) << 0 |
+            ((byte[1] & mask) >> bit) << 1 |
+            ((byte[2] & mask) >> bit) << 2 |
+            ((byte[3] & mask) >> bit) << 3;
+}
+
 void VGA::update()
 {
     Lock lock(_mutex);
@@ -323,8 +344,33 @@ void VGA::update()
              dest_line += width * char_h;
          }
 
+         return;
+    }
+
+
+    if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_REG_256C_MASK) {
+        D_MESSAGE("256 colors");
+    } else if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_REG_4C_MASK ) {
+        D_MESSAGE("4 colors");
     } else {
-         printf("GRAPHICS\n");
+        uint8_t pal_high_bits;
+        uint8_t pal_mask;
+
+        if (_attributes_regs[ATTRIB_REG_MODE] & ATTRIB_MODE_PAL_FIXED_4_5_MASK) {
+            pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xf0;
+            pal_mask = 0x0f;
+        } else {
+            pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xc0;
+            pal_mask = 0x3f;
+        }
+
+        uint32_t* dest = (uint32_t*)_fb->get();
+        uint pixels = height * width;
+
+        for (uint i = 0; i < pixels; i++) {
+            uint8_t pal_index = (fetch_pix_16(i) & pal_mask) | pal_high_bits;
+            dest[i] = _palette[pal_index & _color_index_mask].color;
+        }
     }
 
     lock.unlock();
@@ -431,9 +477,9 @@ void VGA::reset()
     _color_index_mask = ~0;
     _dac_state = 0;
     _palette_read_index = 0;
-    _palette_read_comp = 0;
+    _palette_read_comp = 2;
     _palette_write_index = 0;
-    _palette_write_comp = 0;
+    _palette_write_comp = 2;
     memset(_palette, 0, sizeof(_palette));
 
     _graphics_index = 0;
@@ -463,7 +509,7 @@ uint8_t VGA::io_read_byte(uint16_t port)
 
         uint8_t status_1 = v_retrace;
 
-        D_MESSAGE("resetting attribute flipflop");
+        VGA_D_MESSAGE("resetting attribute flipflop");
         _write_attrib = false;
 
         // bits 5:4
@@ -511,11 +557,11 @@ uint8_t VGA::io_read_byte(uint16_t port)
     case IO_DEC_DAC_STATE:
         return _dac_state;
     case IO_PALETTE_DATA:
-        if (_palette_read_comp == 3) {
+        if (_palette_read_comp == -1) {
             _palette_read_index++;
-            _palette_read_comp = 0;
+            _palette_read_comp = 2;
         }
-        return _palette[_palette_read_index].components[_palette_read_comp++];
+        return _palette[_palette_read_index].components[_palette_read_comp--] >> 2;
     case IO_ATTRIB_CONTROL_INDEX:
         return _attrib_control_index;
     case IO_ATTRIB_READ:
@@ -552,7 +598,7 @@ void VGA::set_misc_reg(uint8_t val)
 
 void VGA::reset_sequencer()
 {
-    D_MESSAGE("");
+    VGA_D_MESSAGE("");
 }
 
 
@@ -621,7 +667,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
     switch (port) {
     case IO_MISC_OUTPUT_W:
         set_misc_reg(val);
-        D_MESSAGE("misc_output 0x%x", val);
+        VGA_D_MESSAGE("misc_output 0x%x", val);
         break;
     case IO_SEQUENCER_INDEX:
         _sequencer_index = val & SEQUENCER_INDEX_MASK;
@@ -634,40 +680,41 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
         }
 
         if (_sequencer_index == SEQUENCER_REG_MEM_MODE) {
-            D_MESSAGE("sequencer[SEQUENCER_REG_MEM_MODE] = 0x%x (%u)", val, val);
+            VGA_D_MESSAGE("sequencer[SEQUENCER_REG_MEM_MODE] = 0x%x (%u)", val, val);
         }
 
         if (_sequencer_index == SEQUENCER_REG_CLOCKING && (val & SEQUENCER_CLOCKIND_BLANK_BIT)) {
             blank_screen();
         }
 
-        D_MESSAGE("sequencer[%u] = 0x%x (%u)", _sequencer_index, val, val);
+        VGA_D_MESSAGE("sequencer[%u] = 0x%x (%u)", _sequencer_index, val, val);
         return;
     case IO_COLOR_INDEX_MASK:
-        D_MESSAGE("color index mask 0x%x", val);
+        VGA_D_MESSAGE("color index mask 0x%x", val);
         _color_index_mask = val;
         return;
     case IO_PALETTE_READ_INDEX:
         _dac_state = 0x3;
-        _palette_read_comp = 0;
+        _palette_read_comp = 2;
         _palette_read_index = val;
         return;
     case IO_PALETTE_WRITE_INDEX:
         _dac_state = 0;
-        _palette_write_comp = 0;
+        _palette_write_comp = 2;
         _palette_write_index = val;
         return;
     case IO_PALETTE_DATA:
-        if (_palette_write_comp == 3) {
+        if (_palette_write_comp == -1) {
             _palette_write_index++;
-            _palette_write_comp = 0;
+            _palette_write_comp = 2;
         }
 
-        D_MESSAGE("palette[%u].%s = 0x%x", _palette_write_index,
-                  _palette_write_comp == 0 ? "red" : (_palette_write_comp == 1 ? "green" : "blue"),
-                  val);
+        VGA_D_MESSAGE("palette[%u].%s = 0x%x", _palette_write_index,
+                      _palette_write_comp == 2 ? "red"
+                                               : (_palette_write_comp == 1 ? "green" : "blue"),
+                      val);
 
-        _palette[_palette_write_index].components[_palette_write_comp++] = val;
+        _palette[_palette_write_index].components[_palette_write_comp--] = val << 2;
         return;
     case IO_ATTRIB_CONTROL_INDEX:
         if (_write_attrib) {
@@ -679,10 +726,11 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             }
 
             _attributes_regs[_attrib_control_index & ATTRIB_INDEX_MASK] = val;
-            D_MESSAGE("attribute[0x%x] = 0x%x", _attrib_control_index & ATTRIB_INDEX_MASK, val);
+            VGA_D_MESSAGE("attribute[0x%x] = 0x%x", _attrib_control_index & ATTRIB_INDEX_MASK, val);
             return;
         }
-        D_MESSAGE("attribute control index 0x%x", val);
+
+        VGA_D_MESSAGE("attribute control index 0x%x", val);
         _write_attrib = true;
         _attrib_control_index = val;
 
@@ -701,7 +749,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
         if (_graphics_index == GRAPHICS_REG_MISC) {
             reset_fb();
         }
-        D_MESSAGE("graphics[0x%x] = 0x%x", _graphics_index, val);
+        VGA_D_MESSAGE("graphics[0x%x] = 0x%x", _graphics_index, val);
         return;
     case IO_FEATURE_CONTROL_W:
     case IO_FEATURE_CONTROL_W_MDA:
@@ -728,7 +776,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             on_crt_mode_cahnge();
         }
 
-        D_MESSAGE("crt[0x%x] = 0x%x", _crt_index, val);
+        VGA_D_MESSAGE("crt[0x%x] = 0x%x", _crt_index, val);
         break;
     default:
         D_MESSAGE("port 0x%x val %u (0x%x), inf wait", port, val, val);
@@ -748,7 +796,7 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 
 void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 {
-    W_MESSAGE_ONCE("implement me");
+    W_MESSAGE_SOME(100, "implement me");
     memset(dest, 0xff, length);
 }
 
