@@ -103,9 +103,12 @@ enum {
 
     ATTRIB_REG_MODE = 0x10,
     ATTRIB_REG_OVERSCAN = 0x11,
+    ATTRIB_REG_MEM_PLANE = 0x12,
 
     ATTRIB_INDEX_DISABLE_MASK =  (1 << 5),
     ATTRIB_MODE_GRAPHICS_BIT = 0,
+    ATTRIB_MEM_PLANE_STATUS_MUX_SHIFT = 4,
+    ATTRIB_MEM_PLANE_STATUS_MUX_MASK = (0x3 << ATTRIB_MEM_PLANE_STATUS_MUX_SHIFT),
 
 
     SEQUENCER_INDEX_MASK = (1 << 3) - 1,
@@ -445,6 +448,7 @@ void VGA::reset()
     reset_fb();
 }
 
+static uint8_t v_retrace = 0;
 
 uint8_t VGA::io_read_byte(uint16_t port)
 {
@@ -454,11 +458,48 @@ uint8_t VGA::io_read_byte(uint16_t port)
     case IO_INPUT_STATUS_0:
         return INPUT_STATUS_0_COLOR_DISPLAY_MASK;
     case IO_INPUT_STATUS_1:
-    case IO_INPUT_STATUS_1_MDA:
-        _write_attrib = false;
+    case IO_INPUT_STATUS_1_MDA: {
+        v_retrace ^= INPUT_STATUS1_DISPLAY_ENABLE_MASK | INPUT_STATUS1_V_RETRACE_MASK;
+
+        uint8_t status_1 = v_retrace;
+
         D_MESSAGE("resetting attribute flipflop");
-        return INPUT_STATUS1_V_RETRACE_MASK | INPUT_STATUS1_V_RETRACE_MASK; //todo: bits 5,4 - add
-                                                                            //video Feedback 1, 0.
+        _write_attrib = false;
+
+        // bits 5:4
+        //      From Intel doc:
+        //          "These are diagnostic video bits that are programmably connected to 2 of the 8
+        //           color bits sent to the palette."
+        //
+        //           what is "color bits sent to the palette"
+        //
+        //      From Cirrus doc:
+        //          "These bits follow two of eight outputs of the attribute controller."
+        //
+        //          what is "outputs of the attribute controller"
+
+        uint8_t attrib_outputs = 0;
+
+        switch ((_attributes_regs[ATTRIB_REG_MEM_PLANE] & ATTRIB_MEM_PLANE_STATUS_MUX_MASK) >>
+                                                                ATTRIB_MEM_PLANE_STATUS_MUX_SHIFT) {
+        case 0:
+            status_1 |= (attrib_outputs & 0x01) << 4;
+            status_1 |= (attrib_outputs & 0x04) << 3;
+            break;
+        case 1:
+            status_1 |= (attrib_outputs & 0x30);
+            break;
+        case 2:
+            status_1 |= (attrib_outputs & 0x02) << 3;
+            status_1 |= (attrib_outputs & 0x08) << 2;
+            break;
+        case 3:
+            status_1 |= (attrib_outputs & 0xc0) >> 2;
+            break;
+        }
+
+        return status_1;
+    }
     case IO_MISC_OUTPUT_R:
         return _misc_output;
     case IO_SEQUENCER_INDEX:
@@ -541,11 +582,16 @@ void VGA::on_crt_mode_cahnge()
                       ((overflow & (1 << CRT_OVERFLAOW_H9_BIT)) << (9 - CRT_OVERFLAOW_H9_BIT))) +
                         _crt_regs[CRT_REG_HEIGHT] + 1;
 
-    uint char_width;
+    uint dot_clocks;
 
-    char_width = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+    dot_clocks = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
 
-    uint width = (_crt_regs[CRT_REG_WIDTH] + 1) * char_width;
+    //maybe vga bios bug?
+    if ((_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
+        dot_clocks = 8;
+    }
+
+    uint width = (_crt_regs[CRT_REG_WIDTH] + 1) * dot_clocks;
 
     if (width == _width && height == _height) {
         return;
@@ -674,6 +720,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             }
             return;
         }
+
         _crt_regs[CRT_REG_TEST] = 1 << 7;
         _crt_regs[_crt_index] = val;
 
