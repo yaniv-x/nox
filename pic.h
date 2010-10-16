@@ -62,7 +62,6 @@ private:
     void io_write_port_0(uint16_t port, uint8_t val);
     uint8_t io_read_port_1(uint16_t port);
     void io_write_port_1(uint16_t port, uint8_t val);
-    void io_write_nmi(uint16_t port, uint8_t val);
     uint8_t io_read_trigger_type(uint16_t port);
     void io_write_trigger_type(uint16_t port, uint8_t val);
 

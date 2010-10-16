@@ -27,10 +27,14 @@
 #ifndef _H_CMOS
 #define _H_CMOS
 
+#include <time.h>
 #include "vm_part.h"
+#include "threads.h"
 
 class NoxVM;
 class IORegion;
+class PICWire;
+class Timer;
 
 class CMOS: private VMPart {
 public:
@@ -39,7 +43,7 @@ public:
 
     NoxVM& nox() { return *(NoxVM*)get_container();}
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
@@ -51,14 +55,25 @@ public:
 private:
     virtual void write_byte(uint16_t port, uint8_t val);
     virtual uint8_t read_byte(uint16_t port);
+    void update_date();
+    uint8_t localize_hours(uint8_t val);
+    uint localize(uint val);
+    uint8_t delocalize_hours(uint8_t val);
+    uint delocalize(uint val);
+    void period_timer_proc();
+    void alarm_timer_proc();
+    void update_timer_proc();
+    void reschedule_alarm();
+    void set_reg_a(uint8_t val);
+    void set_reg_b(uint8_t val);
 
     enum {
         SECONDS,
         SECONDS_ALARM,
-        MINUTS,
-        MINUTED_ALARM,
-        HOUERS,
-        HOUERS_ALARM,
+        MINUTES,
+        MINUTES_ALARM,
+        HOURS,
+        HOURS_ALARM,
         DAY_OF_WEEK,
         DAY_OF_MOUNTH,
         MOUNTH,
@@ -75,10 +90,22 @@ private:
     };
 
 private:
+    Mutex _mutex;
     IORegion* _io_region;
+    PICWire* _irq;
+    Timer* _period_timer;
+    Timer* _alarm_timer;
+    Timer* _update_timer;
+    uint8_t _reg_a;
+    uint8_t _reg_b;
+    uint8_t _reg_c;
     uint8_t _user_ares[USER_SIZE];
-    bool _irq_is_massked;
     uint _index;
+    struct tm _date;
+    nox_time_t _date_base_time;
+    uint8_t _seconds_alarm;
+    uint8_t _minutes_alarm;
+    uint8_t _hours_alarm;
 };
 
 #endif

@@ -54,7 +54,7 @@ public:
 
     KVM& get_kvm() { return *_kvm.get();}
     IOBus& get_io_bus() { return *_io_bus.get();}
-
+    void set_nmi_mask(bool mask) { _nmi_mask = mask;}
 
     virtual void reset();
     virtual void start();
@@ -96,6 +96,8 @@ private:
     std::auto_ptr<ATAController> _ata;
     std::auto_ptr<VGA> _vga;
     uint64_t _ram_size;
+
+    bool _nmi_mask;
 };
 
 
