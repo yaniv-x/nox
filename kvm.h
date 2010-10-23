@@ -47,6 +47,7 @@ public:
                         page_address_t host_address);
     void unmap_mem_slot(KvmMapRef map_ref);
 
+    int get_dev_fd() { return _devfd.get();}
     int get_vm_fd() { return _vmfd.get();}
     int get_vcpu_mmap_size() { return _vcpu_mmap_size;}
 
