@@ -50,6 +50,7 @@ CPU::CPU(NoxVM& vm, uint id)
     , _interrupt_mark_set(0)
     , _interrupt_mark_get (0)
     , _halt (false)
+    , _version_information (0)
 {
     pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
 }
@@ -63,6 +64,53 @@ CPU::~CPU()
     }
 }
 
+
+void CPU::setup_cpuid()
+{
+    //todo: disable x2APIC CPUID.01H:ECX[21]
+
+    //todo: for now test if we are on AMD. (apic imp follow AMD spec)
+
+    //todo: review cpuid result and stip it down according to vm benefits
+
+    const int NUM_CPUID_ENTS = 100;
+
+    struct {
+        kvm_cpuid2 cpuid2;
+        kvm_cpuid_entry2 ents[NUM_CPUID_ENTS];
+    } cpuid_info;
+
+    cpuid_info.cpuid2.nent = NUM_CPUID_ENTS;
+
+    if (ioctl(get_vm().get_kvm().get_dev_fd(), KVM_GET_SUPPORTED_CPUID, &cpuid_info) == -1) {
+        THROW("get supported cpuid failed");
+    }
+
+    for (int i = 0;  i < cpuid_info.cpuid2.nent; i++) {
+
+        if (cpuid_info.cpuid2.entries[i].function == 1) {
+            _version_information = cpuid_info.cpuid2.entries[i].eax;
+            break;
+        }
+    }
+
+    std::string id_string;
+    char str[5];
+    uint32_t* str_ptr = (uint32_t*)str;
+    str[4] = 0;
+    *str_ptr = cpuid_info.ents[0].ebx;
+    id_string += str;
+    *str_ptr = cpuid_info.ents[0].edx;
+    id_string += str;
+    *str_ptr = cpuid_info.ents[0].ecx;
+    id_string += str;
+
+    D_MESSAGE("%s version 0x%x", id_string.c_str(), _version_information);
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_CPUID2, &cpuid_info) == -1) {
+         THROW("set cpuid failed");
+    }
+}
 
 void CPU::create()
 {
@@ -82,13 +130,10 @@ void CPU::create()
     if (_kvm_run == MAP_FAILED) {
         THROW("mmap failed %d", errno);
     }
+
+    setup_cpuid();
 }
 
-#define CPU_STEPPING 0
-#define CPU_MODUL 0
-#define CPU_EXT_MODUL 0
-#define CPU_FAMILY 0
-#define CPU_EXT_FAMILY 0
 
 void CPU::reset_regs()
 {
@@ -97,8 +142,7 @@ void CPU::reset_regs()
     memset(&regs, 0, sizeof(regs));
     regs.rip = 0x000000000000fff0;
     regs.rflags = 0x0000000000000002;
-    regs.rdx = CPU_STEPPING | (CPU_MODUL << 4) | (CPU_EXT_MODUL << 16) |
-               (CPU_FAMILY << 8) | (CPU_EXT_FAMILY << 20);
+    regs.rdx = _version_information;
     if (ioctl(_vcpu_fd.get(), KVM_SET_REGS, &regs) == -1) {
         THROW("failed %d", errno);
     }
@@ -161,8 +205,6 @@ void CPU::reset()
     reset_sys_regs();
     //KVM_SET_MSRS
     //KVM_SET_FPU
-    //KVM_SET_CPUID
-    //KVM_SET_CPUID2
     //KVM_SET_LAPIC
 }
 

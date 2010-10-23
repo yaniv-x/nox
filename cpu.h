@@ -68,6 +68,7 @@ private:
     void reset_sys_regs();
     void handle_io();
     void set_state(State state);
+    void setup_cpuid();
     void create();
     void output_trigger();
     void halt();
@@ -96,6 +97,7 @@ private:
     bool _halt;
     Mutex _halt_mutex;
     Condition _halt_condition;
+    uint32_t _version_information;
 };
 
 #endif
