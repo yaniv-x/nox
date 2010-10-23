@@ -53,8 +53,8 @@ public:
     virtual void load(InStream& stream) {}
 
     PICWire *wire(VMPart& owner, uint irq);
-    uint get_intterupt();
-    bool intterupt_test();
+    uint get_interrupt();
+    bool interrupt_test();
     void attach_notify_target(void_callback_t proc, void* opaque);
 
 private:
@@ -82,7 +82,7 @@ private:
         uint_b intilization_mask;
         uint_b highst_priority;
 
-        uint_b cascade;
+        uint_b cascade_pin;
         uint_b saved_mode;
     };
 
@@ -92,7 +92,7 @@ private:
 
     bool is_master(Chip& chip);
     bool is_slave(Chip& chip);
-    uint _get_intterupt(Chip& chip, bool test);
+    uint _get_interrupt(Chip& chip, bool test);
     void update_slave_IR();
     void update_IRR(Chip& chip);
     void set_IRR(Chip& chip, uint_b pin);

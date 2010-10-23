@@ -152,7 +152,7 @@ void PIC::reset_chip(Chip& chip)
     chip.auto_rotate = false;
     chip.intilization_mask = 0;
     chip.highst_priority = 0;
-    chip.cascade = is_slave(chip) ? SLAVE_IRQ_PIN : ~0;
+    chip.cascade_pin = is_slave(chip) ? ~0 : SLAVE_IRQ_PIN;
 }
 
 
@@ -414,7 +414,7 @@ void PIC::notify_output()
 
 void PIC::update_output_pin(Lock& lock)
 {
-    bool output_pin = _get_intterupt(_chips[0], true) != INVALID_IRQ;
+    bool output_pin = _get_interrupt(_chips[0], true) != INVALID_IRQ;
 
     if (output_pin != _output_pin && (_output_pin = output_pin)) {
         lock.unlock();
@@ -423,10 +423,10 @@ void PIC::update_output_pin(Lock& lock)
 }
 
 
-uint PIC::get_intterupt()
+uint PIC::get_interrupt()
 {
     Lock lock(_mutex);
-    uint intterupt = _get_intterupt(_chips[0], false);
+    uint intterupt = _get_interrupt(_chips[0], false);
 
     if (intterupt != INVALID_IRQ) {
         update_output_pin(lock);
@@ -439,15 +439,13 @@ uint PIC::get_intterupt()
 }
 
 
-bool PIC::intterupt_test()
+bool PIC::interrupt_test()
 {
-    //Lock lock(_mutex);
-    //return _get_intterupt(_chips[0], true);
     return _output_pin;
 }
 
 //todo: optomize using bitsearch and bitrotate
-uint PIC::_get_intterupt(Chip& chip, bool test)
+uint PIC::_get_interrupt(Chip& chip, bool test)
 {
     uint ready = chip.regs[REG_INDEX_IRR] & ~chip.regs[REG_INDEX_IMR];
 
@@ -468,8 +466,8 @@ uint PIC::_get_intterupt(Chip& chip, bool test)
         if (ready & mask) {
             uint_b ret;
 
-            if (now == chip.cascade) {
-                ret = _get_intterupt(_chips[1], test);
+            if (now == chip.cascade_pin) {
+                ret = _get_interrupt(_chips[1], test);
 
                 if (test) {
                     return ret;
