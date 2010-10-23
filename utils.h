@@ -125,5 +125,28 @@ static inline uint from_bcd(uint val)
     return ret;
 }
 
+static inline void cpuid(uint32_t function, uint32_t& eax, uint32_t& ebx, uint32_t& ecx,
+                         uint32_t& edx)
+{
+    asm (
+        "cpuid;"
+        : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
+        : "a" (function)
+    );
+}
+
+static inline uint64_t rdtsc()
+{
+    uint32_t vec[2];
+    uint64_t* ret = (uint64_t*)vec;
+
+    asm (
+        "rdtsc;"
+        : "=a" (vec[0]), "=d" (vec[1])
+    );
+
+    return *ret;
+}
+
 #endif
 

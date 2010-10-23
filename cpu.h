@@ -32,6 +32,7 @@
 
 class NoxVM;
 class IOBus;
+class Timer;
 
 class CPU: public VMPart {
 public:
@@ -47,6 +48,8 @@ public:
     virtual void start();
     virtual void stop() {}
 
+    void backtrace_64();
+
     enum Command {
         WAIT,
         RUN,
@@ -61,6 +64,10 @@ public:
         TERMINATED,
     };
 
+    enum {
+        INVALID_INTERRUPT,
+    };
+
 private:
     void run_loop();
     void run();
@@ -72,7 +79,33 @@ private:
     void create();
     void output_trigger();
     void halt();
+    void apic_write(uint32_t offset, uint32_t n, uint8_t* src);
+    void apic_read(uint32_t offset, uint32_t n, uint8_t* dest);
     void handle_mmio();
+
+    void apic_eoi();
+    void apic_update_error();
+    void apic_set_spurious(uint32_t val);
+    void apic_command(uint32_t val);
+    void apic_set_timer(uint32_t val);
+    void apic_update_timer();
+    void apic_reset();
+    bool is_apic_enabled();
+    bool is_apic_soft_enabled();
+    uint get_interrupt();
+    bool interrupt_test();
+    uint get_direct_interrupt();
+    bool is_dirct_interrupt_pending();
+    void set_apic_address(address_t address);
+    void apic_put_irr(int irr);
+    void sync_tpr();
+    void apic_timer_cb();
+
+    void apic_update_priority_isr(int isr);
+    void apic_update_priority_irr(int irr);
+    void apic_update_priority();
+
+    void back_trace_64(address_t rip, address_t frame_pointer, int depth);
 
     static void* thread_main(void *);
 
@@ -92,13 +125,28 @@ private:
     Thread _thread;
     bool _executing;
     bool _test_interrupts;
+    bool _need_timer_update;
     uint _interrupt_mark_set;
     uint _interrupt_mark_get;
     bool _halt;
     Mutex _halt_mutex;
     Condition _halt_condition;
     uint32_t _version_information;
+    address_t _apic_address;
+    address_t _cr8;
+    address_t _apic_start;
+    address_t _apic_end;
+    uint32_t _apic_regs[GUEST_PAGE_SIZE / 16];
+    uint64_t _apic_timer_start_tsc;
+    uint64_t _apic_timer_div;
+    Timer* _apic_timer;
+    int _current_interrupt;
+    //Mutex _apic_timer_mutex;
 };
+
+
+
+extern __thread CPU* vcpu;
 
 #endif
 
