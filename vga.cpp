@@ -32,6 +32,7 @@
 
 #define VGA_D_MESSAGE(format, ...)
 
+// todo: odd even bits in multiple regs
 
 enum {
     IO_VGA_BASE = 0x3c0,
@@ -136,11 +137,27 @@ enum {
 
     GRAPHICS_INDEX_MASK = (1 << 4) - 1,
 
+    GRAPHICS_REG_SET_RESET = 0x00,
+    GRAPHICS_REG_ENABLE_SET_RESET = 0x01,
+    GRAPHICS_REG_ROTATE = 0x03,
+    GRAPHICS_REG_READ_PLAN = 0x04,
     GRAPHICS_REG_MODE = 0x05,
     GRAPHICS_REG_MISC = 0x06,
 
-    GRAPHICS_REG_256C_MASK = (1 << 6),
-    GRAPHICS_REG_4C_MASK = (1 << 5),
+    GRAPHICS_ROTATE_COUNT_MASK = (1 << 3) - 1,
+    GRAPHICS_ROTATE_FUNC_MASK = (0x03 << 3),
+    GRAPHICS_ROTATE_FUNC_NONE = (0 << 3),
+    GRAPHICS_ROTATE_FUNC_AND = (1 << 3),
+    GRAPHICS_ROTATE_FUNC_OR = (2 << 3),
+    GRAPHICS_ROTATE_FUNC_XOR = (3 << 3),
+
+    GRAPHICS_READ_PLAN_MASK = (1 << 2) - 1,
+
+    GRAPHICS_MODE_256C_MASK = (1 << 6),
+    GRAPHICS_MODE_4C_MASK = (1 << 5),
+    GRAPHICS_MODE_ODD_EVEN = (1 << 4),
+    GRAPHICS_MODE_READ_MODE_MASK = (1 << 3),
+    GRAPHICS_MODE_WRITE_MODE_MASK = (1 << 2) - 1,
 
     GRAPHICS_MISK_ODD_EVANE_BIT = 5,
     GRAPHICS_MISK_FB_ADDR_MASK_SHIFT = 2,
@@ -148,26 +165,6 @@ enum {
     GRAPHICS_MISK_FB_ADDR_A0000_AFFFF = 1,
     GRAPHICS_MISK_FB_ADDR_B0000_B7FFF = 2,
     GRAPHICS_MISK_FB_ADDR_B8000_BFFFF = 3,
-};
-
-
-static uint32_t text_colors_table[] = {
-    0x00000000,
-    0x0000008f,
-    0x00008f00,
-    0x00008f8f,
-    0x008f0000,
-    0x008f008f,
-    0x008f8f00,
-    0x008f8f8f,
-    0x00202020,
-    0x000000ff,
-    0x0000ff00,
-    0x0000ffff,
-    0x00ff0000,
-    0x00ff00ff,
-    0x00ffff00,
-    0x00ffffff,
 };
 
 
@@ -275,17 +272,35 @@ bool VGA::font_bit(uint8_t ch, int i, int j, uint char_w, uint char_h)
 void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uint char_h)
 {
     // no blinking or font select support
+
+    // todo: prepare actual palette on graphic mode change, on palette entery change or on any
+    //       other change that effect translation of index to color
+
+    uint8_t pal_high_bits;
+
+    if (_attributes_regs[ATTRIB_REG_MODE] & ATTRIB_MODE_PAL_FIXED_4_5_MASK) {
+        pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xf0;
+    } else {
+        pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xc0;
+    }
+
     for (int i= 0; i < char_h; i++) {
         for (int j= 0; j < char_w; j++) {
+            uint8_t index;
+
             if (font_bit(ch, i, j, char_w, char_h)) {
-                *(dest + j) = text_colors_table[attrib & 0xf];
+                index = _attributes_regs[attrib & 0xf] | pal_high_bits;
             } else {
-                *(dest + j) = text_colors_table[attrib >> 4];
+                index = _attributes_regs[attrib >> 4] | pal_high_bits;
             }
+
+            *(dest + j) = _palette[index & _color_index_mask].color;
         }
+
         dest += _width;
     }
 }
+
 
 uint8_t VGA::fetch_pix_16(uint offset)
 {
@@ -298,6 +313,7 @@ uint8_t VGA::fetch_pix_16(uint offset)
             ((byte[2] & mask) >> bit) << 2 |
             ((byte[3] & mask) >> bit) << 3;
 }
+
 
 void VGA::update()
 {
@@ -336,7 +352,6 @@ void VGA::update()
 
              for (int j = 0; j < line_size; j++) {
                  draw_char(*char_ptr, *(char_ptr + 1), dest_char, char_w, char_h);
-
                  char_ptr += 4;
                  dest_char += char_w;
              }
@@ -347,14 +362,16 @@ void VGA::update()
          return;
     }
 
-
-    if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_REG_256C_MASK) {
+    if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_256C_MASK) {
         D_MESSAGE("256 colors");
-    } else if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_REG_4C_MASK ) {
+    } else if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_4C_MASK ) {
         D_MESSAGE("4 colors");
     } else {
         uint8_t pal_high_bits;
         uint8_t pal_mask;
+
+        // todo: prepare actual palette on graphic mode change, on palette entery change or on any
+        //       other change that effect translation of index to color
 
         if (_attributes_regs[ATTRIB_REG_MODE] & ATTRIB_MODE_PAL_FIXED_4_5_MASK) {
             pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xf0;
@@ -368,7 +385,7 @@ void VGA::update()
         uint pixels = height * width;
 
         for (uint i = 0; i < pixels; i++) {
-            uint8_t pal_index = (fetch_pix_16(i) & pal_mask) | pal_high_bits;
+            uint8_t pal_index = (_attributes_regs[fetch_pix_16(i)] & pal_mask) | pal_high_bits;
             dest[i] = _palette[pal_index & _color_index_mask].color;
         }
     }
@@ -744,11 +761,17 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
         _graphics_index = val & GRAPHICS_INDEX_MASK;
         return;
     case IO_GRAPHICS:
+
+        if (_graphics_index == GRAPHICS_REG_READ_PLAN) {
+            val &= GRAPHICS_READ_PLAN_MASK;
+        }
+
         _graphics_regs[_graphics_index] = val;
 
         if (_graphics_index == GRAPHICS_REG_MISC) {
             reset_fb();
         }
+
         VGA_D_MESSAGE("graphics[0x%x] = 0x%x", _graphics_index, val);
         return;
     case IO_FEATURE_CONTROL_W:
@@ -794,10 +817,40 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 }
 
 
+inline void VGA::vram_read_one(uint32_t src, uint8_t& dest)
+{
+    ASSERT(!!(_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_ODD_EVEN_MASK) ==
+           !(_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_ODD_EVEN));
+
+    if (_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_CHAIN_MASK) {
+        ASSERT(&_vram[src] < _vram_end);
+        dest = _vram[src];
+    } else if ((_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_ODD_EVEN_MASK)) {
+        ASSERT(&_vram[(src << 2) | _graphics_regs[GRAPHICS_REG_READ_PLAN]] < _vram_end);
+        dest = _vram[(src << 2) | _graphics_regs[GRAPHICS_REG_READ_PLAN]];
+    } else {
+        uint32_t plan = (src & 1) | (_graphics_regs[GRAPHICS_REG_READ_PLAN] & 2);
+        ASSERT(&_vram[((src & ~1) << 1) | plan] < _vram_end);
+        dest = _vram[((src & ~1) << 1) | plan];
+    }
+}
+
+
 void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 {
-    W_MESSAGE_SOME(100, "implement me");
-    memset(dest, 0xff, length);
+    if (!(_misc_output & MISC_FB_ACCESS_MASK)) {
+        return;
+    }
+
+    if ((_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_READ_MODE_MASK)) {
+         W_MESSAGE_SOME(100, "implement me");
+         memset(dest, 0xff, length);
+        return;
+    }
+
+    for (int i = 0; i < length; i++) {
+        vram_read_one(src + i, dest[i]);
+    }
 }
 
 
@@ -807,15 +860,38 @@ inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
         return;
     }
 
-    //todo: handle write modes
-    _vram[offset] = val;
+    switch (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_WRITE_MODE_MASK) {
+    case 0: {
+        uint plan = offset & 0x03;
+        if (_graphics_regs[GRAPHICS_REG_ENABLE_SET_RESET] & (1 << plan)) {
+            _vram[offset] = (_graphics_regs[GRAPHICS_REG_SET_RESET] & (1 << plan)) ? ~0 : 0;
+            return;
+        }
 
+        if (_graphics_regs[GRAPHICS_REG_ROTATE] & GRAPHICS_ROTATE_COUNT_MASK) {
+            D_MESSAGE_SOME(100, "need to rotate");
+        }
+
+        _vram[offset] = val;
+        break;
+    }
+    case 1:
+    case 2:
+    case 3:
+        D_MESSAGE("implement me %u",
+                  _graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_WRITE_MODE_MASK);
+        _vram[offset] = val;
+        break;
+    }
 }
 
 inline void VGA::vram_write_one(uint64_t dest, uint8_t byte)
 {
     uint64_t address;
     uint64_t plan;
+
+    ASSERT(!!(_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_ODD_EVEN_MASK) ==
+           !(_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_ODD_EVEN));
 
     if (_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_CHAIN_MASK) {
         plan = dest & 0x3;

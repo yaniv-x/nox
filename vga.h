@@ -98,6 +98,7 @@ private:
     void reset_fb();
     void blank_screen();
     void on_crt_mode_cahnge();
+    void vram_read_one(uint32_t src, uint8_t& dest);
     void vram_read(uint64_t src, uint64_t length, uint8_t* dest);
 
     void vram_store_byte(uint64_t offset, uint8_t val);
