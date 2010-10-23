@@ -208,7 +208,7 @@ void CPU::halt()
 
     for (;;) {
 
-        if (_kvm_run->if_flag && pic->intterupt_test()) {
+        if (_kvm_run->if_flag && pic->interrupt_test()) {
             break;
         }
 
@@ -256,14 +256,14 @@ void CPU::run_loop()
                 _kvm_run->request_interrupt_window = 1;
                 _test_interrupts = true;
             } else {
-                interrupt.irq = pic->get_intterupt();
+                interrupt.irq = pic->get_interrupt();
 
                 if (interrupt.irq != PIC::INVALID_IRQ) {
                     if (ioctl(_vcpu_fd.get(), KVM_INTERRUPT, &interrupt.irq)) {
                         int err = errno;
                         THROW("inject irq failed %d", err);
                     }
-                    _test_interrupts = pic->intterupt_test();
+                    _test_interrupts = pic->interrupt_test();
                     _kvm_run->request_interrupt_window = _test_interrupts;
                 }
             }
