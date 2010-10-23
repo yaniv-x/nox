@@ -58,6 +58,7 @@ typedef uint8_t uint_b;
 typedef uint16_t uint_w;
 typedef uint32_t uint_d;
 typedef uint64_t page_address_t;
+typedef uint64_t address_t;
 typedef void (*void_callback_t)(void*);
 
 #define EXCLISIC_EXEC()

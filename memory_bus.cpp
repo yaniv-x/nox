@@ -55,6 +55,7 @@ public:
     virtual void on_unmapped() = 0;
 };
 
+
 class UmnapedAreaHandler: public MemoryBus::Internal
 #ifndef USE_C_CALLBACKS
     , public MemoryBus::IO
@@ -63,7 +64,7 @@ class UmnapedAreaHandler: public MemoryBus::Internal
 public:
     UmnapedAreaHandler(MemoryBus& bus, page_address_t start)
         : _bus (bus)
-        , _start (start)
+        , _start (start << GUEST_PAGE_SHIFT)
     {
     }
 
@@ -90,7 +91,7 @@ public:
 
 private:
     MemoryBus& _bus;
-    page_address_t _start;
+    address_t _start;
 };
 
 class MMIORegion: public MemoryBus::Internal {
@@ -275,6 +276,11 @@ void MemoryBus::read_from_pages(uint64_t src, uint64_t length, uint8_t* dest)
 
 void MemoryBus::read(uint64_t src, uint64_t length, void* dest)
 {
+    if ((src & ~((1ULL << ADDRESS_BITS) - 1)) || src + length < src ||
+        ((src + length)  & ~((1ULL << ADDRESS_BITS) - 1))) {
+        throw MachinErrorException();
+    }
+
     uint64_t offset = src & GUEST_PAGE_OFFSET_MASK;
 
     if (length > GUEST_PAGE_SIZE - offset) {
@@ -286,6 +292,7 @@ void MemoryBus::read(uint64_t src, uint64_t length, void* dest)
 
     MemoryMap::iterator now = _memory_map.lower_bound(page);
     uint64_t page_start_address = (page - (*now).second.start_page) << GUEST_PAGE_SHIFT;
+
 #ifdef USE_C_CALLBACKS
     (*now).second.read((*now).second.opaque, page_start_address + offset, length, (uint8_t*)dest);
 #else
@@ -302,6 +309,11 @@ void MemoryBus::write_to_pages(const uint8_t* src, uint64_t length, uint64_t des
 
 void MemoryBus::write(const void* src, uint64_t length, uint64_t dest)
 {
+    if ((dest & ~((1ULL << ADDRESS_BITS) - 1)) || dest + length < dest ||
+        ((dest + length)  & ~((1ULL << ADDRESS_BITS) - 1))) {
+        throw MachinErrorException();
+    }
+
     uint64_t offset = dest & GUEST_PAGE_OFFSET_MASK;
 
     if (length > GUEST_PAGE_SIZE - offset) {

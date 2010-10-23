@@ -104,6 +104,12 @@ private:
 };
 
 
+class MachinErrorException: public std::exception {
+public:
+    virtual const char* what() const throw () {return "machin error exception: implement me!!!";}
+
+};
+
 class ResetException: public std::exception {
 public:
     virtual const char* what() const throw () {return "reset exception: implement me!!!";}

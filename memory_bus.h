@@ -90,9 +90,9 @@ public:
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 
-    void enable_address_line_20() { _address_mask |= (1 << 20);}
-    void disable_address_line_20() { _address_mask &= ~(1 << 20);}
-    bool line_20_is_set() { return !!(_address_mask & (1 << 20));}
+    void enable_address_line_20() { _address_mask |= (1ULL << 20);}
+    void disable_address_line_20() { _address_mask &= ~(1ULL << 20);}
+    bool line_20_is_set() { return !!(_address_mask & (1ULL << 20));}
 
     enum {
         ADDRESS_BITS = 52,
