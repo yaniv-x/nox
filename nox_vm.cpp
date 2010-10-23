@@ -46,6 +46,7 @@
 #include "display.h"
 
 enum {
+    IO_PORT_MISC = 0x61,
     IO_PORT_POST_DIAGNOSTIC = 0x80,
     IO_PORT_A20 = 0x92,
     IO_PORT_BOCHS_PANIC_1 = 0x400,
@@ -87,6 +88,7 @@ NoxVM::NoxVM()
     , _ata (new ATAController(*this, ATA0_IRQ))
     , _vga (new VGA(*this))
     , _nmi_mask (false)
+    , _misc_port (0x01)
 {
     _a20_io_region = _io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                              (io_read_byte_proc_t)&NoxVM::a20_port_read,
@@ -104,6 +106,10 @@ NoxVM::NoxVM()
     add_io_region(_io_bus->register_region(*this, IO_PORT_VGA_BIOS_MESSAGE, 1, this,
                                            NULL,
                                            (io_write_byte_proc_t)&NoxVM::vgabios_port_write));
+
+    add_io_region(_io_bus->register_region(*this, IO_PORT_MISC, 1, this,
+                                           (io_read_byte_proc_t)&NoxVM::misc_port_read,
+                                           (io_write_byte_proc_t)&NoxVM::misc_port_write));
 }
 
 
@@ -145,6 +151,20 @@ uint8_t NoxVM::a20_port_read(uint16_t port)
     ASSERT(port == 0x92);
 
     return _mem_bus->line_20_is_set() ? 0x02 : 0;
+}
+
+void NoxVM::misc_port_write(uint16_t port, uint8_t val)
+{
+    _misc_port = val & 0x0f;
+    _pit->set_gate_level(2, !!(_misc_port & 0x1));
+}
+
+
+uint8_t NoxVM::misc_port_read(uint16_t port)
+{
+    _misc_port ^= 0x10;
+    //todo: get gate level from pit
+    return _misc_port | (_pit->get_output_level(2) ? 0x20 : 0);
 }
 
 

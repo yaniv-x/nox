@@ -78,11 +78,6 @@ private:
     friend class NoxVM;
 };
 
-class ResetException: public std::exception {
-public:
-    virtual const char* what() const throw () {return "reset exception: implement me!!!";}
-
-};
 
 inline NoxVM& VMPart::get_nox()
 {

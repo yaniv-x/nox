@@ -70,6 +70,8 @@ private:
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
+    void misc_port_write(uint16_t port, uint8_t val);
+    uint8_t misc_port_read(uint16_t port);
     void vgabios_port_write(uint16_t port, uint8_t val);
     void bochs_port_write(uint16_t port, uint8_t val);
     void post_diagnostic(uint16_t port, uint8_t val);
@@ -98,8 +100,15 @@ private:
     uint64_t _ram_size;
 
     bool _nmi_mask;
+    uint8_t _misc_port;
 };
 
+
+class ResetException: public std::exception {
+public:
+    virtual const char* what() const throw () {return "reset exception: implement me!!!";}
+
+};
 
 #endif
 
