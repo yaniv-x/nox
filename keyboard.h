@@ -117,6 +117,7 @@ private:
     uint8_t _mouse_resolution;
     uint8_t _mouse_sample_rate;
     uint8_t _mouse_button;
+    int _mouse_write_state;
 
     uint8_t _state;
     uint8_t _command_byte;
