@@ -57,6 +57,7 @@ enum {
     CTRL_CMD_READ_INPUT_PORT = 0xc0,
     CTRL_CMD_READ_OUTPUT_PORT = 0xd0,
     CTRL_CMD_WRITE_OUTPUT_PORT = 0xd1,
+    CTRL_CMD_WRITE_TO_MOUSE_OUTPUT = 0xd3,
     CTRL_CMD_WRITE_TO_MOUSE = 0xd4,
     CTRL_CMD_DISABLE_A20 = 0xdd,
     CTRL_CMD_ENABLE_A20 = 0xdf,
@@ -129,13 +130,18 @@ enum {
 
 enum {
     WRITE_STATE_KBD_CMD,
-    WRITE_STATE_MOUSE_CMD,
+    WRITE_STATE_MOUSE,
+    WRITE_STATE_MOUSE_OUTPUT,
     WRITE_STATE_COMMAND_BYTE,
     WRITE_STATE_COMMAND_OUTPUT_PORT,
-    WRITE_STATE_MOUSE_RESOLUTUIN,
-    WRITE_STATE_MOUSE_SAMPLE_RATE,
     WRITE_STATE_KBD_LEDS,
     WRITE_STATE_KBD_RATE,
+};
+
+enum {
+    MOUSE_WRITE_STATE_CMD,
+    MOUSE_WRITE_STATE_RESOLUTUIN,
+    MOUSE_WRITE_STATE_SAMPLE_RATE,
 };
 
 
@@ -241,14 +247,10 @@ void KbdController::restore_mouse_defaults()
 void KbdController::reset_mouse()
 {
     _mouse_button = 0;
+    _mouse_write_state = MOUSE_WRITE_STATE_CMD,
     restore_mouse_defaults();
     _mouse_output.buf.reset();
     _mouse_output.irq->drop();
-
-    /*if (_state & CTRL_STATUS_MOUSE_DATA_READY_MASK) {
-        _state &= ~(CTRL_STATUS_MOUSE_DATA_READY_MASK | CTRL_STATUS_DATA_READY_MASK);
-        refill_outgoing();
-    }*/
 }
 
 
@@ -320,88 +322,102 @@ void KbdController::write_to_mouse(uint8_t val)
 
     if (_mouse_warp_mode && val != MOUSE_CMD_RESET_WARP_MOD && val != MOUSE_CMD_RESET) {
         // send ack ?
+        D_MESSAGE("send ack ?");
         put_mouse_data(val);
         return;
     }
 
-    switch (val) {
-    case MOUSE_CMD_READ_DATA:
-        put_mouse_data(KBD_ACK);
-        if (_mouse_reomte_mode) {
-            // push current mouse position to mouse output buf ...
+    int write_state = _mouse_write_state;
+    _mouse_write_state = MOUSE_WRITE_STATE_CMD;
+
+    switch (write_state) {
+    case MOUSE_WRITE_STATE_CMD:
+        switch (val) {
+        case MOUSE_CMD_READ_DATA:
+            put_mouse_data(KBD_ACK);
+            if (_mouse_reomte_mode) {
+                D_MESSAGE("push current mouse position to mouse output buf ...");
+            }
+            break;
+        case MOUSE_CMD_RESET_WARP_MOD:
+            put_mouse_data(KBD_ACK);
+            _mouse_warp_mode = true;
+            break;
+        case MOUSE_CMD_SET_WARP_MODE:
+            put_mouse_data(KBD_ACK);
+            _mouse_warp_mode = true;
+            break;
+        case MOUSE_CMD_SCALING_1_1:
+            put_mouse_data(KBD_ACK);
+            _mouse_scaling = false;
+            break;
+        case MOUSE_CMD_SCALING_2_1:
+            put_mouse_data(KBD_ACK);
+            _mouse_scaling = true;
+            break;
+        case MOUSE_CMD_RESOLUTUIN:
+            put_mouse_data(KBD_ACK);
+            _mouse_write_state = MOUSE_WRITE_STATE_RESOLUTUIN;
+            break;
+        case MOUSE_CMD_SAMPLE_RATE:
+            put_mouse_data(KBD_ACK);
+             _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
+            break;
+        case MOUSE_CMD_ENABLE_DATA_REPORTING:
+            put_mouse_data(KBD_ACK);
+            _mouse_reporting = true;
+            break;
+        case MOUSE_CMD_RESET:
+            reset_mouse();
+            put_mouse_data(KBD_ACK);
+            put_mouse_data(KBD_SELF_TEST_REPLAY);
+            break;
+        case MOUSE_CMD_STATUS:
+            put_mouse_data(KBD_ACK);
+            put_mouse_data((_mouse_button & MOUSE_STATE_BUTTON_MASK) |
+                           (_mouse_scaling ? MOUSE_STATE_SCALING_MASK : 0) |
+                           (_mouse_reomte_mode ? MOUSE_STATE_REMOTE_MODE_MASK : 0) |
+                           (_mouse_reporting ? MOUSE_STATE_DATA_REPORTING_MASK : 0));
+            put_mouse_data(_mouse_resolution);
+            put_mouse_data(_mouse_sample_rate);
+            break;
+        case MOUSE_CMD_READ_ID:
+            put_mouse_data(KBD_ACK);
+            put_mouse_data(0);
+            break;
+        case MOUSE_CMD_DISABLE_DATA_REPORTING:
+            put_mouse_data(KBD_ACK);
+            _mouse_reporting = false;
+            break;
+        case MOUSE_CMD_STREAM_MODE:
+            put_mouse_data(KBD_ACK);
+            _mouse_reomte_mode = false;
+            break;
+        case MOUSE_CMD_REMOTE_MODE:
+            put_mouse_data(KBD_ACK);
+            _mouse_reomte_mode = true;
+            break;
+        case MOUSE_CMD_SET_DEFAULT:
+            put_mouse_data(KBD_ACK);
+            restore_mouse_defaults();
+            break;
+        case MOUSE_CMD_RESEND:
+            put_mouse_data(KBD_ACK);
+            D_MESSAGE("todo: resend last mouse packet");
+            break;
+        default:
+            D_MESSAGE("unhandled command 0x%x", val);
+            put_mouse_data(KBD_ACK);
         }
         break;
-
-    case MOUSE_CMD_RESET_WARP_MOD:
+    case MOUSE_WRITE_STATE_RESOLUTUIN:
+        _mouse_resolution = val;
         put_mouse_data(KBD_ACK);
-        _mouse_warp_mode = true;
         break;
-    case MOUSE_CMD_SET_WARP_MODE:
+    case MOUSE_WRITE_STATE_SAMPLE_RATE:
+        _mouse_sample_rate = val;
         put_mouse_data(KBD_ACK);
-        _mouse_warp_mode = true;
         break;
-    case MOUSE_CMD_SCALING_1_1:
-        put_mouse_data(KBD_ACK);
-        _mouse_scaling = false;
-        break;
-    case MOUSE_CMD_SCALING_2_1:
-        put_mouse_data(KBD_ACK);
-        _mouse_scaling = true;
-        break;
-    case MOUSE_CMD_RESOLUTUIN:
-        put_mouse_data(KBD_ACK);
-        _write_state = WRITE_STATE_MOUSE_RESOLUTUIN;
-        break;
-    case MOUSE_CMD_SAMPLE_RATE:
-        put_mouse_data(KBD_ACK);
-         _write_state = WRITE_STATE_MOUSE_SAMPLE_RATE;
-        break;
-    case MOUSE_CMD_ENABLE_DATA_REPORTING:
-        put_mouse_data(KBD_ACK);
-        _mouse_reporting = true;
-        break;
-    case MOUSE_CMD_RESET:
-        reset_mouse();
-        put_mouse_data(KBD_ACK);
-        put_mouse_data(KBD_SELF_TEST_REPLAY);
-        break;
-    case MOUSE_CMD_STATUS:
-        put_mouse_data(KBD_ACK);
-        put_mouse_data((_mouse_button & MOUSE_STATE_BUTTON_MASK) |
-                       (_mouse_scaling ? MOUSE_STATE_SCALING_MASK : 0) |
-                       (_mouse_reomte_mode ? MOUSE_STATE_REMOTE_MODE_MASK : 0) |
-                       (_mouse_reporting ? MOUSE_STATE_DATA_REPORTING_MASK : 0));
-        put_mouse_data(_mouse_resolution);
-        put_mouse_data(_mouse_sample_rate);
-        break;
-    case MOUSE_CMD_READ_ID:
-        put_mouse_data(KBD_ACK);
-        put_mouse_data(0);
-        break;
-    case MOUSE_CMD_DISABLE_DATA_REPORTING:
-        put_mouse_data(KBD_ACK);
-        _mouse_reporting = false;
-        break;
-    case MOUSE_CMD_STREAM_MODE:
-        put_mouse_data(KBD_ACK);
-        _mouse_reomte_mode = false;
-        break;
-    case MOUSE_CMD_REMOTE_MODE:
-        put_mouse_data(KBD_ACK);
-        _mouse_reomte_mode = true;
-        break;
-    case MOUSE_CMD_SET_DEFAULT:
-        put_mouse_data(KBD_ACK);
-        restore_mouse_defaults();
-        break;
-    case MOUSE_CMD_RESEND:
-        put_mouse_data(KBD_ACK);
-        //resend last mouse packet
-        break;
-    default:
-        put_mouse_data(KBD_NAK);
-        D_MESSAGE("0x%x", val);
-        for (;;) { sleep(1);}
     }
 }
 
@@ -451,17 +467,20 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
             break;
         case KBD_CMD_RESEND:
             put_data(KBD_ACK);
-            //resend last packet ...
+            D_MESSAGE("todo: resend last mouse packet");
             break;
         default:
             if (!(val >= KBD_CMD_NOP2_FIRST && val <= KBD_CMD_NOP2_LAST) &&
                !(val >= KBD_CMD_NOP1_FIRST && val <= KBD_CMD_NOP1_LAST)) {
-                D_MESSAGE("0x%x", val);
+                D_MESSAGE("unhandled command 0x%x", val);
             }
             put_data(KBD_ACK);
         }
         break;
-    case WRITE_STATE_MOUSE_CMD:
+    case WRITE_STATE_MOUSE_OUTPUT:
+        put_mouse_data(val);
+        break;
+    case WRITE_STATE_MOUSE:
         write_to_mouse(val);
         break;
     case WRITE_STATE_COMMAND_BYTE:
@@ -469,20 +488,6 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
         break;
     case WRITE_STATE_COMMAND_OUTPUT_PORT:
         write_output_port(val);
-        break;
-    case WRITE_STATE_MOUSE_RESOLUTUIN:
-        if (!mouse_is_active()) {
-            return;
-        }
-        _mouse_resolution = val;
-        put_mouse_data(KBD_ACK);
-        break;
-    case WRITE_STATE_MOUSE_SAMPLE_RATE:
-        if (!mouse_is_active()) {
-            return;
-        }
-        _mouse_sample_rate = val;
-        put_mouse_data(KBD_ACK);
         break;
     case WRITE_STATE_KBD_LEDS:
         if (!keyboard_is_active()) {
@@ -600,7 +605,10 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         _write_state = WRITE_STATE_COMMAND_BYTE;
         break;
     case CTRL_CMD_WRITE_TO_MOUSE:
-         _write_state = WRITE_STATE_MOUSE_CMD;
+         _write_state = WRITE_STATE_MOUSE;
+        break;
+    case CTRL_CMD_WRITE_TO_MOUSE_OUTPUT:
+         _write_state = WRITE_STATE_MOUSE_OUTPUT;
         break;
     case CTRL_CMD_WRITE_OUTPUT_PORT:
         _write_state = WRITE_STATE_COMMAND_OUTPUT_PORT;
@@ -644,8 +652,7 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         break;
     default:
         if (val < CTRL_CMD_PULSE_0UTPUT_FIRST) {
-            D_MESSAGE("0x%x", val);
-            for( ;;) sleep(1);
+            D_MESSAGE("unhandled command 0x%x", val);
         }
     }
 }
