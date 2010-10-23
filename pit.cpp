@@ -106,7 +106,7 @@ PIT::~PIT()
 {
     delete _timers[0].irq;
     _timers[0].timer->destroy();
-    nox().get_io_bus().unregister_region(_io_region);
+    get_nox().get_io_bus().unregister_region(_io_region);
 }
 
 void PIT::timer_proc()
@@ -460,5 +460,22 @@ uint8_t PIT::io_read_byte(uint16_t port)
     }
 
     return (timer.read_flip & 1) ? timer.counter_output >> 8 : timer.counter_output;
+}
+
+void PIT::set_gate_level(uint timer, bool high)
+{
+    if (!high) {
+        D_MESSAGE_SOME(10, "impliment me");
+    }
+}
+
+bool PIT::get_output_level(uint timer)
+{
+    ASSERT(timer < 4);
+
+    Lock lock(_mutex);
+
+    update_timer(_timers[timer]);
+    return !!_timers[timer].output;
 }
 

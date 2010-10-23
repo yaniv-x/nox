@@ -40,7 +40,8 @@ public:
     PIT(NoxVM& nox);
     virtual ~PIT();
 
-    NoxVM& nox() { return *(NoxVM*)get_container();}
+    void set_gate_level(uint timer, bool high); // use Wire object (generalize PICWire)
+    bool get_output_level(uint timer); // use Wire object (generalize PICWire)
 
     virtual void reset() {}
     virtual void start() {}

@@ -74,6 +74,8 @@ static inline std::string strip_pretty_function(const std::string& pretty_functi
 
 #define W_MESSAGE_SOME(how_much, format, ...) \
     OUTPUT_MESSAGE_SOME(how_much, WARNING, format, ## __VA_ARGS__)
+#define D_MESSAGE_SOME(how_much, format, ...) \
+    OUTPUT_MESSAGE_SOME(how_much, DEBUG, format, ## __VA_ARGS__)
 
 
 #define OUTPUT_MESSAGE_ONCE(type, format, ...)   {          \
