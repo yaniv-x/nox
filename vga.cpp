@@ -87,6 +87,8 @@ enum {
     CRT_REG_HEIGHT_TOTAL = 0x06,
     CRT_REG_OVERFLOW = 0x07,
     CRT_REG_MAX_SCAN_LINE = 0x09,
+    CRT_REG_START_ADDRESS_HIGH = 0x0c,
+    CRT_REG_START_ADDRESS_LOW = 0x0d,
     CRT_REG_VERTICAL_RETRACE = 0x11,
     CRT_REG_HEIGHT = 0x12,
     CRT_REG_MODE = 0x17,
@@ -302,11 +304,11 @@ void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uin
 }
 
 
-uint8_t VGA::fetch_pix_16(uint offset)
+uint8_t VGA::fetch_pix_16(const uint8_t* fb_ptr, uint offset)
 {
     uint bit = 7 - offset % 8;
     uint mask = 1 << bit;
-    uint8_t* byte = _vram + offset / 8 * 4;
+    const uint8_t* byte = fb_ptr + offset / 8 * 4;
 
     return  ((byte[0] & mask) >> bit) << 0 |
             ((byte[1] & mask) >> bit) << 1 |
@@ -332,6 +334,11 @@ void VGA::update()
     uint width = _width;
     uint height = _height;
 
+    uint32_t fb_offset = (uint32_t(_crt_regs[CRT_REG_START_ADDRESS_HIGH]) << 8) +
+                       _crt_regs[CRT_REG_START_ADDRESS_LOW];
+
+    uint8_t* fb_ptr = _vram + (fb_offset << 2);
+
     bool text_mode = !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT));
 
     if (text_mode) {
@@ -345,14 +352,15 @@ void VGA::update()
          uint lines = height / char_h;
 
          uint32_t* dest_line = (uint32_t*)_fb->get();
-         uint8_t* char_ptr = _vram;
+
+         lines = MIN(lines, (_vram_end - fb_ptr) / 4 / width);
 
          for (int i = 0; i < lines; i++) {
              uint32_t* dest_char = dest_line;
 
              for (int j = 0; j < line_size; j++) {
-                 draw_char(*char_ptr, *(char_ptr + 1), dest_char, char_w, char_h);
-                 char_ptr += 4;
+                 draw_char(*fb_ptr, *(fb_ptr + 1), dest_char, char_w, char_h);
+                 fb_ptr += 4;
                  dest_char += char_w;
              }
 
@@ -384,8 +392,12 @@ void VGA::update()
         uint32_t* dest = (uint32_t*)_fb->get();
         uint pixels = height * width;
 
+        pixels = MIN(pixels, (_vram_end - fb_ptr) << 1);
+
         for (uint i = 0; i < pixels; i++) {
-            uint8_t pal_index = (_attributes_regs[fetch_pix_16(i)] & pal_mask) | pal_high_bits;
+            uint8_t pal_index;
+
+            pal_index = (_attributes_regs[fetch_pix_16(fb_ptr, i)] & pal_mask) | pal_high_bits;
             dest[i] = _palette[pal_index & _color_index_mask].color;
         }
     }
@@ -661,7 +673,8 @@ void VGA::on_crt_mode_cahnge()
     }
 
     if (width > MAX_WIDTH || height > MAX_HIGHT) {
-        THROW("invalid size");
+        D_MESSAGE("invalid size");
+        return;
     }
 
     _width = width;
@@ -817,21 +830,30 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 }
 
 
+inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
+{
+    if (_vram + offset >= _vram_end) {
+        D_MESSAGE("out of bounds");
+        dest = 0xff;
+        return;
+    }
+
+    dest = _vram[offset];
+}
+
+
 inline void VGA::vram_read_one(uint32_t src, uint8_t& dest)
 {
     ASSERT(!!(_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_ODD_EVEN_MASK) ==
            !(_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_ODD_EVEN));
 
     if (_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_CHAIN_MASK) {
-        ASSERT(&_vram[src] < _vram_end);
-        dest = _vram[src];
+        vram_load_one(src, dest);
     } else if ((_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_ODD_EVEN_MASK)) {
-        ASSERT(&_vram[(src << 2) | _graphics_regs[GRAPHICS_REG_READ_PLAN]] < _vram_end);
-        dest = _vram[(src << 2) | _graphics_regs[GRAPHICS_REG_READ_PLAN]];
+        vram_load_one((src << 2) | _graphics_regs[GRAPHICS_REG_READ_PLAN], dest);
     } else {
         uint32_t plan = (src & 1) | (_graphics_regs[GRAPHICS_REG_READ_PLAN] & 2);
-        ASSERT(&_vram[((src & ~1) << 1) | plan] < _vram_end);
-        dest = _vram[((src & ~1) << 1) | plan];
+        vram_load_one(((src & ~1) << 1) | plan, dest);
     }
 }
 
@@ -895,6 +917,7 @@ inline void VGA::vram_write_one(uint64_t dest, uint8_t byte)
 
     if (_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_CHAIN_MASK) {
         plan = dest & 0x3;
+
         if (!(_sequencer_regs[SEQUENCER_REG_PLANE] & (1 << plan))) {
             return;
         }

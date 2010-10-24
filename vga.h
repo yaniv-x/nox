@@ -92,19 +92,20 @@ private:
     void io_write_byte(uint16_t port, uint8_t val);
     void set_misc_reg(uint8_t val);
     void reset_sequencer();
-    uint8_t fetch_pix_16(uint offset);
+    uint8_t fetch_pix_16(const uint8_t* fb_ptr, uint offset);
     void update();
     void reset_io();
     void reset_fb();
     void blank_screen();
     void on_crt_mode_cahnge();
+
+    void vram_load_one(uint32_t offset, uint8_t& dest);
     void vram_read_one(uint32_t src, uint8_t& dest);
     void vram_read(uint64_t src, uint64_t length, uint8_t* dest);
 
     void vram_store_byte(uint64_t offset, uint8_t val);
     void vram_write_one(uint64_t dest, uint8_t val);
     void vram_write(const uint8_t* src, uint64_t length, uint64_t dest);
-
 
     bool font_bit(uint8_t ch, int i, int j, uint char_w, uint char_h);
     void draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uint char_h);
