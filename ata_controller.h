@@ -60,14 +60,20 @@ private:
     void clear_HOB();
     void set_config();
     void identify_device();
+    void do_read_sectors_common(uint64_t start, uint64_t end);
     void do_read_sectors();
+    void do_read_sectors_ext();
+    void do_write_sectors_common(uint64_t start, uint64_t end);
     void do_write_sectors();
+    void do_write_sectors_ext();
     void do_command(uint8_t command);
     void raise();
     bool is_valid_sectors_range(uint64_t start, uint64_t end);
     uint get_sector_count();
+    uint get_sector_count_ext();
     uint64_t get_num_sectors();
     uint64_t get_sector_address();
+    uint64_t get_sector_address_ext();
 
 private:
     Mutex _mutex;

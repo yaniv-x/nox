@@ -180,7 +180,9 @@ void ATAController::io_control(uint16_t port, uint8_t val)
 
 enum {
     CMD_READ_SECTORS = 0x20,
+    CMD_READ_SECTORS_EXT = 0x24,
     CMD_WRITE_SECTORS = 0x30,
+    CMD_WRITE_SECTORS_EXT = 0x34,
     CMD_CHECK_POWER_MODE = 0xe5,
     CMD_DEVICE_CONFIGURATION = 0xb1,
     CMD_DEVICE_RESET = 0x08, //Use prohibited when the PACKET Command feature set is not implemented
@@ -494,9 +496,9 @@ uint64_t ATAController::get_sector_address()
 
     if (lba) {
         sector = _lba_low & 0xff;
-        sector += (_lba_mid & 0xff) << 8;
-        sector += (_lba_high & 0xff) << 16;
-        sector += (_device & DEVICE_ADDRESS_MASK) << 24;
+        sector |= (_lba_mid & 0xff) << 8;
+        sector |= (_lba_high & 0xff) << 16;
+        sector |= (_device & DEVICE_ADDRESS_MASK) << 24;
     } else {
         uint cylinder = (_lba_mid & 0xff)  + ((_lba_high & 0xff) << 8);
         uint head = _device & DEVICE_ADDRESS_MASK;
@@ -508,60 +510,103 @@ uint64_t ATAController::get_sector_address()
 }
 
 
+uint64_t ATAController::get_sector_address_ext()
+{
+    uint64_t sector;
+
+    sector = (_lba_low & 0xff) | ((_lba_low & 0xff00) << 16);
+    sector |= ((_lba_mid & 0xff) << 8) | (uint64_t(_lba_mid & 0xff00) << 24);
+    sector |= ((_lba_high & 0xff) << 16) | (uint64_t(_lba_high & 0xff00) << 32);
+
+    return sector;
+}
+
+
 uint ATAController::get_sector_count()
 {
     return (_count & 0xff) ? (_count & 0xff) : 256;
 }
 
 
-bool ATAController::is_valid_sectors_range(uint64_t start, uint64_t end)
+uint ATAController::get_sector_count_ext()
 {
-    return start < end && start + end <= _disk->get_size() / SECTOR_SIZE;
+    return (_count & 0xffff) ? (_count & 0xffff) : 65536;
 }
 
 
-void ATAController::do_read_sectors()
+bool ATAController::is_valid_sectors_range(uint64_t start, uint64_t end)
 {
-    uint64_t sector = get_sector_address();
+    return start < end && end <= _disk->get_size() / SECTOR_SIZE;
+}
 
-    _end_sector = (_count & 0xff) ? (_count & 0xff) : 256;
-    _end_sector = sector + get_sector_count();
 
-    if (!is_valid_sectors_range(sector, _end_sector)) {
+void ATAController::do_read_sectors_common(uint64_t start, uint64_t end)
+{
+    if (!is_valid_sectors_range(start, end)) {
         command_abort_error();
         return;
     }
 
-    if (!_disk->read(sector, _sector)) {
+    _end_sector = end;
+
+    if (!_disk->read(start, _sector)) {
         command_abort_error();
         return;
     }
 
     _data_in = (uint16_t*)_sector;
     _data_in_end = _data_in + 256;
-    _next_sector = sector + 1;
+    _next_sector = start + 1;
 
     _status |= STATUS_DATA_REQUEST_MASK;
+    raise();
+}
+
+
+void ATAController::do_read_sectors()
+{
+    uint64_t start = get_sector_address();
+    do_read_sectors_common(start, start + get_sector_count());
+}
+
+
+void ATAController::do_read_sectors_ext()
+{
+    uint64_t start = get_sector_address_ext();
+    do_read_sectors_common(start, start + get_sector_count_ext());
+}
+
+
+void ATAController::do_write_sectors_common(uint64_t start, uint64_t end)
+{
+    if (!is_valid_sectors_range(start, end)) {
+        command_abort_error();
+        return;
+    }
+
+    _next_sector = start;
+    _end_sector = end;
+
+    _data_in = (uint16_t*)_sector;
+    _data_in_end = _data_in + 256;
+
+    _status |= STATUS_DATA_REQUEST_MASK;
+
     raise();
 }
 
 
 void ATAController::do_write_sectors()
 {
-    _next_sector = get_sector_address();
-    _end_sector = _next_sector + get_sector_count();
+    uint64_t start = get_sector_address();
+    do_write_sectors_common(start, start + get_sector_count());
+}
 
-    if (!is_valid_sectors_range(_next_sector, _end_sector)) {
-        command_abort_error();
-        return;
-    }
 
-    _data_in = (uint16_t*)_sector;
-    _data_in_end = _data_in + 256;
-
-    _status |= STATUS_DATA_REQUEST_MASK;
-
-    raise();
+void ATAController::do_write_sectors_ext()
+{
+    uint64_t start = get_sector_address_ext();
+    do_write_sectors_common(start, start + get_sector_count_ext());
 }
 
 
@@ -586,11 +631,26 @@ void ATAController::do_command(uint8_t command)
         }
         break;
     }
+    case CMD_READ_SECTORS_EXT: {
+        if (!(_status & STATUS_READY_MASK)) {
+            command_abort_error();
+        } else {
+            do_read_sectors_ext();
+        }
+        break;
+    }
     case CMD_WRITE_SECTORS:
         if (!(_status & STATUS_READY_MASK)) {
             command_abort_error();
         } else {
             do_write_sectors();
+        }
+        break;
+    case CMD_WRITE_SECTORS_EXT:
+        if (!(_status & STATUS_READY_MASK)) {
+            command_abort_error();
+        } else {
+            do_write_sectors_ext();
         }
         break;
     case CMD_FLUSH_CACHE_EXT:
