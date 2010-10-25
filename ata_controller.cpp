@@ -247,7 +247,6 @@ void ATAController::set_signature()
 }
 
 enum {
-
     ATA3_MAX_CYL = 16383,
     ATA3_MAX_HEAD = 16,
     ATA3_MAX_SEC = 63,
@@ -262,15 +261,16 @@ enum {
     COMPAT_ID_OFFSET_HEAD = 3,
     COMPAT_ID_OFFSET_SECTORS = 6,
 
-    ID_OFFSET_SERIAL = 19,
-    ID_SERIAL_SIZE = 20,
+    ID_OFFSET_SERIAL = 10,
+    ID_SERIAL_NUM_CHARS = 20,
 
     ID_OFFSET_REVISION = 23,
-    ID_REVISION_SIZE = 8,
+    ID_REVISION_NUM_CHARS = 8,
+
+    ID_OFFSET_MODEL = 27,
+    ID_MODEL_NUM_CHARS = 40,
 
     ID_OFFSET_MAX_SECTORS_PER_BLOCK = 47,
-
-
 
     ID_OFFSET_CAP1 = 49,
     ID_CAP1_DMA_MASK = (1 << 8),
@@ -295,7 +295,6 @@ enum {
     ID_NULTI_DMA_MODE0_SELECT_MASK = (1 << 8),
     ID_NULTI_DMA_MODE1_SELECT_MASK = (1 << 9),
     ID_NULTI_DMA_MODE2_SELECT_MASK = (1 << 10),
-
 
     ID_OFFSET_PIO = 64,
     IO_PIO_MODE3_MASK = (1 << 0),
@@ -379,26 +378,32 @@ static int8_t checksum8(void *start, uint size)
     return -res;
 }
 
+
+static void set_ata_str(uint16_t* start, int len, const char* str)
+{
+    int n = MIN(len * 2, strlen(str));
+    uint8_t* dest = (uint8_t*)start;
+    int i;
+
+    memset(dest, ' ', len * 2);
+
+    for (i = 0; i < n; i += 2) dest[i + 1] = str[i];
+    for (i = 1; i < n; i += 2) dest[i - 1] = str[i];
+}
+
+
 void ATAController::identify_device()
 {
     memset(_identity, 0, sizeof(_identity));
 
     _identity[ID_OFFSET_GENERAL_CONF] = 0;
     _identity[ID_OFFSET_SPECIFIC_CONF] = 0xc837; // Device does not require SET FEATURES subcommand
-                                                // to spin-up after power-up and IDENTIFY DEVICE
-                                                // response is complete
+                                                 // to spin-up after power-up and IDENTIFY DEVICE
+                                                 // response is complete
 
-    char* ch = (char*)&_identity[ID_OFFSET_SERIAL];
-    int i = 0;
-
-    for (i = 0; i < ID_SERIAL_SIZE; i++) {
-        ch[i] = '0' + i;
-    }
-
-    ch = (char*)&_identity[ID_OFFSET_REVISION];
-    for (i = 0; i < ID_REVISION_SIZE; i++) {
-        ch[i] = 'a' + i;
-    }
+    set_ata_str(&_identity[ID_OFFSET_SERIAL], ID_SERIAL_NUM_CHARS / 2, "0");
+    set_ata_str(&_identity[ID_OFFSET_REVISION], ID_REVISION_NUM_CHARS / 2, "1.0.0");
+    set_ata_str(&_identity[ID_OFFSET_MODEL], ID_MODEL_NUM_CHARS / 2, "Nox HD");
 
     _identity[ID_OFFSET_GENERAL_CONF] = COMPAT_ID_GENERAL_CONF_NOT_REMOVABLE_MASK;
 
@@ -466,7 +471,6 @@ void ATAController::identify_device()
     _identity[ID_OFFSET_HRESET] = ID_HRESET_ONE_MASK |
                                   ID_HRESET_PDIAG_MASK |
                                   ID_HRESET_JUMPER_MASK;
-
 
     uint64_t sectors_48 = (sectors > (1ULL << 48) - 1) ? (1ULL << 48) - 1 : sectors;
     _identity[ID_OFFSET_ADDR_SECTORS_48] = sectors_48;
