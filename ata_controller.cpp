@@ -120,18 +120,14 @@ ATAController::ATAController(NoxVM& nox, uint irq)
 
 void ATAController::reset()
 {
+    _irq->drop();
+
     _status = 0;
     _control = 0;
-    _error = 0;
-    _device = 0;
-    _count = 0;
-    _lba_low = 0;
-    _lba_mid = 0;
-    _lba_high = 0;
     _feature = 0;
     _data_in = _data_in_end = 0;
-
-    _irq->drop();
+    _error = _disk ? DIAGNOSTIC_D0_OK_D1_NOT_PRESENT : DIAGNOSTIC_D0_FAILED_D1_NOT_PRESENT;
+    set_signature();
 }
 
 void ATAController::soft_reset()
@@ -174,7 +170,6 @@ void ATAController::io_control(uint16_t port, uint8_t val)
     }
 
     if (_status & INTERNAL_STATUS_RESET_MASK) {
-        set_signature();
         _status &= ~(STATUS_BUSY_MASK | INTERNAL_STATUS_RESET_MASK);
         if (_disk) {
             _status |= STATUS_READY_MASK;
