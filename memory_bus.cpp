@@ -252,6 +252,7 @@ MemoryBus::MemoryBus(NoxVM& nox)
     : VMPart ("Memory bus", nox)
     , _address_mask (~(1ULL << 20))
 {
+    _address_mask = (1ULL << ADDRESS_BITS) - 1; // for now no A20 support (solve conflict with kvm)
     fill_gap(0, max_pages);
 
     memory_bus = this;
