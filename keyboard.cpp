@@ -493,14 +493,14 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
         if (!keyboard_is_active()) {
             return;
         }
-        put_mouse_data(KBD_ACK);
+        put_data(KBD_ACK);
         _kbd_leds = val;
         break;
     case WRITE_STATE_KBD_RATE:
         if (!keyboard_is_active()) {
             return;
         }
-        put_mouse_data(KBD_ACK);
+        put_data(KBD_ACK);
         _kbd_rate = val;
         break;
     }
