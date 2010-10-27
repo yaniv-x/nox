@@ -29,6 +29,7 @@
 
 #include "vm_part.h"
 #include "threads.h"
+#include "nox_key.h"
 
 class NoxVM;
 class IORegion;
@@ -47,8 +48,9 @@ public:
 
     void reset() { _head = _tail = 0;}
     bool is_empty() { return _head == _tail; }
-    bool is_full() { return size() == BUF_SIZE; }
-    uint size() { return _tail - _head; }
+    bool is_full() { return num_items() == capacity(); }
+    uint num_items() { return _tail - _head; }
+    uint capacity() { return BUF_SIZE;}
 
     void insert(uint8_t new_item) { buf[_tail++ % BUF_SIZE] = new_item; }
     uint8_t pop() { return buf[_head++ % BUF_SIZE];}
@@ -65,14 +67,15 @@ public:
     KbdController(NoxVM& vm);
     virtual ~KbdController();
 
-    NoxVM& nox() { return *(NoxVM*)get_container();}
-
     virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
+
+    void key_down(NoxKey code);
+    void key_up(NoxKey code);
 
 private:
     uint8_t io_read_port_a(uint16_t port);
@@ -91,6 +94,7 @@ private:
     void refill_outgoing();
     bool mouse_is_active();
     bool keyboard_is_active();
+    void key_common(NoxKey code, uint scan_index);
 
 private:
     Mutex _mutex;

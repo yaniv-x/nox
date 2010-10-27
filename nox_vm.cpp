@@ -302,7 +302,7 @@ enum {
 
 bool NoxVM::init()
 {
-    new NoxDisplay(*_vga.get());
+    new NoxDisplay(*_vga.get(), *_kbd.get());
 
     if (!_kvm->init()) {
         return false;
