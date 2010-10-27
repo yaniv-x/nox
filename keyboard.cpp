@@ -163,8 +163,8 @@ KbdController::KbdController(NoxVM& nox)
 
 KbdController::~KbdController()
 {
-    nox().get_io_bus().unregister_region(_io_region_a);
-    nox().get_io_bus().unregister_region(_io_region_b);
+    get_nox().get_io_bus().unregister_region(_io_region_a);
+    get_nox().get_io_bus().unregister_region(_io_region_b);
 }
 
 void KbdController::refill_outgoing()
@@ -515,8 +515,8 @@ uint8_t KbdController::io_read_status(uint16_t port)
 
 void KbdController::reset()
 {
-    nox().get_io_bus().remap_region(_io_region_a);
-    nox().get_io_bus().remap_region(_io_region_b);
+    get_nox().get_io_bus().remap_region(_io_region_a);
+    get_nox().get_io_bus().remap_region(_io_region_b);
 
     reset_mouse();
     reset_keyboard();
@@ -655,5 +655,216 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
             D_MESSAGE("unhandled command 0x%x", val);
         }
     }
+}
+
+enum {
+    MAKE,
+    BREAK,
+};
+
+struct KeyScanCode {
+    uint64_t make_break[2];
+};
+
+static KeyScanCode set_1_map[256];
+static KeyScanCode set_2_map[256];
+
+
+#define SET1_SIMPLE(name, key_val) {                                         \
+    set_1_map[NOX_KEY_##name].make_break[MAKE] = key_val;                  \
+    set_1_map[NOX_KEY_##name].make_break[BREAK] = key_val | 0x80;          \
+}
+
+
+#define SET2_SIMPLE(name, key_val) {                                         \
+    set_2_map[NOX_KEY_##name].make_break[MAKE] = key_val;                  \
+    set_2_map[NOX_KEY_##name].make_break[BREAK] = 0x0f | (key_val << 8);   \
+}
+
+
+#define SET_SIMPLE(name, set1_val, set2_val) {  \
+    SET1_SIMPLE(name, set1_val);                \
+    SET2_SIMPLE(name, set2_val);                \
+}
+
+
+#define SET1_ESCAPE(name, key_val) {                                             \
+    set_1_map[NOX_KEY_##name].make_break[MAKE] = 0xe0 | (key_val << 8);        \
+    set_1_map[NOX_KEY_##name].make_break[BREAK] = 0x80e0 | (key_val << 8);     \
+}
+
+
+#define SET2_ESCAPE(name, key_val) {                                             \
+    set_2_map[NOX_KEY_##name].make_break[MAKE] = 0x00e0 | (key_val << 8);      \
+    set_2_map[NOX_KEY_##name].make_break[BREAK] = 0xf0e0 | (key_val << 16);    \
+}
+
+
+#define SET_ESCAPE(name, set1_val, set2_val) {  \
+    SET1_ESCAPE(name, set1_val);                \
+    SET2_ESCAPE(name, set2_val);                \
+}
+
+
+static void __attribute__ ((constructor)) init_scan_codes()
+{
+    memset(set_1_map, 0, sizeof(set_1_map));
+    memset(set_2_map, 0, sizeof(set_2_map));
+
+    SET_SIMPLE(ESCAPE, 0x01, 0x76);
+    SET_SIMPLE(1, 0x02, 0x16);
+    SET_SIMPLE(2, 0x03, 0x1e);
+    SET_SIMPLE(3, 0x04, 0x26);
+    SET_SIMPLE(4, 0x05, 0x25);
+    SET_SIMPLE(5, 0x06, 0x2e);
+    SET_SIMPLE(6, 0x07, 0x36);
+    SET_SIMPLE(7, 0x08, 0x3d);
+    SET_SIMPLE(8, 0x09, 0x3e);
+    SET_SIMPLE(9, 0x0a, 0x46);
+    SET_SIMPLE(0, 0x0b, 0x45);
+    SET_SIMPLE(MINUS, 0x0c, 0x4e);
+    SET_SIMPLE(EQUAL, 0x0d, 0x55);
+    SET_SIMPLE(BACKSPACE, 0x0e, 0x66);
+    SET_SIMPLE(TAB, 0x0f, 0x0d);
+    SET_SIMPLE(Q, 0x10, 0x15);
+    SET_SIMPLE(W, 0x11, 0x1d);
+    SET_SIMPLE(E, 0x12, 0x24);
+    SET_SIMPLE(R, 0x13, 0x2d);
+    SET_SIMPLE(T, 0x14, 0x2c);
+    SET_SIMPLE(Y, 0x15, 0x35);
+    SET_SIMPLE(U, 0x16, 0x3c);
+    SET_SIMPLE(I, 0x17, 0x43);
+    SET_SIMPLE(O, 0x18, 0x44);
+    SET_SIMPLE(P, 0x19, 0x4d);
+    SET_SIMPLE(LEFT_BRACKET, 0x1a, 0x54);
+    SET_SIMPLE(RIGHT_BRACKET, 0x1b, 0x5b);
+    SET_SIMPLE(RETURN, 0x1c, 0x5a);
+    SET_SIMPLE(LEFT_CONTROL, 0x1d, 0x14);
+    SET_SIMPLE(A, 0x1e, 0x1c);
+    SET_SIMPLE(S, 0x1f, 0x1b);
+    SET_SIMPLE(D, 0x20, 0x23);
+    SET_SIMPLE(F, 0x21, 0x2b);
+    SET_SIMPLE(G, 0x22, 0x34);
+    SET_SIMPLE(H, 0x23, 0x33);
+    SET_SIMPLE(J, 0x24, 0x3b);
+    SET_SIMPLE(K, 0x25, 0x42);
+    SET_SIMPLE(L, 0x26, 0x4b);
+    SET_SIMPLE(SEMICOLON, 0x27, 0x4c);
+    SET_SIMPLE(APOSTROPHE, 0x28, 0x52);
+    SET_SIMPLE(BACKQUAT, 0x29, 0x0e);
+    SET_SIMPLE(LEFT_SHIFT, 0x2a, 0x12);
+    SET_SIMPLE(BACKSLASH, 0x2b, 0x5d);
+    SET_SIMPLE(Z, 0x2c, 0x1a);
+    SET_SIMPLE(X, 0x2d, 0x22);
+    SET_SIMPLE(C, 0x2e, 0x21);
+    SET_SIMPLE(V, 0x2f, 0x2a);
+    SET_SIMPLE(B, 0x30, 0x32);
+    SET_SIMPLE(N, 0x31, 0x31);
+    SET_SIMPLE(M, 0x32, 0x3a);
+    SET_SIMPLE(COMMA, 0x33, 0x41);
+    SET_SIMPLE(DOT, 0x34, 0x49);
+    SET_SIMPLE(SLASH, 0x35, 0x4a);
+    SET_SIMPLE(RIGHT_SHIFT, 0x36, 0x59);
+    SET_SIMPLE(PAD_MUL, 0x37, 0x7c);
+    SET_SIMPLE(LEFT_ALT, 0x38, 0x11);
+    SET_SIMPLE(SPACE, 0x39, 0x29);
+    SET_SIMPLE(CAPSLOCK, 0x3a, 0x58);
+    SET_SIMPLE(F1, 0x3b, 0x05);
+    SET_SIMPLE(F2, 0x3c, 0x06);
+    SET_SIMPLE(F3, 0x3d, 0x04);
+    SET_SIMPLE(F4, 0x3e, 0x0c);
+    SET_SIMPLE(F5, 0x3f, 0x03);
+    SET_SIMPLE(F6, 0x40, 0x0b);
+    SET_SIMPLE(F7, 0x41, 0x83);
+    SET_SIMPLE(F8, 0x42, 0x0a);
+    SET_SIMPLE(F9, 0x43, 0x01);
+    SET_SIMPLE(F10, 0x44, 0x09);
+    SET_SIMPLE(NUMLOCK, 0x45, 0x77);
+    SET_SIMPLE(SCROLLLOCK, 0x46, 0x7e);
+    SET_SIMPLE(PAD_7, 0x47, 0x6c);
+    SET_SIMPLE(PAD_8, 0x48, 0x75);
+    SET_SIMPLE(PAD_9, 0x49, 0x7d);
+    SET_SIMPLE(PAD_MINUS, 0x4a, 0x7b);
+    SET_SIMPLE(PAD_4, 0x4b, 0x6b);
+    SET_SIMPLE(PAD_5, 0x4c, 0x73);
+    SET_SIMPLE(PAD_6, 0x4d, 0x74);
+    SET_SIMPLE(PAD_PLUSE, 0x4e, 0x79);
+    SET_SIMPLE(PAD_1, 0x4f, 0x69);
+    SET_SIMPLE(PAD_2, 0x50, 0x72);
+    SET_SIMPLE(PAD_3, 0x51, 0x7a);
+    SET_SIMPLE(PAD_0, 0x52, 0x70);
+    SET_SIMPLE(PAD_DEL, 0x53, 0x71);
+    SET_SIMPLE(F11, 0x57, 0x78);
+    SET_SIMPLE(F12, 0x58, 0x07);
+
+    SET_ESCAPE(PAD_ENTER, 0x1c, 0x5a);
+    SET_ESCAPE(RIGHT_CONTROL, 0x1d, 0x14);
+    SET_ESCAPE(PAD_DIV, 0x35, 0x4a);
+    SET_ESCAPE(PRINT, 0x37, 0x7c);
+    SET_ESCAPE(RIGHT_ALT, 0x38, 0x11);
+    SET_ESCAPE(HOME, 0x6c, 0x47);
+    SET_ESCAPE(UP, 0x48, 0x75);
+    SET_ESCAPE(PAGE_UP, 0x49, 0x7d);
+    SET_ESCAPE(LEFT, 0x4b, 0x6b);
+    SET_ESCAPE(RIGHT, 0x4d, 0x74);
+    SET_ESCAPE(END, 0x4f, 0x69);
+    SET_ESCAPE(DOWN, 0x50, 0x72);
+    SET_ESCAPE(PAGEDOWN, 0x51, 0x7a);
+    SET_ESCAPE(INSERT, 0x52, 0x70);
+    SET_ESCAPE(DELETE, 0x53, 0x71);
+    SET_ESCAPE(LEFT_META, 0x5b, 0x1f);
+    SET_ESCAPE(RIGHT_META, 0x5c, 0x27);
+    SET_ESCAPE(MENU, 0x5d, 0x2f);
+
+    set_1_map[NOX_KEY_PAUSE].make_break[MAKE] = 0xc59de1451de1;
+    set_1_map[NOX_KEY_PAUSE].make_break[BREAK] = 0;
+
+    set_2_map[NOX_KEY_PAUSE].make_break[MAKE] = 0x77f014f0e17714e1;
+    set_2_map[NOX_KEY_PAUSE].make_break[BREAK] = 0;
+}
+
+
+void KbdController::key_common(NoxKey code, uint scan_index)
+{
+    ASSERT(scan_index < 2);
+
+    Lock lock(_mutex);
+
+    if ((_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK) || !_kbd_enabled) {
+        return;
+    }
+
+    if (code > 255 || code < 0) {
+        D_MESSAGE("inavlid code");
+        return;
+    }
+
+    if (_keyboard_output.buf.capacity() - _keyboard_output.buf.num_items() < sizeof(KeyScanCode)) {
+        D_MESSAGE("no space");
+        return;
+    }
+
+    bool set1 = !!(_command_byte & COMMAND_BYTE_TRANSLATE_MASK);
+    KeyScanCode* map = (set1) ? set_1_map : set_2_map;
+    uint8_t* scan =  (uint8_t*)&map[code].make_break[scan_index];
+    uint8_t* scan_end  =  scan + sizeof(map[0].make_break[0]);
+
+    for (; scan < scan_end && *scan; scan++) {
+        put_data(*scan);
+    }
+}
+
+
+void KbdController::key_down(NoxKey code)
+{
+    // todo: test running state
+    key_common(code, MAKE);
+}
+
+
+void KbdController::key_up(NoxKey code)
+{
+    // todo: test running state
+    key_common(code, BREAK);
 }
 

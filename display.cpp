@@ -26,15 +26,19 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/XKBlib.h>
 #include "display.h"
 #include "threads.h"
+#include "keyboard.h"
 
 
-NoxDisplay::NoxDisplay(VGA& vga)
+NoxDisplay::NoxDisplay(VGA& vga, KbdController& kbd)
     : _vga (vga)
     , _back_end (_vga.attach_front_end(this))
     , _thread (new Thread((Thread::start_proc_t)&NoxDisplay::main, this))
     , _window (None)
+    , _kbd (kbd)
+    , _evdev (false)
 {
 
 }
@@ -82,6 +86,12 @@ void NoxDisplay::x11_handler()
             update_area(event.xexpose.window, event.xexpose.x, event.xexpose.y,
                         event.xexpose.width, event.xexpose.height);
             break;
+        case KeyPress:
+            on_key_press(event.xkey.keycode);
+            break;
+        case KeyRelease:
+            on_key_release(event.xkey.keycode);
+            break;
         case ClientMessage: {
             Atom wm_protocol_atom = XInternAtom(_display, "WM_PROTOCOLS", False);
             Atom wm_delete_window_atom = XInternAtom(_display, "WM_DELETE_WINDOW", False);
@@ -110,6 +120,28 @@ void NoxDisplay::update()
     }
 }
 
+
+void NoxDisplay::query_input_driver()
+{
+    XkbDescPtr keyboard = XkbGetKeyboard(_display, XkbAllComponentsMask, XkbUseCoreKbd);
+    char* str;
+
+    if (!keyboard) {
+        W_MESSAGE("failed");
+        return;
+    }
+
+    if ((str = XGetAtomName(_display, keyboard->names->keycodes))) {
+        _evdev = strstr(str, "evdev") != NULL;
+        XFree(str);
+    } else {
+        W_MESSAGE("failed");
+    }
+
+    XkbFreeClientMap(keyboard, XkbAllComponentsMask, True);
+}
+
+
 void* NoxDisplay::main()
 {
     XInitThreads();
@@ -119,11 +151,14 @@ void* NoxDisplay::main()
         return NULL;
     }
 
+    query_input_driver();
+
     XSetWindowAttributes win_attributes;
 
     unsigned long mask = CWBorderPixel | CWEventMask;
     win_attributes.border_pixel = 1;
-    win_attributes.event_mask = ExposureMask | StructureNotifyMask;
+    win_attributes.event_mask = ExposureMask | StructureNotifyMask | KeyPressMask |
+                                KeyReleaseMask;
 
 
     _back_end->get_size(&_width, &_height);
@@ -180,5 +215,27 @@ void NoxDisplay::on_size_changed(uint32_t width, uint32_t hight)
 void NoxDisplay::invalid()
 {
     D_MESSAGE("implement me");
+}
+
+
+void NoxDisplay::on_key_press(unsigned int keycode)
+{
+    if (!_evdev) {
+        XBell(_display, 0);
+        return;
+    }
+
+    _kbd.key_down((NoxKey)keycode);
+}
+
+
+void NoxDisplay::on_key_release(unsigned int keycode)
+{
+    if (!_evdev) {
+        XBell(_display, 0);
+        return;
+    }
+
+    _kbd.key_up((NoxKey)keycode);
 }
 

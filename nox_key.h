@@ -1,0 +1,140 @@
+/*
+    Copyright (c) 2013 Yaniv Kamay,
+    All rights reserved.
+
+    Source code is provided for evaluation purposes only. Modification or use in
+    source code for any other purpose is prohibited.
+
+    Binary code (i.e. the binary form of source code form) is allowed to use for
+    evaluation purposes only. Modification or use in binary code for any other
+    purpose is prohibited.
+
+    Redistribution, in source form or in binary form, with or without modification,
+    are not permitted.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTOR BE LIABLE FOR
+    ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+    ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+    IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#ifndef _H_NOX_KEY
+#define _H_NOX_KEY
+
+// Nox key codes follow evdev codes
+
+enum NoxKey {
+    NOX_KEY_ESCAPE = 9,
+    NOX_KEY_1,
+    NOX_KEY_2,
+    NOX_KEY_3,
+    NOX_KEY_4,
+    NOX_KEY_5,
+    NOX_KEY_6,
+    NOX_KEY_7,
+    NOX_KEY_8,
+    NOX_KEY_9,
+    NOX_KEY_0,
+    NOX_KEY_MINUS,
+    NOX_KEY_EQUAL,
+    NOX_KEY_BACKSPACE,
+    NOX_KEY_TAB,
+    NOX_KEY_Q,
+    NOX_KEY_W,
+    NOX_KEY_E,
+    NOX_KEY_R,
+    NOX_KEY_T,
+    NOX_KEY_Y,
+    NOX_KEY_U,
+    NOX_KEY_I,
+    NOX_KEY_O,
+    NOX_KEY_P,
+    NOX_KEY_LEFT_BRACKET,
+    NOX_KEY_RIGHT_BRACKET,
+    NOX_KEY_RETURN,
+    NOX_KEY_LEFT_CONTROL,
+    NOX_KEY_A,
+    NOX_KEY_S,
+    NOX_KEY_D,
+    NOX_KEY_F,
+    NOX_KEY_G,
+    NOX_KEY_H,
+    NOX_KEY_J,
+    NOX_KEY_K,
+    NOX_KEY_L,
+    NOX_KEY_SEMICOLON,
+    NOX_KEY_APOSTROPHE,
+    NOX_KEY_BACKQUAT,
+    NOX_KEY_LEFT_SHIFT,
+    NOX_KEY_BACKSLASH,
+    NOX_KEY_Z,
+    NOX_KEY_X,
+    NOX_KEY_C,
+    NOX_KEY_V,
+    NOX_KEY_B,
+    NOX_KEY_N,
+    NOX_KEY_M,
+    NOX_KEY_COMMA,
+    NOX_KEY_DOT,
+    NOX_KEY_SLASH,
+    NOX_KEY_RIGHT_SHIFT,
+    NOX_KEY_PAD_MUL,
+    NOX_KEY_LEFT_ALT,
+    NOX_KEY_SPACE,
+    NOX_KEY_CAPSLOCK,
+    NOX_KEY_F1,
+    NOX_KEY_F2,
+    NOX_KEY_F3,
+    NOX_KEY_F4,
+    NOX_KEY_F5,
+    NOX_KEY_F6,
+    NOX_KEY_F7,
+    NOX_KEY_F8,
+    NOX_KEY_F9,
+    NOX_KEY_F10,
+    NOX_KEY_NUMLOCK,
+    NOX_KEY_SCROLLLOCK,
+    NOX_KEY_PAD_7,
+    NOX_KEY_PAD_8,
+    NOX_KEY_PAD_9,
+    NOX_KEY_PAD_MINUS,
+    NOX_KEY_PAD_4,
+    NOX_KEY_PAD_5,
+    NOX_KEY_PAD_6,
+    NOX_KEY_PAD_PLUSE,
+    NOX_KEY_PAD_1,
+    NOX_KEY_PAD_2,
+    NOX_KEY_PAD_3,
+    NOX_KEY_PAD_0,
+    NOX_KEY_PAD_DEL,
+    NOX_KEY_F11 = 95,
+    NOX_KEY_F12,
+    NOX_KEY_PAD_ENTER = 104,
+    NOX_KEY_RIGHT_CONTROL,
+    NOX_KEY_PAD_DIV,
+    NOX_KEY_PRINT,
+    NOX_KEY_RIGHT_ALT,
+    NOX_KEY_HOME = 110,
+    NOX_KEY_UP,
+    NOX_KEY_PAGE_UP,
+    NOX_KEY_LEFT,
+    NOX_KEY_RIGHT,
+    NOX_KEY_END,
+    NOX_KEY_DOWN,
+    NOX_KEY_PAGEDOWN,
+    NOX_KEY_INSERT,
+    NOX_KEY_DELETE,
+    NOX_KEY_PAUSE = 127,
+    NOX_KEY_LEFT_META = 133,
+    NOX_KEY_RIGHT_META,
+    NOX_KEY_MENU,
+};
+
+#endif
+

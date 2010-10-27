@@ -36,10 +36,11 @@
 
 class Thread;
 class VGA;
+class KbdController;
 
 class NoxDisplay: public RunLoop, public VGAFrontEnd {
 public:
-    NoxDisplay(VGA& vga);
+    NoxDisplay(VGA& vga, KbdController& kbd);
 
 private:
     virtual void on_size_changed(uint32_t width, uint32_t hight);
@@ -48,6 +49,9 @@ private:
     void update_area(Window window, int x, int y, int width, int height);
     void x11_handler();
     void update();
+    void on_key_press(unsigned int keycode);
+    void on_key_release(unsigned int keycode);
+    void query_input_driver();
     void* main();
 
 private:
@@ -56,6 +60,9 @@ private:
     std::auto_ptr<Thread> _thread;
     Display* _display;
     Window _window;
+
+    KbdController& _kbd;
+    bool _evdev;
 
     uint32_t _width;
     uint32_t _height;
