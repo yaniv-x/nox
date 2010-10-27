@@ -93,6 +93,11 @@ private:
     void set_misc_reg(uint8_t val);
     void reset_sequencer();
     uint8_t fetch_pix_16(const uint8_t* fb_ptr, uint offset);
+    uint32_t text_color(uint nibble);
+    uint32_t foreground_color_at(uint fb_pos);
+    void show_caret();
+    void hide_caret();
+    void update_caret();
     void update();
     void reset_io();
     void reset_fb();
@@ -166,6 +171,9 @@ private:
 
     typedef std::list<VGABackEndImp*> FrontEndList;
     FrontEndList _front_ends;
+
+    nox_time_t _caret_tick;
+    bool _caret_visable;
 
     friend class VGABackEndImp;
 };

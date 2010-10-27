@@ -41,6 +41,8 @@ enum {
     VRAM_START = 0xa0000,
     VRAM_SIZE = 256 * KB,
 
+    CARET_RATE = 1000 * 1000 * 1000 / 2,
+
     IO_ATTRIB_CONTROL_INDEX = 0x3c0,
     IO_ATTRIB_READ = 0x3c1,
     IO_INPUT_STATUS_0 = 0x3c2,
@@ -87,8 +89,12 @@ enum {
     CRT_REG_HEIGHT_TOTAL = 0x06,
     CRT_REG_OVERFLOW = 0x07,
     CRT_REG_MAX_SCAN_LINE = 0x09,
+    CRT_REG_CURSOR_START = 0x0a,
+    CRT_REG_CURSOR_END = 0x0b,
     CRT_REG_START_ADDRESS_HIGH = 0x0c,
     CRT_REG_START_ADDRESS_LOW = 0x0d,
+    CRT_REG_CURSOR_LOCATION_HIGH = 0x0e,
+    CRT_REG_CURSOR_LOCATION_LOW = 0x0f,
     CRT_REG_VERTICAL_RETRACE = 0x11,
     CRT_REG_HEIGHT = 0x12,
     CRT_REG_MODE = 0x17,
@@ -100,6 +106,11 @@ enum {
     CRT_OVERFLAOW_HT9_BIT = 5,
     CRT_OVERFLAOW_H8_BIT = 1,
     CRT_OVERFLAOW_H9_BIT = 6,
+
+    CRT_CURSOR_START_OFF = (1 << 5),
+    CRT_CURSOR_START_MASK = (1 << 5) - 1,
+
+    CRT_CURSOR_END_MASK = (1 << 5) - 1,
 
     CRT_MAX_SCAN_LINE_TEXT_HIGHET_MASK = (1 << 5) - 1,
 
@@ -232,6 +243,8 @@ VGA::VGA(NoxVM& nox)
     , _fb (new SharedBuf(MAX_WIDTH * MAX_HIGHT * sizeof(uint32_t)))
     , _width (640)
     , _height (480)
+    , _caret_tick (0)
+    , _caret_visable (0)
 {
     IOBus& io_bus = nox.get_io_bus();
 
@@ -271,14 +284,11 @@ bool VGA::font_bit(uint8_t ch, int i, int j, uint char_w, uint char_h)
 }
 
 
-void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uint char_h)
+uint32_t VGA::text_color(uint nibble)
 {
-    // no blinking or font select support
-
-    // todo: prepare actual palette on graphic mode change, on palette entery change or on any
-    //       other change that effect translation of index to color
-
     uint8_t pal_high_bits;
+
+    ASSERT(nibble < (1 << 4));
 
     if (_attributes_regs[ATTRIB_REG_MODE] & ATTRIB_MODE_PAL_FIXED_4_5_MASK) {
         pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xf0;
@@ -286,17 +296,27 @@ void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uin
         pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xc0;
     }
 
+    uint index = _attributes_regs[nibble] | pal_high_bits;
+
+    return _palette[index & _color_index_mask].color;
+}
+
+
+void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uint char_h)
+{
+    // no blinking or font select support
+
+    // todo: prepare actual palette on graphic mode change, on palette entery change or on any
+    //       other change that effect translation of index to color
+
     for (int i= 0; i < char_h; i++) {
         for (int j= 0; j < char_w; j++) {
-            uint8_t index;
 
             if (font_bit(ch, i, j, char_w, char_h)) {
-                index = _attributes_regs[attrib & 0xf] | pal_high_bits;
+                *(dest + j) = text_color(attrib & 0xf);
             } else {
-                index = _attributes_regs[attrib >> 4] | pal_high_bits;
+                *(dest + j) = text_color(attrib >> 4);
             }
-
-            *(dest + j) = _palette[index & _color_index_mask].color;
         }
 
         dest += _width;
@@ -317,6 +337,121 @@ uint8_t VGA::fetch_pix_16(const uint8_t* fb_ptr, uint offset)
 }
 
 
+uint32_t VGA::foreground_color_at(uint fb_pos)
+{
+    return text_color(_vram[(fb_pos << 2) + 1] & 0xf);
+}
+
+
+void VGA::show_caret()
+{
+    if (_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF) {
+        D_MESSAGE("off");
+        return;
+    }
+
+    uint char_w;
+    uint char_h;
+
+    char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+    char_h = (_crt_regs[CRT_REG_MAX_SCAN_LINE] & CRT_MAX_SCAN_LINE_TEXT_HIGHET_MASK) + 1;
+
+    uint line_size = _width / char_w;
+    uint lines = _height / char_h;
+
+
+    uint pos = (uint(_crt_regs[CRT_REG_CURSOR_LOCATION_HIGH]) << 8) |
+               _crt_regs[CRT_REG_CURSOR_LOCATION_LOW];
+
+    uint32_t color = foreground_color_at(pos);
+
+    uint32_t fb_offset = (uint32_t(_crt_regs[CRT_REG_START_ADDRESS_HIGH]) << 8) +
+                         _crt_regs[CRT_REG_START_ADDRESS_LOW];
+
+    pos -= fb_offset;
+
+    uint cursor_row = pos / line_size;
+    uint cursor_col = pos % line_size;
+
+    if (cursor_row >= lines) {
+        D_MESSAGE("bad position");
+        return;
+    }
+
+    uint h_start = _crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_MASK;
+    uint h_end = MIN((_crt_regs[CRT_REG_CURSOR_END] & CRT_CURSOR_END_MASK) + 1, char_h);
+    uint32_t* line_start;
+
+    line_start = (uint32_t*)_fb->get() + cursor_row * char_h * _width + cursor_col * char_w;
+    line_start += h_start * _width;
+
+    for (; h_start < h_end; ++h_start) {
+        for (int j = 0; j < char_w; j++) {
+            line_start[j] = color;
+        }
+
+        line_start += _width;
+    }
+
+    _caret_visable = true;
+}
+
+
+void VGA::hide_caret()
+{
+    uint cursor_pos = (uint(_crt_regs[CRT_REG_CURSOR_LOCATION_HIGH]) << 8) |
+                      _crt_regs[CRT_REG_CURSOR_LOCATION_LOW];
+
+    uint char_w;
+    uint char_h;
+
+    char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+    char_h = (_crt_regs[CRT_REG_MAX_SCAN_LINE] & CRT_MAX_SCAN_LINE_TEXT_HIGHET_MASK) + 1;
+    uint line_size = _width / char_w;
+    uint lines = _height / char_h;
+
+    uint fb_offset = (uint(_crt_regs[CRT_REG_START_ADDRESS_HIGH]) << 8) +
+                      _crt_regs[CRT_REG_START_ADDRESS_LOW];
+
+    uint pos = cursor_pos - fb_offset;
+
+    uint cursor_row = pos / line_size;
+    uint cursor_col = pos % line_size;
+
+    if (cursor_row >= lines) {
+        D_MESSAGE("bad position");
+        return;
+    }
+
+    uint32_t* dest = (uint32_t*)_fb->get() + cursor_row * char_h * _width + cursor_col * char_w;
+    draw_char(_vram[cursor_pos << 2], _vram[(cursor_pos << 2) + 1], dest, char_w, char_h);
+
+    _caret_visable = false;
+}
+
+
+void VGA::update_caret()
+{
+    if (!_caret_tick) {
+        return;
+    }
+
+    nox_time_t now = get_monolitic_time();
+
+    if (now - _caret_tick < CARET_RATE) {
+        return;
+    }
+
+    _caret_tick = now;
+
+    if (_caret_visable) {
+        hide_caret();
+    } else {
+        show_caret();
+    }
+}
+
+
 void VGA::update()
 {
     Lock lock(_mutex);
@@ -326,6 +461,7 @@ void VGA::update()
     }
 
     if (!_dirty) {
+        update_caret();
         return;
     }
 
@@ -366,6 +502,8 @@ void VGA::update()
 
              dest_line += width * char_h;
          }
+
+         update_caret();
 
          return;
     }
@@ -518,6 +656,9 @@ void VGA::reset()
 
     _crt_index = 0;
     memset(_crt_regs, 0, sizeof(_crt_regs));
+
+    _caret_tick = 0;
+    _caret_visable = 0;
 
     reset_io();
     reset_fb();
@@ -679,6 +820,14 @@ void VGA::on_crt_mode_cahnge()
 
     _width = width;
     _height = height;
+    _caret_visable = false;
+
+    if (!(_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF) &&
+        !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
+        _caret_tick = get_monolitic_time();
+    } else {
+        _caret_tick = 0;
+    }
 
     // need to ensure thread safe. Holding lock while calling
     // the front end is a potentail dead lock
@@ -805,11 +954,37 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             return;
         }
 
+        if (_crt_index == CRT_REG_CURSOR_START &&
+            !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT)) &&
+            (val & CRT_CURSOR_START_OFF) !=
+                                  (_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF)) {
+
+            if (val & CRT_CURSOR_START_OFF) {
+                hide_caret();
+                _caret_tick = 0;
+            } else {
+                _caret_tick = get_monolitic_time() - CARET_RATE;
+            }
+        }
+
         _crt_regs[CRT_REG_TEST] = 1 << 7;
         _crt_regs[_crt_index] = val;
 
         if (_crt_index == CRT_REG_MODE) {
             on_crt_mode_cahnge();
+        }
+
+        if ((_crt_index == CRT_REG_CURSOR_LOCATION_HIGH ||
+            _crt_index == CRT_REG_CURSOR_LOCATION_LOW) &&
+            !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT)) &&
+            !(_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF)) {
+
+            hide_caret();
+            _caret_tick = get_monolitic_time() - CARET_RATE;
+        }
+
+        if (_crt_index == CRT_REG_START_ADDRESS_HIGH || _crt_index == CRT_REG_START_ADDRESS_LOW) {
+            _dirty = true;
         }
 
         VGA_D_MESSAGE("crt[0x%x] = 0x%x", _crt_index, val);
