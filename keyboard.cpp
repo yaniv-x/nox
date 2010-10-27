@@ -802,7 +802,7 @@ static void __attribute__ ((constructor)) init_scan_codes()
     SET_ESCAPE(PAD_DIV, 0x35, 0x4a);
     SET_ESCAPE(PRINT, 0x37, 0x7c);
     SET_ESCAPE(RIGHT_ALT, 0x38, 0x11);
-    SET_ESCAPE(HOME, 0x6c, 0x47);
+    SET_ESCAPE(HOME, 0x47, 0x6c);
     SET_ESCAPE(UP, 0x48, 0x75);
     SET_ESCAPE(PAGE_UP, 0x49, 0x7d);
     SET_ESCAPE(LEFT, 0x4b, 0x6b);
