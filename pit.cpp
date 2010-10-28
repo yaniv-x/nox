@@ -147,7 +147,7 @@ inline void PIT::read_back(uint8_t val)
     if (val & READ_BACK_COUNTER_MASK) {
         for (int i = 0; i < NUM_TIMERS; i++) {
             if (val & (0x02 << i))  {
-                latch_counter(_timers[i - 1]);
+                latch_counter(_timers[i]);
             }
         }
     }
@@ -223,7 +223,8 @@ inline bool PIT::update_one_shot(PICTimer& timer)
 {
     nox_time_t now = get_monolitic_time();
 
-    uint64_t counter_val = now - timer.start_time;
+    uint64_t delta = double(now - timer.start_time) / TICK;
+    uint64_t counter_val = uint64_t(timer.programed_val) - delta;
 
     if (timer.bcd) {
         timer.counter_output = to_bcd(counter_val % 10000);
