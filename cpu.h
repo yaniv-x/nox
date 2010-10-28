@@ -107,7 +107,7 @@ private:
 
     void back_trace_64(address_t rip, address_t frame_pointer, int depth);
 
-    static void* thread_main(void *);
+    void* thread_main();
 
 private:
     uint _id;

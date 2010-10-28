@@ -241,6 +241,8 @@ public:
     void join();
     void signal(int signal) { pthread_kill(_thread, signal);}
     void enable_signal(int signal);
+    void set_high_priority();
+    void set_normal_priority();
 
     static void suspend_other_threads(Thread* t);
     static void resume_other_threads(Thread* t);
