@@ -95,6 +95,28 @@ void Thread::resume_other_threads(Thread* thread)
 }
 
 
+void Thread::set_normal_priority()
+{
+    struct sched_param param;
+    param.__sched_priority = 0;
+
+    if (pthread_setschedparam(_thread, SCHED_OTHER, &param)) {
+        W_MESSAGE("failed");
+    }
+}
+
+
+void Thread::set_high_priority()
+{
+    struct sched_param param;
+    param.__sched_priority = sched_get_priority_min(SCHED_RR);
+
+    if (pthread_setschedparam(_thread, SCHED_RR, &param)) {
+        W_MESSAGE("failed");
+    }
+}
+
+
 void Thread::exclucive_inc()
 {
     Thread* t = thread;

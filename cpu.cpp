@@ -157,7 +157,7 @@ CPU::CPU(NoxVM& vm, uint id)
     , _kvm_run (NULL)
     , _execution_break (false)
     , _io_bus (vm.get_io_bus())
-    , _thread (&CPU::thread_main, this)
+    , _thread ((Thread::start_proc_t)&CPU::thread_main, this)
     , _executing (false)
     , _test_interrupts(false)
     , _interrupt_mark_set(0)
@@ -978,14 +978,12 @@ void CPU::start()
 }
 
 
-void* CPU::thread_main(void* ioaque)
+void* CPU::thread_main()
 {
-    CPU* cpu = (CPU*)ioaque;
-
-    vcpu = cpu;
+    vcpu = this;
 
     try {
-        cpu->run();
+        run();
     } catch (Exception& e) {
         E_MESSAGE("unhndled exception -> %s", e.what());
        // therminate();
