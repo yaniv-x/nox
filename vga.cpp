@@ -871,6 +871,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
     case IO_COLOR_INDEX_MASK:
         VGA_D_MESSAGE("color index mask 0x%x", val);
         _color_index_mask = val;
+        _dirty = true;
         return;
     case IO_PALETTE_READ_INDEX:
         _dac_state = 0x3;
@@ -894,6 +895,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
                       val);
 
         _palette[_palette_write_index].components[_palette_write_comp--] = val << 2;
+        _dirty = true;
         return;
     case IO_ATTRIB_CONTROL_INDEX:
         if (_write_attrib) {
@@ -906,6 +908,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
 
             _attributes_regs[_attrib_control_index & ATTRIB_INDEX_MASK] = val;
             VGA_D_MESSAGE("attribute[0x%x] = 0x%x", _attrib_control_index & ATTRIB_INDEX_MASK, val);
+            _dirty = true;
             return;
         }
 
