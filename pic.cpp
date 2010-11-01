@@ -453,8 +453,8 @@ uint PIC::_get_interrupt(Chip& chip, bool test)
         return ~0;
     }
 
-    uint_b effective_isr = chip.regs[REG_INDEX_ISR] & chip.mode;
-    uint_b now = chip.highst_priority;
+    uint8_t effective_isr = chip.regs[REG_INDEX_ISR] & chip.mode;
+    uint8_t now = chip.highst_priority;
 
     do {
         uint mask = (1 << now);
@@ -464,7 +464,7 @@ uint PIC::_get_interrupt(Chip& chip, bool test)
         }
 
         if (ready & mask) {
-            uint_b ret;
+            uint8_t ret;
 
             if (now == chip.cascade_pin) {
                 ret = _get_interrupt(_chips[1], test);
@@ -517,7 +517,7 @@ void PIC::update_slave_IR()
 {
     Chip& chip = _chips[1];
 
-    uint_b ready = chip.regs[REG_INDEX_IRR] & ~chip.regs[REG_INDEX_IMR];
+    uint8_t ready = chip.regs[REG_INDEX_IRR] & ~chip.regs[REG_INDEX_IMR];
 
     if (ready && chip.mode == MODE_FULLY_NESTED) {
         uint now = chip.highst_priority;
@@ -543,7 +543,7 @@ void PIC::update_slave_IR()
 }
 
 
-void PIC::set_IRR(Chip& chip, uint_b pin)
+void PIC::set_IRR(Chip& chip, uint8_t pin)
 {
     chip.regs[REG_INDEX_IRR] |= (1 << pin);
 
@@ -552,7 +552,7 @@ void PIC::set_IRR(Chip& chip, uint_b pin)
     }
 }
 
-void PIC::clear_IRR(Chip& chip, uint_b pin)
+void PIC::clear_IRR(Chip& chip, uint8_t pin)
 {
     chip.regs[REG_INDEX_IRR] &= ~(1 << pin);
 
@@ -562,7 +562,7 @@ void PIC::clear_IRR(Chip& chip, uint_b pin)
 }
 
 
-void PIC::raise(uint_b pin)
+void PIC::raise(uint8_t pin)
 {
     ASSERT(pin != SLAVE_IRQ_PIN && pin < NUM_IRQ * 2);
 
@@ -578,7 +578,7 @@ void PIC::raise(uint_b pin)
 }
 
 
-void PIC::drop(uint_b pin)
+void PIC::drop(uint8_t pin)
 {
     ASSERT(pin != 2 && pin < 16);
 

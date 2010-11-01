@@ -36,15 +36,8 @@ class PhysicalRam;
 class MMIORegion;
 class MapSection;
 
-typedef uint64_t page_address_t;
 
 #define USE_C_CALLBACKS
-#ifdef USE_C_CALLBACKS
-
-typedef void (*read_mem_proc_t)(void* opaque, uint64_t src, uint64_t length, uint8_t* dest);
-typedef void (*write_mem_proc_t)(void* opaque, const uint8_t* src, uint64_t length, uint64_t dest);
-
-#endif
 
 
 class MemoryBus: public VMPart{

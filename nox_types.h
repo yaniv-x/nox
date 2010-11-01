@@ -24,38 +24,17 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_COMMON
-#define _H_COMMON
+#ifndef _H_NOX_TYPES
+#define _H_NOX_TYPES
 
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <errno.h>
-#include <auto_ptr.h>
-#include <string.h>
-#include <string>
-#include <list>
-#include <map>
+typedef unsigned int uint;
+typedef uint64_t address_t;
+typedef uint64_t page_address_t;
 
-#include "exception.h"
-#include "utils.h"
-#include "text_output.h"
-#include "debug.h"
-#include "non_copyable.h"
-#include "error_codes.h"
-#include "nox_types.h"
+typedef void (*read_mem_proc_t)(void* opaque, uint64_t src, uint64_t length, uint8_t* dest);
+typedef void (*write_mem_proc_t)(void* opaque, const uint8_t* src, uint64_t length, uint64_t dest);
 
-#define KB (1024ULL)
-#define MB (KB * 1024)
-#define GB (MB * 1024)
-
-#define GUEST_PAGE_SHIFT 12
-#define GUEST_PAGE_SIZE (1 << GUEST_PAGE_SHIFT)
-#define GUEST_PAGE_OFFSET_MASK page_address_t(GUEST_PAGE_SIZE - 1)
-#define GUEST_PAGE_MASK ~GUEST_PAGE_OFFSET_MASK
-
-#define EXCLISIC_EXEC()
-#define IS_ERROR(x) (!!(x))
+typedef void (*void_callback_t)(void*);
 
 #endif
 

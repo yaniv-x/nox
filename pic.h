@@ -72,18 +72,18 @@ private:
     };
 
     struct Chip {
-        uint_b mode;
-        uint_b regs[NUM_REGS];
-        uint_b rais_count[NUM_IRQ];
-        uint_b vector_base;
-        uint_b read_index;
+        uint8_t mode;
+        uint8_t regs[NUM_REGS];
+        uint8_t rais_count[NUM_IRQ];
+        uint8_t vector_base;
+        uint8_t read_index;
         bool auto_eio;
         bool auto_rotate;
-        uint_b intilization_mask;
-        uint_b highst_priority;
+        uint8_t intilization_mask;
+        uint8_t highst_priority;
 
-        uint_b cascade_pin;
-        uint_b saved_mode;
+        uint8_t cascade_pin;
+        uint8_t saved_mode;
     };
 
     void intilization_start(Chip& chip, uint8_t val);
@@ -95,8 +95,8 @@ private:
     uint _get_interrupt(Chip& chip, bool test);
     void update_slave_IR();
     void update_IRR(Chip& chip);
-    void set_IRR(Chip& chip, uint_b pin);
-    void clear_IRR(Chip& chip, uint_b pin);
+    void set_IRR(Chip& chip, uint8_t pin);
+    void clear_IRR(Chip& chip, uint8_t pin);
     void set_mask_mode(Chip& chip);
     void clear_mask_mode(Chip& chip);
     void nonspecific_EOI(Chip& chip, bool rotate);
@@ -105,8 +105,8 @@ private:
     void update_output_pin(Lock& lock);
     void notify_output();
 
-    void raise(uint_b pin);
-    void drop(uint_b pin);
+    void raise(uint8_t pin);
+    void drop(uint8_t pin);
 
 private:
     Mutex _mutex;
@@ -128,7 +128,7 @@ extern PIC* pic;
 
 class PICWire: private NonCopyable {
 private:
-    PICWire(VMPart& owner, uint_b pin)
+    PICWire(VMPart& owner, uint8_t pin)
         : _owner (owner)
         , _pin (pin)
         , _high (false)
@@ -175,7 +175,7 @@ public:
 
 private:
     VMPart& _owner;
-    uint_b _pin;
+    uint8_t _pin;
     bool _high;
 
 
