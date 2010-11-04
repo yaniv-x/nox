@@ -148,5 +148,20 @@ static inline uint64_t rdtsc()
     return *ret;
 }
 
+
+//todo: use bit scan revers
+static inline int find_msb(uint32_t val)
+{
+    int i;
+
+    for (i = 31; i >=0; i--) {
+        if (val & (1 << i)) {
+            return i;
+        }
+    }
+
+    return i;
+}
+
 #endif
 
