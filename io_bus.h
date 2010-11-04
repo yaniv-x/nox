@@ -31,14 +31,6 @@
 
 class NoxVM;
 
-typedef uint8_t (*io_read_byte_proc_t)(void* opaque, uint16_t port);
-typedef uint16_t (*io_read_word_proc_t)(void* opaque, uint16_t port);
-typedef uint32_t (*io_read_dword_proc_t)(void* opaque, uint16_t port);
-
-typedef void (*io_write_byte_proc_t)(void* opaque, uint16_t port, uint8_t val);
-typedef void (*io_write_word_proc_t)(void* opaque, uint16_t port, uint16_t val);
-typedef void (*io_write_dword_proc_t)(void* opaque, uint16_t port, uint32_t val);
-
 class IORegion;
 
 class IOBus: public VMPart {
