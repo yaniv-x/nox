@@ -131,7 +131,7 @@ public:
 
     uint8_t* get_ptr() { return _ptr;}
     bool is_mapped() { return _mapped;}
-    int get_num_pages() { return _num_pages;}
+    uint64_t get_num_pages() { return _num_pages;}
 
     void reset() { E_MESSAGE("implemant me");}
     void start() { E_MESSAGE("implemant me");}
@@ -590,6 +590,20 @@ uint8_t* MemoryBus::get_physical_ram_ptr(PhysicalRam* ram)
     }
 
     return ram->get_ptr();
+}
+
+
+uint64_t MemoryBus::get_physical_ram_size(PhysicalRam* ram)
+{
+    EXCLISIC_EXEC();
+
+    PhysicalRamList::iterator iter = find_physical(ram);
+
+    if (iter == _pysical_list.end()) {
+        PANIC("not found");
+    }
+
+    return ram->get_num_pages() << GUEST_PAGE_SHIFT;
 }
 
 class MapSection : public MemoryBus::Internal {

@@ -69,6 +69,7 @@ public:
     PhysicalRam* alloc_physical_ram(VMPart& owner, uint64_t num_pages, const char* name);
     void release_physical_ram(PhysicalRam* ram);
     uint8_t* get_physical_ram_ptr(PhysicalRam* ram);
+    uint64_t get_physical_ram_size(PhysicalRam* ram);
 
     MapSection* map_section(PhysicalRam* ram, page_address_t address, bool rom,
                             page_address_t start_page, uint64_t num_pages);
