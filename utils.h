@@ -150,12 +150,13 @@ static inline uint64_t rdtsc()
 
 
 //todo: use bit scan revers
-static inline int find_msb(uint32_t val)
+template<class T>
+static inline int find_msb(T val)
 {
     int i;
 
-    for (i = 31; i >=0; i--) {
-        if (val & (1 << i)) {
+    for (i = sizeof(T) * 8 - 1; i >=0; i--) {
+        if (val & (T(1) << i)) {
             return i;
         }
     }

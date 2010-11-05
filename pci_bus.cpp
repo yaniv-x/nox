@@ -27,6 +27,7 @@
 #include "pci_bus.h"
 #include "nox_vm.h"
 #include "io_bus.h"
+#include "pci_device.h"
 
 
 enum {
@@ -35,16 +36,25 @@ enum {
 
     ADDRESS_INDEX_SHIFT = 2,
     ADDRESS_INDEX_BITS = 6,
-    ADDRESS_FUNCTUIN_SHIFT = 8,
-    ADDRESS_FUNCTUIN_BITS = 3,
+    ADDRESS_FUNCTION_SHIFT = 8,
+    ADDRESS_FUNCTION_BITS = 3,
     ADDRESS_DEVICE_SHIFT = 11,
     ADDRESS_DEVICE_BITS = 5,
     ADDRESS_BUS_SHIFT = 16,
     ADDRESS_BUS_BITS = 8,
     ADDRESS_ENABLED_MASK = (1 << 31),
-    ADDRESS_MASK = ~(1 << 2),
+    ADDRESS_MASK = ~((1 << 2) - 1),
 
 };
+
+
+#define NOX_PCI_VENDOR 0x1aaa
+#define NOX_PCI_DEV_HOST_BRIDGE 1
+#define NOX_PCI_DEV_HOST_BRIDGE_REV 1
+
+#define PCI_CLASS_BRIDGE 0x06
+#define PCI_SUBCLASS_BRIDGE_HOST 0x00
+
 
 
 PCIBus::PCIBus(NoxVM& nox)
@@ -64,6 +74,14 @@ PCIBus::PCIBus(NoxVM& nox)
                                       (io_write_word_proc_t)&PCIBus::io_write_config_word,
                                       (io_read_dword_proc_t)&PCIBus::io_read_config_dword,
                                       (io_write_dword_proc_t)&PCIBus::io_write_config_dword));
+
+    memset(_devices, 0, sizeof(_devices));
+
+    _devices[0] = new PCIDevice("host-bridge", *this , NOX_PCI_VENDOR,
+                                NOX_PCI_DEV_HOST_BRIDGE,
+                                NOX_PCI_DEV_HOST_BRIDGE_REV,
+                                mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_HOST, 0),
+                                false);
 }
 
 
@@ -84,60 +102,157 @@ void PCIBus::io_set_config_address(uint16_t port, uint32_t val)
     _config_address = val;
 }
 
+
 bool PCIBus::is_valid_address()
 {
     return !!(_config_address & ADDRESS_ENABLED_MASK);
 }
 
+
+PCIDevice* PCIBus::get_target()
+{
+    uint bus = (_config_address >> ADDRESS_BUS_SHIFT) &
+               ((1 << ADDRESS_BUS_BITS) - 1);
+
+    if (bus != 0) {
+        return NULL;
+    }
+
+    uint device = (_config_address >> ADDRESS_DEVICE_SHIFT) &
+                  ((1 << ADDRESS_DEVICE_BITS) - 1);
+
+    if (!_devices[device]) {
+         return NULL;
+    }
+
+    uint function = (_config_address >> ADDRESS_FUNCTION_SHIFT) &
+                    ((1 << ADDRESS_FUNCTION_BITS) - 1);
+
+    if (function != 0) {
+        return NULL;
+    }
+
+    return _devices[device];
+}
+
+
+static inline uint config_index(uint32_t config_address)
+{
+    return  (config_address >> ADDRESS_INDEX_SHIFT) & ((1 << ADDRESS_INDEX_BITS) - 1);
+}
+
+
 uint8_t PCIBus::io_read_config_byte(uint16_t port)
 {
-    if (!is_valid_address()) {
+    PCIDevice* target;
+
+    if (!is_valid_address() || !(target = get_target())) {
         return ~0;
     }
 
-    return ~0;
+    return target->read_config_byte(config_index(_config_address), port - IO_PCI_CONFIG_DATA);
 }
 
 
 void PCIBus::io_write_config_byte(uint16_t port, uint8_t val)
 {
-    if (!is_valid_address()) {
+    PCIDevice* target;
+
+    if (!is_valid_address() || !(target = get_target())) {
         return;
     }
+
+    target->write_config_byte(config_index(_config_address), port - IO_PCI_CONFIG_DATA, val);
 }
 
 uint16_t PCIBus::io_read_config_word(uint16_t port)
 {
-    if (!is_valid_address()) {
+    PCIDevice* target;
+
+    if (!is_valid_address() || !(target = get_target())) {
         return ~0;
     }
 
-    return ~0;
+    return target->read_config_word(config_index(_config_address), port - IO_PCI_CONFIG_DATA);
 }
 
 
 void PCIBus::io_write_config_word(uint16_t port, uint16_t val)
 {
-    if (!is_valid_address()) {
+    PCIDevice* target;
+
+    if (!is_valid_address() || !(target = get_target())) {
         return;
     }
+
+    target->write_config_word(config_index(_config_address), port - IO_PCI_CONFIG_DATA, val);
 }
 
 
 uint32_t PCIBus::io_read_config_dword(uint16_t port)
 {
-    if (!is_valid_address()) {
+    PCIDevice* target;
+
+    if (!is_valid_address() || !(target = get_target())) {
         return ~0;
     }
 
-    return ~0;
+    return target->read_config_dword(config_index(_config_address));
 }
 
 
 void PCIBus::io_write_config_dword(uint16_t port, uint32_t val)
 {
-    if (!is_valid_address()) {
+    PCIDevice* target;
+
+    if (!is_valid_address() || !(target = get_target())) {
         return;
     }
+
+    target->write_config_dword(config_index(_config_address), val);
+}
+
+
+static inline bool is_reserved_slot(uint id)
+{
+    // reserving some slots
+    // 0 is the host bridge others are reservd for futcher usus
+    return id < 3 || id > 29;
+}
+
+
+void PCIBus::add_device(PCIDevice& device)
+{
+    uint index = device.get_hard_id();
+
+    if (index < PCI_MAX_DEVICES) {
+        if (is_reserved_slot(index) || _devices[index]) {
+            THROW("can't allocate hardwired slot");
+        }
+
+        _devices[index] = &device;
+
+        return;
+    }
+
+    index = device.get_preferd_id();
+
+    if (index < PCI_MAX_DEVICES && !is_reserved_slot(index) && !_devices[index]) {
+        _devices[index] = &device;
+        return;
+    }
+
+    for (index = 0; index < PCI_MAX_DEVICES; index++) {
+        if (!_devices[index] && !is_reserved_slot(index)) {
+            if (device.get_preferd_id() < PCI_MAX_DEVICES) {
+                I_MESSAGE("can't allocate preferd slot");
+            }
+
+            _devices[index] = &device;
+            return;
+        }
+    }
+
+    THROW("out if pci slots");
 }
 

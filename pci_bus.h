@@ -30,6 +30,7 @@
 #include "vm_part.h"
 
 class NoxVM;
+class PCIDevice;
 
 class PCIBus: public VMPart {
 public:
@@ -43,7 +44,7 @@ public:
     virtual void start() {}
     virtual void stop() {}
 
-    virtual VMPart & get_part() { return *this;}
+    void add_device(PCIDevice& device);
 
 private:
     uint32_t io_get_config_address(uint16_t port);
@@ -57,10 +58,16 @@ private:
 
 
     bool is_valid_address();
+    PCIDevice* get_target();
+
+    enum {
+        PCI_MAX_DEVICES = 32,
+        PCI_MAX_FUNCTIONS = 8,
+    };
 
 private:
     uint32_t _config_address;
-
+    PCIDevice* _devices[PCI_MAX_DEVICES];
 
 };
 
