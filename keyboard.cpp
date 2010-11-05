@@ -147,6 +147,8 @@ enum {
 
 KbdController::KbdController(NoxVM& nox)
     : VMPart("kbd", nox)
+    , _keyboard_output(*this)
+    , _mouse_output(*this)
 {
     IOBus& _bus = nox.get_io_bus();
 
@@ -157,8 +159,8 @@ KbdController::KbdController(NoxVM& nox)
                                         (io_read_byte_proc_t)&KbdController::io_read_status,
                                         (io_write_byte_proc_t)&KbdController::io_write_command);
 
-    _keyboard_output.irq = pic->wire(*this, KBD_IRQ);
-    _mouse_output.irq = pic->wire(*this, MOUSE_IRQ);
+    pic->wire(_keyboard_output.irq_wire, KBD_IRQ);
+    pic->wire(_mouse_output.irq_wire, MOUSE_IRQ);
 }
 
 KbdController::~KbdController()
@@ -173,7 +175,7 @@ void KbdController::refill_outgoing()
         _state |= CTRL_STATUS_DATA_READY_MASK;
 
         if (_command_byte & COMMAND_BYTE_IRQ1_MASK) {
-            _keyboard_output.irq->raise();
+            _keyboard_output.irq_wire.raise();
         }
 
         _outgoing = _keyboard_output.buf.pop();
@@ -185,7 +187,7 @@ void KbdController::refill_outgoing()
         _state |= CTRL_STATUS_DATA_READY_MASK | CTRL_STATUS_MOUSE_DATA_READY_MASK;
 
         if (_command_byte & COMMAND_BYTE_IRQ12_MASK) {
-            _mouse_output.irq->raise();
+            _mouse_output.irq_wire.raise();
         }
 
         _outgoing = _mouse_output.buf.pop();
@@ -203,8 +205,8 @@ uint8_t KbdController::io_read_port_a(uint16_t port)
     }
 
     uint8_t ret = _outgoing;
-    _keyboard_output.irq->drop();
-    _mouse_output.irq->drop();
+    _keyboard_output.irq_wire.drop();
+    _mouse_output.irq_wire.drop();
     _state &= ~(CTRL_STATUS_DATA_READY_MASK | CTRL_STATUS_MOUSE_DATA_READY_MASK);
 
     refill_outgoing();
@@ -225,7 +227,7 @@ void KbdController::reset_keyboard()
 {
     restore_keyboard_defaults();
     _keyboard_output.buf.reset();
-    _keyboard_output.irq->drop();
+    _keyboard_output.irq_wire.drop();
 
     /*if (!(_state & CTRL_STATUS_MOUSE_DATA_READY_MASK)) {
         _state &= ~CTRL_STATUS_DATA_READY_MASK;
@@ -250,7 +252,7 @@ void KbdController::reset_mouse()
     _mouse_write_state = MOUSE_WRITE_STATE_CMD,
     restore_mouse_defaults();
     _mouse_output.buf.reset();
-    _mouse_output.irq->drop();
+    _mouse_output.irq_wire.drop();
 }
 
 
@@ -286,18 +288,18 @@ void KbdController::write_output_port(uint8_t output_port)
 
     if (output_port & OUTPUT_PORT_IRQ1_MASK) {
         D_MESSAGE("raising keyboard irq");
-        _keyboard_output.irq->raise();
+        _keyboard_output.irq_wire.raise();
     } else {
         D_MESSAGE("dropping keyboard irq");
-        _keyboard_output.irq->drop();
+        _keyboard_output.irq_wire.drop();
     }
 
     if (output_port & OUTPUT_PORT_IRQ12_MASK) {
         D_MESSAGE("raising mouse irq");
-        _mouse_output.irq->raise();
+        _mouse_output.irq_wire.raise();
     } else {
         D_MESSAGE("dropping mouse irq");
-        _mouse_output.irq->drop();
+        _mouse_output.irq_wire.drop();
     }
 }
 
@@ -628,8 +630,8 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         output_port |= memory_bus->line_20_is_set() ? OUTPUT_PORT_A20_MASK : 0;
 
         // not sure about the following
-        output_port |= _keyboard_output.irq->is_high() ? OUTPUT_PORT_IRQ1_MASK : 0;
-        output_port |= _mouse_output.irq->is_high() ? OUTPUT_PORT_IRQ12_MASK : 0;
+        output_port |= _keyboard_output.irq_wire.output() ? OUTPUT_PORT_IRQ1_MASK : 0;
+        output_port |= _mouse_output.irq_wire.output() ? OUTPUT_PORT_IRQ12_MASK : 0;
 
         // do we need to use COMMAND_BYTE_DISABLE_KYBD_MASK and
         // COMMAND_BYTE_DISABLE_MOUSE_MASK here?

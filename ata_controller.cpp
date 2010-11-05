@@ -102,7 +102,7 @@ enum {
 ATAController::ATAController(NoxVM& nox, uint irq)
     : VMPart("ata", nox)
     , _disk (_disk)
-    , _irq (pic->wire(*this, irq))
+    , _irq_wire (*this)
 {
     IOBus& bus = nox.get_io_bus();
 
@@ -115,12 +115,14 @@ ATAController::ATAController(NoxVM& nox, uint irq)
     add_io_region(bus.register_region(*this, IO_CONTROL, 1, this,
                                       (io_read_byte_proc_t)&ATAController::io_alt_status,
                                       (io_write_byte_proc_t)&ATAController::io_control));
+
+    pic->wire(_irq_wire, irq);
 }
 
 
 void ATAController::reset()
 {
-    _irq->drop();
+    _irq_wire.drop();
 
     _status = 0;
     _control = 0;
@@ -149,7 +151,7 @@ inline void ATAController::raise()
         return;
     }
 
-    _irq->raise();
+    _irq_wire.raise();
 }
 
 void ATAController::io_control(uint16_t port, uint8_t val)
@@ -620,7 +622,7 @@ void ATAController::do_command(uint8_t command)
 
     _status &= ~STATUS_ERROR_MASK;
 
-    _irq->drop();
+    _irq_wire.drop();
 
     switch (command) {
     case CMD_READ_SECTORS: {
@@ -709,7 +711,7 @@ uint8_t ATAController::io_read(uint16_t port)
     switch (port) {
     case IO_STATUS: {
         Lock lock(_mutex);
-        _irq->drop();
+        _irq_wire.drop();
         return _status;
     }
     case IO_ERROR:

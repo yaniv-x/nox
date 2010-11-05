@@ -114,7 +114,7 @@ static uint32_t rates_table[] = {
 CMOS::CMOS(NoxVM& vm)
     : VMPart ("cmos", vm)
     , _io_region (NULL)
-    , _irq (pic->wire(*this, RTC_IRQ))
+    , _irq_wire (*this)
     , _period_timer (application->create_timer((void_callback_t)&CMOS::period_timer_proc, this))
     , _alarm_timer (application->create_timer((void_callback_t)&CMOS::alarm_timer_proc, this))
     , _update_timer (application->create_timer((void_callback_t)&CMOS::update_timer_proc, this))
@@ -132,6 +132,8 @@ CMOS::CMOS(NoxVM& vm)
 
     _reg_a = REG_A_DIVIDER_NORMAL | REG_A_RATE_DEFAULT,
     _reg_b = 0;
+
+    pic->wire(_irq_wire, RTC_IRQ);
 }
 
 
@@ -149,7 +151,7 @@ void CMOS::reset()
     _period_timer->disarm();
     _alarm_timer->disarm();
     _update_timer->disarm();
-    _irq->drop();
+    _irq_wire.drop();
     _reg_b &= ~REG_B_CLEAR_ON_RESET_MASK;
     _reg_c = 0;
 }
@@ -161,7 +163,7 @@ void CMOS::period_timer_proc()
 
     if ((_reg_b & REG_A_RATE_MASK) && (_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
         _reg_c |= REG_C_INTERRUPT_MASK | REG_C_PERIODIC_INTERRUPT_MASK;
-        _irq->spike();
+        _irq_wire.spike();
     }
 }
 
@@ -175,7 +177,7 @@ void CMOS::alarm_timer_proc()
     }
 
     _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
-    _irq->spike();
+    _irq_wire.spike();
 }
 
 
@@ -188,7 +190,7 @@ void CMOS::update_timer_proc()
     }
 
     _reg_c |= REG_C_INTERRUPT_MASK | REG_C_UPDATE_INTERRUPT_MASK;
-    _irq->spike();
+    _irq_wire.spike();
 }
 
 

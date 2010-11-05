@@ -30,10 +30,10 @@
 #include "vm_part.h"
 #include "threads.h"
 #include "nox_key.h"
+#include "wire.h"
 
 class NoxVM;
 class IORegion;
-class PICWire;
 
 class CyclicBuffer {
 public:
@@ -102,7 +102,12 @@ private:
     IORegion *_io_region_b;
 
     struct KBCOutput {
-        PICWire* irq;
+        KBCOutput(KbdController& controller)
+            : irq_wire(controller)
+        {
+        }
+
+        Wire irq_wire;
         CyclicBuffer buf;
     };
 

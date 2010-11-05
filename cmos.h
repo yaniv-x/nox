@@ -30,10 +30,10 @@
 #include <time.h>
 #include "vm_part.h"
 #include "threads.h"
+#include "wire.h"
 
 class NoxVM;
 class IORegion;
-class PICWire;
 class Timer;
 
 class CMOS: private VMPart {
@@ -92,7 +92,7 @@ private:
 private:
     Mutex _mutex;
     IORegion* _io_region;
-    PICWire* _irq;
+    Wire _irq_wire;
     Timer* _period_timer;
     Timer* _alarm_timer;
     Timer* _update_timer;

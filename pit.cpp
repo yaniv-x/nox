@@ -29,6 +29,7 @@
 #include "pic.h"
 #include "application.h"
 #include "io_bus.h"
+#include "wire.h"
 
 //After power-up the state of the 8254 is undefined
 
@@ -98,13 +99,14 @@ PIT::PIT(NoxVM& nox)
 
     memset(_timers, 0, sizeof(_timers));
     _timers[0].timer = application->create_timer((void_callback_t)&PIT::timer_proc, this);
-    _timers[0].irq = pic->wire(*this, 0);
+    _timers[0].irq_wire = new Wire(*this);
+    pic->wire(*_timers[0].irq_wire, 0);
 }
 
 
 PIT::~PIT()
 {
-    delete _timers[0].irq;
+    delete _timers[0].irq_wire;
     _timers[0].timer->destroy();
     get_nox().get_io_bus().unregister_region(_io_region);
 }
@@ -193,8 +195,8 @@ inline void PIT::set_counter_mode(PICTimer& timer, uint8_t val)
         timer.timer->disarm();
     }
 
-    if (timer.irq) {
-        timer.irq->set_level(timer.output);
+    if (timer.irq_wire) {
+        timer.irq_wire->set_level(timer.output);
     }
 }
 
@@ -282,8 +284,8 @@ void PIT::update_timer(PICTimer& timer)
 {
     switch (timer.mode) {
     case 2:
-        if (update_interval(timer, 0) && timer.irq) {
-            timer.irq->drop();
+        if (update_interval(timer, 0) && timer.irq_wire) {
+            timer.irq_wire->drop();
         }
         break;
     case 0:
@@ -297,21 +299,21 @@ void PIT::update_timer(PICTimer& timer)
         }
         break;
     case 4:
-        if (update_one_shot(timer) && timer.irq) {
-            timer.irq->drop();
+        if (update_one_shot(timer) && timer.irq_wire) {
+            timer.irq_wire->drop();
         }
         break;
     case 5:
-    case 1: //hardware triggers will never hapend so the
-            // counter will never be loaded
+    case 1: // hardware triggers will never hapend so the
+            // counter will never be loaded (check if set_gate_level can trigget it?)
         timer.counter_output = 0;
         break;
     default:
         D_MESSAGE("invalid timer mode %u", timer.mode);
     }
 
-    if (timer.irq) {
-        timer.irq->set_level(timer.output);
+    if (timer.irq_wire) {
+        timer.irq_wire->set_level(timer.output);
     }
 }
 
@@ -372,15 +374,15 @@ void PIT::set_counter(PICTimer& timer, uint val)
         set_one_shout_counter(timer, 1);
         break;
     case 5:
-    case 1: //hardware triggers will never hapend so the
-            // counter will never be loaded
+    case 1: // hardware triggers will never hapend so the
+            // counter will never be loaded (check if set_gate_level can trigget it?)
         break;
     default:
         D_MESSAGE("invalid timer mode %u", timer.mode);
     }
 
-    if (timer.irq) {
-        timer.irq->set_level(timer.output);
+    if (timer.irq_wire) {
+        timer.irq_wire->set_level(timer.output);
     }
 }
 

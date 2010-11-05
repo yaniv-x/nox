@@ -32,9 +32,7 @@
 
 class NoxVM;
 class IORegion;
-class PICWire;
-
-
+class Wire;
 
 class PIC: public VMPart {
 public:
@@ -52,7 +50,7 @@ public:
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 
-    PICWire *wire(VMPart& owner, uint irq);
+    void wire(Wire& wire, uint pin);
     uint get_interrupt();
     bool interrupt_test();
     void attach_notify_target(void_callback_t proc, void* opaque);
@@ -115,7 +113,7 @@ private:
     void_callback_t _notify_proc;
     void* _notify_opaque;
 
-    friend class PICWire;
+    friend class PICPinBond;
 };
 
 enum {
@@ -125,62 +123,6 @@ enum {
 };
 
 extern PIC* pic;
-
-class PICWire: private NonCopyable {
-private:
-    PICWire(VMPart& owner, uint8_t pin)
-        : _owner (owner)
-        , _pin (pin)
-        , _high (false)
-    {
-    }
-
-public:
-    void raise()
-    {
-        if (_high) {
-            return;
-        }
-
-        _high = true;
-        pic->raise(_pin);
-    }
-
-    void drop()
-    {
-        if (!_high) {
-            return;
-        }
-
-        _high = false;
-        pic->drop(_pin);
-    }
-
-    void spike()
-    {
-        pic->drop(_pin);
-        pic->raise(_pin);
-    }
-
-    void set_level(bool high)
-    {
-        if (high) {
-            raise();
-        } else {
-            drop();
-        }
-    }
-
-    bool is_high() { return _high;}
-
-private:
-    VMPart& _owner;
-    uint8_t _pin;
-    bool _high;
-
-
-    friend class PIC;
-};
 
 #endif
 

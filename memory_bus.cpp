@@ -573,7 +573,7 @@ void MemoryBus::release_physical_ram(PhysicalRam* ram)
 
     uint32_t n_refs = ram->unref();
 
-    if (!n_refs) {
+    if (n_refs) {
         D_MESSAGE("probably bug cndition");
     }
 }

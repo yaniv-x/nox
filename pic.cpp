@@ -27,6 +27,7 @@
 #include "pic.h"
 #include "nox_vm.h"
 #include "io_bus.h"
+#include "wire.h"
 
 enum {
     IO_PIC1 = 0x20,
@@ -388,11 +389,39 @@ void PIC::io_write_trigger_type(uint16_t port, uint8_t val)
 }
 
 
-PICWire* PIC::wire(VMPart& owner, uint irq)
-{
-    ASSERT(irq != SLAVE_IRQ_PIN && irq < NUM_IRQ * 2);
+class PICPinBond {
+public:
+    PICPinBond(uint pin)
+        : _pin (pin)
+    {
+    }
 
-    return new PICWire(owner, irq);
+    void raised()
+    {
+        pic->raise(_pin);
+    }
+
+    void droped()
+    {
+        pic->drop(_pin);
+    }
+
+    void detach()
+    {
+        delete this;
+    }
+
+private:
+    uint _pin;
+};
+
+
+void PIC::wire(Wire& wire, uint pin)
+{
+    wire.set_dest(*this, new PICPinBond(pin),
+                  (void_callback_t)&PICPinBond::raised,
+                  (void_callback_t)&PICPinBond::droped,
+                  (void_callback_t)&PICPinBond::detach);
 }
 
 
@@ -403,6 +432,7 @@ void PIC::attach_notify_target(void_callback_t proc, void* opaque)
     _notify_opaque = opaque;
     _notify_proc= proc;
 }
+
 
 void PIC::notify_output()
 {
