@@ -29,9 +29,9 @@
 
 #include "vm_part.h"
 #include "threads.h"
+#include "wire.h"
 
 class NoxVM;
-class PICWire;
 class Disk;
 
 class ATAController: public VMPart {
@@ -78,7 +78,7 @@ private:
 private:
     Mutex _mutex;
     Disk* _disk;
-    std::auto_ptr<PICWire> _irq;
+    Wire _irq_wire;
 
     union {
         uint16_t _identity[256];

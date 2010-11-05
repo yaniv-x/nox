@@ -33,15 +33,15 @@
 class NoxVM;
 class IORegion;
 class Timer;
-class PICWire;
+class Wire;
 
 class PIT: public VMPart {
 public:
     PIT(NoxVM& nox);
     virtual ~PIT();
 
-    void set_gate_level(uint timer, bool high); // use Wire object (generalize PICWire)
-    bool get_output_level(uint timer); // use Wire object (generalize PICWire)
+    void set_gate_level(uint timer, bool high); // use Wire object
+    bool get_output_level(uint timer); // use Wire object
 
     virtual void reset() {}
     virtual void start() {}
@@ -70,7 +70,7 @@ private:
         uint write_lsb;
 
         Timer* timer;
-        PICWire* irq;
+        Wire* irq_wire;
     };
 
     enum {
