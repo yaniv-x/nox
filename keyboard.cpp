@@ -863,10 +863,21 @@ void KbdController::key_down(NoxKey code)
     key_common(code, MAKE);
 }
 
+static int flipflop = 0;
 
 void KbdController::key_up(NoxKey code)
 {
     // todo: test running state
+
+    // temporary: sticky alt
+    if (code == NOX_KEY_LEFT_ALT) {
+        flipflop ^= 1;
+        if (flipflop) {
+            D_MESSAGE("NOX_KEY_LEFT_ALT");
+            return;
+        }
+    }
+
     key_common(code, BREAK);
 }
 
