@@ -246,7 +246,8 @@ void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 2) {
-        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
+                  port + map.start, map.start, map.size);
 
         read_byte(port, (uint8_t*)dest, 1);
         read_byte(port + 1, (uint8_t*)dest + 1, 1);
@@ -268,7 +269,8 @@ void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 4) {
-        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
+                  port + map.start, map.start, map.size);
 
         read_word(port, (uint16_t*)dest, 1);
         read_word(port + 2, (uint16_t*)dest + 1, 1);
@@ -302,7 +304,8 @@ void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 2) {
-        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
+                  port + map.start, map.start, map.size);
 
         write_byte(port, (uint8_t*)src, 1);
         write_byte(port + 1, (uint8_t*)src + 1, 1);
@@ -324,7 +327,8 @@ void IOBus::write_dword(uint16_t port, uint32_t* src, uint32_t n)
     port -= map.start;
 
     if ((map.size - port) < 4) {
-        D_MESSAGE("boundry test failed, port %u range start %u size %u", port, map.start, map.size);
+        D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
+                  port + map.start, map.start, map.size);
 
         write_word(port, (uint16_t*)src, 1);
         write_word(port + 2, (uint16_t*)src + 1, 1);
