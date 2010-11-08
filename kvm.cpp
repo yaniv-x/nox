@@ -40,6 +40,7 @@ KVM::KVM()
     , _num_mem_slot (0)
     , _vcpu_mmap_size (0)
 {
+    init();
 }
 
 
@@ -57,7 +58,7 @@ int KVM::check_extention(int extension)
 }
 
 
-bool KVM::init()
+void KVM::init()
 {
     static const char* kvm_file_name = "/dev/kvm";
 
@@ -65,8 +66,7 @@ bool KVM::init()
 
     if (!_devfd.is_valid()) {
         int err = errno;
-        E_MESSAGE("open %s failed: errno %d (%s)", kvm_file_name, err, strerror(err));
-        return false;
+        THROW("open %s failed: errno %d (%s)", kvm_file_name, err, strerror(err));
     }
 
     int version = ioctl(_devfd.get(), KVM_GET_API_VERSION, 0);
@@ -74,45 +74,37 @@ bool KVM::init()
     if (version != KVM_API_VERSION) {
         if (version == -1) {
             int err = errno;
-            E_MESSAGE("get kvm api version failed: errno %d (%s)", err, strerror(err));
-            return false;
+            THROW("get kvm api version failed: errno %d (%s)", err, strerror(err));
         }
 
-        E_MESSAGE("kvm api version mismatch kvm %d self %d", version, KVM_API_VERSION);
-        return false;
+        THROW("kvm api version mismatch kvm %d self %d", version, KVM_API_VERSION);
     }
 
     if (!check_extention(KVM_CAP_USER_MEMORY)) {
-        E_MESSAGE("no user memory extension");
-        return false;
+        THROW("no user memory extension");
     }
 
     if (!check_extention(KVM_CAP_SET_TSS_ADDR)) {
-        E_MESSAGE("no set tss extension");
-        return false;
+        THROW("no set tss extension");
     }
 
     if (!(_max_vcpu = ioctl(_devfd.get(), KVM_CHECK_EXTENSION, KVM_CAP_NR_VCPUS))) {
-        E_MESSAGE("unable to get max vcpu");
-        return false;
+        THROW("unable to get max vcpu");
     }
 
     if (!(_num_mem_slot = ioctl(_devfd.get(), KVM_CHECK_EXTENSION, KVM_CAP_NR_MEMSLOTS))) {
-        E_MESSAGE("unable to get max mem slots");
-        return false;
+        THROW("unable to get max mem slots");
     }
 
     if ((_vcpu_mmap_size = ioctl(_devfd.get(), KVM_GET_VCPU_MMAP_SIZE, 0)) < 0) {
-        E_MESSAGE("unable to get vcpu mmap size");
-        return false;
+        THROW("unable to get vcpu mmap size");
     }
 
     _vmfd.reset(ioctl(_devfd.get(), KVM_CREATE_VM, 0));
 
     if (!_vmfd.is_valid()) {
         int err = errno;
-        E_MESSAGE("vm create failed: errno %d (%s)", err, strerror(err));
-        return false;
+        THROW("vm create failed: errno %d (%s)", err, strerror(err));
     }
 
     for (uint32_t i = 0; i < _num_mem_slot; i++) {
@@ -120,8 +112,6 @@ bool KVM::init()
     }
 
     //todo: set tss KVM_SET_TSS_ADDR
-
-    return true;
 }
 
 
@@ -200,27 +190,4 @@ void KVM::unmap_mem_slot(KvmMapRef map_ref)
 
     _free_slots.push_front(map_ref);
 }
-
-
-/*KvmCpuRef KVM::creat_cpu(uint32 id)
-{
-    int cpu_fd = ioctl(_vmfd.get(), KVM_CREATE_VCPU, id);
-
-    if (cpu_fd < 0) {
-        THROW("create failed %d", cpu_fd);
-    }
-
-    struct kvm_run* kvm_run = mmap(NULL, _vcpu_mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                   cpu_fd, 0);
-    if (!kvm_run) {
-        close(cpu_fd);
-        THROW("mmap failed %d");
-    }
-}*/
-
-
-/*void KVM::destroy_cpu(KvmCpuRef cpu_ref)
-{
-
-}*/
 
