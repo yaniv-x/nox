@@ -41,8 +41,6 @@ class KVM: private NonCopyable {
 public:
     KVM();
 
-    bool init();
-
     KvmMapRef map_mem_slot(page_address_t start, uint64_t num_pages,
                         page_address_t host_address);
     void unmap_mem_slot(KvmMapRef map_ref);
@@ -52,6 +50,7 @@ public:
     int get_vcpu_mmap_size() { return _vcpu_mmap_size;}
 
 private:
+    void init();
     int check_extention(int extension);
     bool is_active_slot(uint32_t slot);
 

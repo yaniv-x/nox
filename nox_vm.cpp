@@ -185,6 +185,7 @@ void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
     };
 }
 
+
 void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
 {
     if (val == '\r') {
@@ -222,7 +223,7 @@ void NoxVM::init_ram()
 
     if (ram_size) {
         _high_ram = _mem_bus->alloc_physical_ram(*this, ram_size >> GUEST_PAGE_SHIFT,
-                                                "high ram");
+                                                 "high ram");
         _mem_bus->map_physical_ram(_high_ram, (4ULL * GB) >> GUEST_PAGE_SHIFT, false);
     }
 
@@ -303,10 +304,6 @@ enum {
 bool NoxVM::init()
 {
     new NoxDisplay(*_vga.get(), *_kbd.get());
-
-    if (!_kvm->init()) {
-        return false;
-    }
 
     init_ram();
     //todo: register local apic mmio
