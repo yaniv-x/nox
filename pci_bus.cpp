@@ -87,6 +87,13 @@ PCIBus::PCIBus(NoxVM& nox)
 
 PCIBus::~PCIBus()
 {
+    delete _devices[0];
+
+    for (uint i = 1; i < PCI_MAX_DEVICES; i++) {
+        if (_devices[i]) {
+            D_MESSAGE("leak");
+        }
+    }
 }
 
 
@@ -254,5 +261,16 @@ void PCIBus::add_device(PCIDevice& device)
     }
 
     THROW("out if pci slots");
+}
+
+
+void PCIBus::remove_device(PCIDevice& device)
+{
+    for (uint i = 0; i < PCI_MAX_DEVICES; i++) {
+        if (_devices[i] == &device) {
+            _devices[i] = NULL;
+            return;
+        }
+    }
 }
 
