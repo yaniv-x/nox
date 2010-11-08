@@ -28,7 +28,9 @@
 #include "nox_vm.h"
 #include "io_bus.h"
 #include "pci_device.h"
+#include "pci.h"
 
+PCIBus* pci_bus = NULL;
 
 enum {
     IO_PCI_CONFIG_ADDRESS = 0xcf8,
@@ -47,19 +49,13 @@ enum {
 
 };
 
-
-#define NOX_PCI_VENDOR 0x1aaa
-#define NOX_PCI_DEV_HOST_BRIDGE 1
 #define NOX_PCI_DEV_HOST_BRIDGE_REV 1
-
-#define PCI_CLASS_BRIDGE 0x06
-#define PCI_SUBCLASS_BRIDGE_HOST 0x00
-
-
 
 PCIBus::PCIBus(NoxVM& nox)
     : VMPart ("pci", nox)
 {
+    ASSERT(pci_bus == NULL);
+
     IOBus& bus = nox.get_io_bus();
 
     add_io_region(bus.register_region(*this, IO_PCI_CONFIG_ADDRESS, 4, this,
@@ -77,11 +73,12 @@ PCIBus::PCIBus(NoxVM& nox)
 
     memset(_devices, 0, sizeof(_devices));
 
-    _devices[0] = new PCIDevice("host-bridge", *this , NOX_PCI_VENDOR,
-                                NOX_PCI_DEV_HOST_BRIDGE,
+    _devices[0] = new PCIDevice("host-bridge", *this , NOX_PCI_VENDOR_ID,
+                                NOX_PCI_DEV_ID_HOST_BRIDGE,
                                 NOX_PCI_DEV_HOST_BRIDGE_REV,
                                 mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_HOST, 0),
                                 false);
+    pci_bus = this;
 }
 
 
@@ -94,6 +91,8 @@ PCIBus::~PCIBus()
             D_MESSAGE("leak");
         }
     }
+
+    pci_bus = NULL;
 }
 
 

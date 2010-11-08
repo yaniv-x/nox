@@ -29,6 +29,9 @@
 #include "io_bus.h"
 #include "memory_bus.h"
 #include "application.h"
+#include "pci.h"
+#include "pci_device.h"
+#include "pci_bus.h"
 
 #define VGA_D_MESSAGE(format, ...)
 
@@ -39,7 +42,7 @@ enum {
     IO_VGA_END = 0x3d0,
 
     VRAM_START = 0xa0000,
-    VRAM_SIZE = 256 * KB,
+    VGA_VRAM_SIZE = 256 * KB,
 
     CARET_RATE = 1000 * 1000 * 1000 / 2,
 
@@ -180,6 +183,36 @@ enum {
     GRAPHICS_MISK_FB_ADDR_B8000_BFFFF = 3,
 };
 
+enum {
+    IO_VBE_REG_SELECT = 0x01ce,
+    IO_VBE_DATA = 0x01cf,
+
+    VBE_MAX_X_RES = 1280,
+    VBE_MAX_Y_RES = 1024,
+    VBE_MAX_DEPTH = 32,
+    VBE_VRAM_SIZE = ALIGN(VBE_MAX_X_RES * VBE_MAX_Y_RES * 4, 64 * KB),
+    VBE_BASE_ADDRESS = 0xe0000000,
+
+    VBE_REG_DISPLAY_ID = 0,
+    VBE_REG_X_RES,
+    VBE_REG_Y_RES,
+    VBE_REG_DEPTH,
+    VBE_REG_COMMAND,
+    VBE_REG_BANK,
+    VBE_REG_VIRT_WIDTH,
+    VBE_REG_VIRT_HEIGHT,
+    VBE_REG_X_OFFSET,
+    VBE_REG_Y_OFFSET,
+    VBE_REG_VIDEO_MEMORY_64K,
+    VBE_NUM_REGS,
+
+    VBE_COMMAND_ENABLE = (1 << 0),
+    VBE_COMMAND_CAPS = (1 << 1),
+    VBE_DISPI_8BIT_DAC = (1 << 5),
+    VBE_COMMAND_LINEAR = (1 << 6),
+    VBE_COMMAN_NOCLEARMEM = (1 << 7),
+};
+
 
 //this naive imp. need to improve thread safety and detaching
 class VGABackEndImp : public NonCopyable, public VGABackEnd {
@@ -232,32 +265,53 @@ public:
 
 
 enum {
-    MAX_WIDTH = 740,
-    MAX_HIGHT = 480,
+    VGA_MAX_WIDTH = 740,
+    VGA_MAX_HIGHT = 480,
 };
 
 
 VGA::VGA(NoxVM& nox)
     : VMPart("vga", nox)
     , _mmio (NULL)
-    , _fb (new SharedBuf(MAX_WIDTH * MAX_HIGHT * sizeof(uint32_t)))
+    , _fb (new SharedBuf(VBE_MAX_X_RES * VBE_MAX_Y_RES * sizeof(uint32_t)))
     , _width (640)
     , _height (480)
     , _caret_tick (0)
     , _caret_visable (0)
 {
+    ASSERT(int(VBE_NUM_REGS) == int(NUM_VBE_REGS));
+
     IOBus& io_bus = nox.get_io_bus();
 
     add_io_region(io_bus.register_region(*this, IO_VGA_BASE, IO_VGA_END - IO_VGA_BASE, this,
                                          (io_read_byte_proc_t)&VGA::io_read_byte,
                                          (io_write_byte_proc_t)&VGA::io_write_byte));
 
-    _update_timer = application->create_timer((void_callback_t)&VGA::update, this);
-    _update_timer->arm(1000 * 1000 * 1000 / 30, true); // arm/disarm in start/stop
+    add_io_region(io_bus.register_region(*this, IO_VBE_REG_SELECT, 3, this,
+                                         NULL, NULL,
+                                         (io_read_word_proc_t)&VGA::io_vbe_read,
+                                         (io_write_word_proc_t)&VGA::io_vbe_write));
 
-    _physical_ram = memory_bus->alloc_physical_ram(*this, VRAM_SIZE / GUEST_PAGE_SIZE, "vga ram");
+
+    _update_timer = application->create_timer((void_callback_t)&VGA::update, this);
+
+    _physical_ram = memory_bus->alloc_physical_ram(*this, VBE_VRAM_SIZE / GUEST_PAGE_SIZE,
+                                                   "vga ram");
     _vram = memory_bus->get_physical_ram_ptr(_physical_ram);
-    _vram_end = _vram + VRAM_SIZE;
+    _vga_vram_end = _vram + VGA_VRAM_SIZE;
+    _vbe_vram_end = _vram + VBE_VRAM_SIZE;
+
+    //todo: dynamic linear fb address
+    memory_bus->map_physical_ram(_physical_ram, VBE_BASE_ADDRESS, false);
+
+    uint32_t class_code = mk_pci_class_code(PCI_CLASS_DISPLAY, PCI_DISPLAY_SUBCLASS_VGA,
+                                            PCI_VGA_INTERFACE_VGACOMPAT);
+    // todo: no need for double mapping of vbe linear buffer, will be resolbed by changing bios
+    // pci configuration
+    _pci_device = new PCIDevice("vga-pci", *pci_bus, NOX_PCI_VENDOR_ID,
+                                NOX_PCI_DEV_ID_VGA, 1, class_code, false);
+    _pci_device->add_mem_region(0, _physical_ram, 0, VBE_VRAM_SIZE / GUEST_PAGE_SIZE, false);
+    pci_bus->add_device(*_pci_device);
 
     reset();
 }
@@ -265,6 +319,7 @@ VGA::VGA(NoxVM& nox)
 
 VGA::~VGA()
 {
+    delete _pci_device;
     _update_timer->destroy();
 
     io_bus->unregister_region(_region1);
@@ -456,7 +511,7 @@ void VGA::update()
 {
     Lock lock(_mutex);
 
-    if (!_active) {
+    if (!_vga_active) {
         return;
     }
 
@@ -489,7 +544,7 @@ void VGA::update()
 
          uint32_t* dest_line = (uint32_t*)_fb->get();
 
-         lines = MIN(lines, (_vram_end - fb_ptr) / 4 / width);
+         lines = MIN(lines, (_vga_vram_end - fb_ptr) / 4 / width);
 
          for (int i = 0; i < lines; i++) {
              uint32_t* dest_char = dest_line;
@@ -530,7 +585,7 @@ void VGA::update()
         uint32_t* dest = (uint32_t*)_fb->get();
         uint pixels = height * width;
 
-        pixels = MIN(pixels, (_vram_end - fb_ptr) << 1);
+        pixels = MIN(pixels, (_vga_vram_end - fb_ptr) << 1);
 
         for (uint i = 0; i < pixels; i++) {
             uint8_t pal_index;
@@ -630,7 +685,7 @@ void VGA::reset()
 {
     _last_io_delta = ~0;
     _mmap_state = ~0;
-    _active = false;
+    _vga_active = false;
     memset(_fb->get(), 0,  _fb->size());
 
     _misc_output = 0;
@@ -662,6 +717,10 @@ void VGA::reset()
 
     reset_io();
     reset_fb();
+
+    _vbe_reg_index = 0;
+    memset(_vbe_regs, 0, sizeof(_vbe_regs));
+    _vbe_regs[VBE_REG_VIDEO_MEMORY_64K] = (VBE_MAX_X_RES * VBE_MAX_Y_RES * 4) / (64 * KB);
 }
 
 static uint8_t v_retrace = 0;
@@ -726,6 +785,8 @@ uint8_t VGA::io_read_byte(uint16_t port)
         return _color_index_mask;
     case IO_DEC_DAC_STATE:
         return _dac_state;
+    case IO_PALETTE_WRITE_INDEX:
+        return _palette_read_index;
     case IO_PALETTE_DATA:
         if (_palette_read_comp == -1) {
             _palette_read_index++;
@@ -738,6 +799,8 @@ uint8_t VGA::io_read_byte(uint16_t port)
         return _attributes_regs[_attrib_control_index & ATTRIB_INDEX_MASK];
     case IO_GRAPHICS_INDEX:
         return _graphics_index;
+    case IO_GRAPHICS:
+        return _graphics_regs[_graphics_index];
     case IO_FEATURE_CONTROL_R:
         return _feature_cntrol;
     case IO_CRT_CONTROL_INDEX:
@@ -778,20 +841,8 @@ void VGA::blank_screen()
 }
 
 
-void VGA::on_crt_mode_cahnge()
+void VGA::enable_vga()
 {
-    bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);;
-
-    if (active == _active) {
-        return;
-    }
-
-    _active = active;
-
-    if (!_active) {
-        return;
-    }
-
     uint overflow = _crt_regs[CRT_REG_OVERFLOW];
 
     uint height = (((overflow & (1 << CRT_OVERFLAOW_H8_BIT)) << (8 - CRT_OVERFLAOW_H8_BIT)) |
@@ -813,7 +864,7 @@ void VGA::on_crt_mode_cahnge()
         return;
     }
 
-    if (width > MAX_WIDTH || height > MAX_HIGHT) {
+    if (width > VGA_MAX_WIDTH || height > VGA_MAX_HIGHT) {
         D_MESSAGE("invalid size");
         return;
     }
@@ -821,6 +872,7 @@ void VGA::on_crt_mode_cahnge()
     _width = width;
     _height = height;
     _caret_visable = false;
+    _dirty = true;
 
     if (!(_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF) &&
         !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
@@ -836,6 +888,30 @@ void VGA::on_crt_mode_cahnge()
     for (; iter != _front_ends.end(); iter++) {
         (*iter)->get_front_end()->on_size_changed(width, height);
     }
+
+    _update_timer->arm(1000 * 1000 * 1000 / 30, true); // add arm/disarm to start/stop
+}
+
+
+void VGA::on_crt_mode_cahnge()
+{
+    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
+        return;
+    }
+
+    bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
+
+    if (active == _vga_active) {
+        return;
+    }
+
+    _vga_active = active;
+
+    if (!_vga_active) {
+        return;
+    }
+
+    enable_vga();
 }
 
 
@@ -1010,7 +1086,7 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 
 inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 {
-    if (_vram + offset >= _vram_end) {
+    if (_vram + offset >= _vga_vram_end) {
         D_MESSAGE("out of bounds");
         dest = 0xff;
         return;
@@ -1042,6 +1118,14 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
         return;
     }
 
+    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
+        ASSERT(length <= 64 * KB);
+
+        src += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
+        memcpy(dest, _fb->get() + src, length);
+        return;
+    }
+
     if ((_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_READ_MODE_MASK)) {
          W_MESSAGE_SOME(100, "implement me");
          memset(dest, 0xff, length);
@@ -1056,7 +1140,7 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 
 inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
 {
-    if (_vram + offset >= _vram_end) {
+    if (_vram + offset >= _vga_vram_end) {
         return;
     }
 
@@ -1084,6 +1168,7 @@ inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
         break;
     }
 }
+
 
 inline void VGA::vram_write_one(uint64_t dest, uint8_t byte)
 {
@@ -1140,9 +1225,19 @@ inline void VGA::vram_write_one(uint64_t dest, uint8_t byte)
     }
 }
 
+
 void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
 {
     if (!(_misc_output & MISC_FB_ACCESS_MASK)) {
+        return;
+    }
+
+    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
+        ASSERT(length <= 64 * KB);
+
+        dest += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
+        memcpy(_fb->get() + dest, src, length);
+        _dirty = true;
         return;
     }
 
@@ -1151,5 +1246,164 @@ void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
     }
 
     _dirty = true;
+}
+
+
+uint16_t VGA::io_vbe_read(uint16_t port)
+{
+    if (port == IO_VBE_REG_SELECT) {
+        return _vbe_reg_index;
+    }
+
+    ASSERT(port == IO_VBE_DATA);
+
+    if (_vbe_reg_index < NUM_VBE_REGS) {
+        if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_CAPS) {
+            switch (_vbe_reg_index) {
+            case VBE_REG_X_RES:
+                return VBE_MAX_X_RES;
+            case VBE_REG_Y_RES:
+                return VBE_MAX_X_RES;
+            case VBE_REG_DEPTH:
+                return VBE_MAX_DEPTH;
+            default:
+                D_MESSAGE("unhendled get caps for reg %u");
+            }
+        }
+
+        return _vbe_regs[_vbe_reg_index];
+    }
+
+    D_MESSAGE("out of range");
+    return 0;
+}
+
+
+void VGA::enable_vbe()
+{
+    // need to remap fb?
+
+    _update_timer->disarm();
+    _vga_active = false;
+
+    if (!(_vbe_regs[_vbe_reg_index] & VBE_COMMAN_NOCLEARMEM)) {
+        memset(_fb->get(), 0, _fb->size());
+        memset(_vram, 0, _vbe_vram_end - _vram);
+    }
+
+    if ((_vbe_regs[_vbe_reg_index] & VBE_COMMAND_LINEAR)) {
+         D_MESSAGE("VBE_COMMAND_LINEAR, inf sleep");
+            for (;;) sleep(2);
+    }
+
+    _width = _vbe_regs[VBE_REG_X_RES];
+    _height = _vbe_regs[VBE_REG_Y_RES];
+
+    // need to ensure thread safe. Holding lock while calling
+    // the front end is a potentail dead lock
+    FrontEndList::iterator iter = _front_ends.begin();
+
+    for (; iter != _front_ends.end(); iter++) {
+        (*iter)->get_front_end()->on_size_changed(_vbe_regs[VBE_REG_X_RES],
+                                                  _vbe_regs[VBE_REG_Y_RES]);
+    }
+}
+
+
+void VGA::disable_vbe()
+{
+    bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
+
+    if (!active) {
+        return;
+    }
+
+    _vga_active = true;
+    enable_vga();
+}
+
+
+void VGA::io_vbe_write(uint16_t port, uint16_t val)
+{
+    Lock lock(_mutex);
+
+    if (port == IO_VBE_REG_SELECT) {
+        _vbe_reg_index = val;
+    } else {
+        switch (_vbe_reg_index) {
+        case VBE_REG_DISPLAY_ID:
+            _vbe_regs[_vbe_reg_index] = val;
+            break;
+        case VBE_REG_COMMAND: {
+            uint16_t curr_val = _vbe_regs[_vbe_reg_index];
+            _vbe_regs[_vbe_reg_index] = val;
+
+            if ((val & VBE_COMMAND_ENABLE) != (curr_val & VBE_COMMAND_ENABLE)) {
+                if (val & VBE_COMMAND_ENABLE) {
+                    enable_vbe();
+                } else {
+                    disable_vbe();
+                }
+            }
+            break;
+        }
+        case VBE_REG_X_RES:
+            if (val > VBE_MAX_X_RES) {
+                D_MESSAGE("ignore x res %u", val);
+                break;
+            }
+            _vbe_regs[VBE_REG_X_RES] = val;
+            break;
+        case VBE_REG_Y_RES:
+            if (val > VBE_MAX_Y_RES) {
+                D_MESSAGE("ignore y res %u", val);
+                break;
+            }
+            _vbe_regs[VBE_REG_Y_RES] = val;
+            break;
+        case VBE_REG_DEPTH:
+            if (val != 32) {
+                D_MESSAGE("%u bpp is not supported", val);
+                break;
+            }
+            _vbe_regs[VBE_REG_DEPTH] = val;
+            break;
+        case VBE_REG_BANK:
+            if (val > _vbe_regs[VBE_REG_VIDEO_MEMORY_64K]) {
+                D_MESSAGE("ignore out of bound bank %u", val);
+                break;
+            }
+
+            _vbe_regs[VBE_REG_BANK] = val;
+            break;
+        case VBE_REG_X_OFFSET:
+           _vbe_regs[VBE_REG_X_OFFSET] = val;
+            if (val != 0) {
+                D_MESSAGE("x offset %u", val);
+            }
+            break;
+        case VBE_REG_Y_OFFSET:
+            _vbe_regs[VBE_REG_Y_OFFSET] =val;
+            if (val != 0) {
+                D_MESSAGE("y offset %u", val);
+            }
+            break;
+        case VBE_REG_VIRT_WIDTH:
+            if (val != _vbe_regs[VBE_REG_X_RES]) {
+                D_MESSAGE("ignoring virtual width %u (%u)", val, _vbe_regs[VBE_REG_X_RES]);
+            }
+            _vbe_regs[VBE_REG_VIRT_WIDTH] = val;
+            break;
+        case VBE_REG_VIRT_HEIGHT:
+            if (val != _vbe_regs[VBE_REG_Y_RES]) {
+                D_MESSAGE("ignoring virtual height %u (%u)", val, _vbe_regs[VBE_REG_Y_RES]);
+            }
+            _vbe_regs[VBE_REG_VIRT_HEIGHT] = val;
+            break;
+        default:
+            D_MESSAGE("unhandled %u, inf sleep", _vbe_reg_index);
+            for (;;) sleep(2);
+        }
+    }
 }
 
