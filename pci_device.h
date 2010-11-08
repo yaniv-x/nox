@@ -57,6 +57,8 @@ public:
                          read_mem_proc_t read, write_mem_proc_t write,
                          bool bits64);
     void add_mem_region(uint bar, PhysicalRam* physical, bool bits64);
+    void add_mem_region(uint bar, PhysicalRam* physical, page_address_t start_page,
+                        uint64_t num_pages, bool bits64);
     void add_io_region(uint bar, uint16_t size, void* opaque,
                        io_read_byte_proc_t rb, io_write_byte_proc_t wb = NULL,
                        io_read_word_proc_t rw = NULL, io_write_word_proc_t ww = NULL,

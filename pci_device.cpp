@@ -388,6 +388,62 @@ private:
 };
 
 
+class PhysicalSection: public MemMap {
+public:
+    PhysicalSection(PhysicalRam* physical, page_address_t start_page,
+                    uint64_t num_pages, bool bits64, uint low_bar)
+        : MemMap(num_pages << GUEST_PAGE_SHIFT, bits64, low_bar)
+        , _physical (physical)
+        , _start_page (start_page)
+        , _num_pages (num_pages)
+        , _section (NULL)
+    {
+    }
+
+    virtual ~PhysicalSection()
+    {
+        if (_section) {
+            memory_bus->release_section(_section);
+            _section = NULL;
+        }
+    }
+
+    virtual void map(PCIDevice& owner, uint64_t start)
+    {
+        if (_section) {
+            return;
+        }
+
+        if (start + size > (1ULL << MemoryBus::ADDRESS_BITS) || start + size < start
+            || (!is_64bit() && start + size > (1ULL << 32)) ) {
+            W_MESSAGE("bad mapping start 0x%lx size %lu", start, size);
+            return;
+        }
+
+        _section = memory_bus->map_section(_physical, start >> GUEST_PAGE_SHIFT, false,
+                                           _start_page, _num_pages);
+        map_gap(owner, start);
+    }
+
+    virtual void unmap()
+    {
+        if (!_section) {
+            return;
+        }
+
+        memory_bus->release_section(_section);
+        _section = NULL;
+        unmap_gap();
+    }
+
+private:
+    PhysicalRam* _physical;
+    page_address_t _start_page;
+    uint64_t _num_pages;
+    MapSection* _section;
+};
+
+
 class MMIOMap: public MemMap {
 public:
     MMIOMap(uint64_t size, bool bits64, uint low_bar, void* opaque,
@@ -475,6 +531,8 @@ PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t de
 
 PCIDevice::~PCIDevice()
 {
+    ((PCIBus*)get_container())->remove_device(*this);
+
     for (int i = 0; i < NUM_BARS; i++) {
         PCIDevice::Region* region = _regions[i];
 
@@ -537,6 +595,13 @@ void PCIDevice::add_mmio_region(uint bar, uint64_t size, void* opaque, read_mem_
 void PCIDevice::add_mem_region(uint bar, PhysicalRam* physical, bool bits64)
 {
     set_region(bar, new PhysicalMap(physical, bits64, bar));
+}
+
+
+void PCIDevice::add_mem_region(uint bar, PhysicalRam* physical, page_address_t start_page,
+                               uint64_t num_pages, bool bits64)
+{
+    set_region(bar, new PhysicalSection(physical, start_page, num_pages, bits64, bar));
 }
 
 
