@@ -24,55 +24,23 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_PCI_BUS
-#define _H_PCI_BUS
+#ifndef _H_PCI
+#define _H_PCI
 
-#include "vm_part.h"
+#define NOX_PCI_VENDOR_ID 0x1aaa
 
-class NoxVM;
-class PCIDevice;
-
-class PCIBus: public VMPart {
-public:
-    PCIBus(NoxVM& nox);
-    virtual ~PCIBus();
-
-    virtual void load(InStream &stream) {}
-    virtual void power() {}
-    virtual void reset() { _config_address = 0;}
-    virtual void save(OutStream &stream) {}
-    virtual void start() {}
-    virtual void stop() {}
-
-    void add_device(PCIDevice& device);
-    void remove_device(PCIDevice& device);
-
-private:
-    uint32_t io_get_config_address(uint16_t port);
-    void io_set_config_address(uint16_t port, uint32_t val);
-    uint8_t io_read_config_byte(uint16_t port);
-    void io_write_config_byte(uint16_t port, uint8_t val);
-    uint16_t io_read_config_word(uint16_t port);
-    void io_write_config_word(uint16_t port, uint16_t val);
-    uint32_t io_read_config_dword(uint16_t port);
-    void io_write_config_dword(uint16_t port, uint32_t val);
+#define NOX_PCI_DEV_ID_HOST_BRIDGE 0x0001
+#define NOX_PCI_DEV_ID_VGA 0x0100
 
 
-    bool is_valid_address();
-    PCIDevice* get_target();
+#define PCI_CLASS_DISPLAY 0x03
+#define PCI_DISPLAY_SUBCLASS_VGA 0x00
+#define PCI_VGA_INTERFACE_VGACOMPAT 0x00
 
-    enum {
-        PCI_MAX_DEVICES = 32,
-        PCI_MAX_FUNCTIONS = 8,
-    };
+#define PCI_CLASS_BRIDGE 0x06
+#define PCI_SUBCLASS_BRIDGE_HOST 0x00
 
-private:
-    uint32_t _config_address;
-    PCIDevice* _devices[PCI_MAX_DEVICES];
 
-};
-
-extern PCIBus* pci_bus;
 
 #endif
 

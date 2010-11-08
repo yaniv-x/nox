@@ -81,13 +81,6 @@ PlaceHolder::PlaceHolder(NoxVM& nox)
                                       (io_read_byte_proc_t)&PlaceHolder::read_byte,
                                       (io_write_byte_proc_t)&PlaceHolder::write_byte));
 
-    // VBE
-    add_io_region(_io.register_region(*this, 0x01ce, 3, this,
-                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
-                                      (io_write_byte_proc_t)&PlaceHolder::write_byte,
-                                      (io_read_word_proc_t)&PlaceHolder::read_word,
-                                      (io_write_word_proc_t)&PlaceHolder::write_word));
-
 
     t2 = application->create_timer((void_callback_t)&PlaceHolder::timer_call_2222222222, this);
     //t2->arm(1000ULL * NUM_MICRO , true);

@@ -35,6 +35,7 @@ class Timer;
 class PhysicalRam;
 class MMIORegion;
 class VGABackEndImp;
+class PCIDevice;
 
 class SharedBuf: public NonCopyable {
 public:
@@ -90,6 +91,9 @@ public:
 private:
     uint8_t io_read_byte(uint16_t port);
     void io_write_byte(uint16_t port, uint8_t val);
+    uint16_t io_vbe_read(uint16_t port);
+    void io_vbe_write(uint16_t port, uint16_t val);
+
     void set_misc_reg(uint8_t val);
     void reset_sequencer();
     uint8_t fetch_pix_16(const uint8_t* fb_ptr, uint offset);
@@ -103,6 +107,9 @@ private:
     void reset_fb();
     void blank_screen();
     void on_crt_mode_cahnge();
+    void enable_vga();
+    void enable_vbe();
+    void disable_vbe();
 
     void vram_load_one(uint32_t offset, uint8_t& dest);
     void vram_read_one(uint32_t src, uint8_t& dest);
@@ -121,6 +128,7 @@ private:
         GRAPHICS_NUM_REGS = 16,
         PALETTE_SIZE = 256,
         CRT_NUM_REGS = 0x25,
+        NUM_VBE_REGS = 11,
     };
 
 private:
@@ -129,12 +137,14 @@ private:
     IORegion* _region1;
     IORegion* _region2;
     PhysicalRam* _physical_ram;
+    PCIDevice* _pci_device;
     uint8_t* _vram;
-    uint8_t* _vram_end;
+    uint8_t* _vga_vram_end;
+    uint8_t* _vbe_vram_end;
     MMIORegion* _mmio;
     uint8_t _last_io_delta;
     uint8_t _mmap_state;
-    bool _active;
+    bool _vga_active;
 
     uint8_t _attrib_control_index;
     bool _write_attrib;
@@ -174,6 +184,9 @@ private:
 
     nox_time_t _caret_tick;
     bool _caret_visable;
+
+    uint16_t _vbe_reg_index;
+    uint16_t _vbe_regs[NUM_VBE_REGS];
 
     friend class VGABackEndImp;
 };
