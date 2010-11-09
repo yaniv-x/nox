@@ -76,14 +76,24 @@ public:
 
     void key_down(NoxKey code);
     void key_up(NoxKey code);
+    void mouse_motion(int dx, int dy);
+
+    enum MouseButton {
+        MOUSE_LEFT_BUTTON,
+        MOUSE_RIGHT_BUTTON,
+        MOUSE_MIDDLE_BUTTON,
+    };
+
+    void mouse_button_press(MouseButton button);
+    void mouse_button_release(MouseButton button);
 
 private:
     uint8_t io_read_port_a(uint16_t port);
     void io_write_port_a(uint16_t port, uint8_t val);
     uint8_t io_read_status(uint16_t port);
     void io_write_command(uint16_t port, uint8_t val);
-    void put_mouse_data(uint data);
-    void put_data(uint data);
+    void put_mouse_data(uint8_t data);
+    void put_data(uint8_t data);
     void restore_keyboard_defaults();
     void reset_keyboard();
     void restore_mouse_defaults();
@@ -95,6 +105,8 @@ private:
     bool mouse_is_active();
     bool keyboard_is_active();
     void key_common(NoxKey code, uint scan_index);
+    bool mouse_stream_test();
+    void push_mouse_packet();
 
 private:
     Mutex _mutex;
@@ -125,8 +137,11 @@ private:
     bool _mouse_warp_mode;
     uint8_t _mouse_resolution;
     uint8_t _mouse_sample_rate;
-    uint8_t _mouse_button;
+    uint8_t _mouse_buttons;
     int _mouse_write_state;
+    bool _mouse_packet_pending;
+    int32_t _mouse_dx;
+    int32_t _mouse_dy;
 
     uint8_t _state;
     uint8_t _command_byte;
