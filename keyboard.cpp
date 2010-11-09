@@ -125,6 +125,8 @@ enum {
     COMMAND_BYTE_SYS_MASK = (1 << 2),
     COMMAND_BYTE_IRQ12_MASK = (1 << 1),
     COMMAND_BYTE_IRQ1_MASK = (1 << 0),
+
+    MOUSE_PACKET_SIZE = 3,
 };
 
 
@@ -192,6 +194,10 @@ void KbdController::refill_outgoing()
 
         _outgoing = _mouse_output.buf.pop();
 
+        if (_mouse_packet_pending && mouse_stream_test()) {
+            push_mouse_packet();
+        }
+
         return;
     }
 }
@@ -248,7 +254,10 @@ void KbdController::restore_mouse_defaults()
 
 void KbdController::reset_mouse()
 {
-    _mouse_button = 0;
+    _mouse_packet_pending = false;
+    _mouse_dx = 0;
+    _mouse_dy = 0;
+    _mouse_buttons = 0;
     _mouse_write_state = MOUSE_WRITE_STATE_CMD,
     restore_mouse_defaults();
     _mouse_output.buf.reset();
@@ -337,9 +346,13 @@ void KbdController::write_to_mouse(uint8_t val)
         switch (val) {
         case MOUSE_CMD_READ_DATA:
             put_mouse_data(KBD_ACK);
-            if (_mouse_reomte_mode) {
-                D_MESSAGE("push current mouse position to mouse output buf ...");
+
+            if (_mouse_output.buf.capacity() - _mouse_output.buf.num_items() >= MOUSE_PACKET_SIZE) {
+                push_mouse_packet();
+            } else {
+                D_MESSAGE("MOUSE_CMD_READ_DATA: no space");
             }
+
             break;
         case MOUSE_CMD_RESET_WARP_MOD:
             put_mouse_data(KBD_ACK);
@@ -376,7 +389,7 @@ void KbdController::write_to_mouse(uint8_t val)
             break;
         case MOUSE_CMD_STATUS:
             put_mouse_data(KBD_ACK);
-            put_mouse_data((_mouse_button & MOUSE_STATE_BUTTON_MASK) |
+            put_mouse_data((_mouse_buttons & MOUSE_STATE_BUTTON_MASK) |
                            (_mouse_scaling ? MOUSE_STATE_SCALING_MASK : 0) |
                            (_mouse_reomte_mode ? MOUSE_STATE_REMOTE_MODE_MASK : 0) |
                            (_mouse_reporting ? MOUSE_STATE_DATA_REPORTING_MASK : 0));
@@ -528,7 +541,7 @@ void KbdController::reset()
 }
 
 
-void KbdController::put_mouse_data(uint data)
+void KbdController::put_mouse_data(uint8_t data)
 {
     if (_mouse_output.buf.is_full()) {
         D_MESSAGE("full");
@@ -543,7 +556,7 @@ void KbdController::put_mouse_data(uint data)
 }
 
 
-void KbdController::put_data(uint data)
+void KbdController::put_data(uint8_t data)
 {
     if (_keyboard_output.buf.is_full()) {
         D_MESSAGE("full");
@@ -879,5 +892,94 @@ void KbdController::key_up(NoxKey code)
     }
 
     key_common(code, BREAK);
+}
+
+
+void KbdController::push_mouse_packet()
+{
+    uint8_t state = (1 << 3) | (_mouse_buttons & 0x7) |
+                    ((uint32_t)(_mouse_dx & (1 << 31)) >> (31 - 4)) |
+                    ((uint32_t)(_mouse_dy & (1 << 31)) >> (31 - 5));
+    put_mouse_data(state);
+
+    uint8_t x = _mouse_dx;
+    put_mouse_data(x);
+
+    uint8_t y = _mouse_dy;
+    put_mouse_data(y);
+
+    _mouse_dx = _mouse_dy = 0;
+    _mouse_packet_pending = false;
+}
+
+
+bool KbdController::mouse_stream_test()
+{
+    return !_mouse_warp_mode && !_mouse_reomte_mode && _mouse_reporting &&
+           _mouse_output.buf.is_empty();
+}
+
+
+void KbdController::mouse_motion(int dx, int dy)
+{
+    Lock lock(_mutex);
+
+    // todo: test running state
+
+    if (_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) {
+        return;
+    }
+
+    _mouse_dx += dx;
+    _mouse_dy -= dy;
+
+    if (!mouse_stream_test()) {
+        _mouse_packet_pending = true;
+        return;
+    }
+
+    push_mouse_packet();
+}
+
+
+void KbdController::mouse_button_press(MouseButton button)
+{
+    Lock lock(_mutex);
+
+    // todo: test running state
+
+    if (_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) {
+        return;
+    }
+
+    _mouse_buttons |= (1 << button);
+
+    if (!mouse_stream_test()) {
+        _mouse_packet_pending = true;
+        return;
+    }
+
+    push_mouse_packet();
+}
+
+
+void KbdController::mouse_button_release(MouseButton button)
+{
+    Lock lock(_mutex);
+
+    // todo: test running state
+
+    if (_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) {
+        return;
+    }
+
+    _mouse_buttons &= ~(1 << button);
+
+    if (!mouse_stream_test()) {
+        _mouse_packet_pending = true;
+        return;
+    }
+
+    push_mouse_packet();
 }
 

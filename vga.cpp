@@ -429,7 +429,6 @@ void VGA::show_caret()
     uint cursor_col = pos % line_size;
 
     if (cursor_row >= lines) {
-        D_MESSAGE("bad position");
         return;
     }
 
@@ -474,7 +473,6 @@ void VGA::hide_caret()
     uint cursor_col = pos % line_size;
 
     if (cursor_row >= lines) {
-        D_MESSAGE("bad position");
         return;
     }
 

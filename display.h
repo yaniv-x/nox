@@ -51,6 +51,10 @@ private:
     void update();
     void on_key_press(unsigned int keycode);
     void on_key_release(unsigned int keycode);
+    void on_motion(int x, int y);
+    void on_button_press(unsigned int x_button);
+    void on_button_release(unsigned int x_button);
+    void cancel_tracking();
     void query_input_driver();
     void* main();
 
@@ -60,9 +64,11 @@ private:
     std::auto_ptr<Thread> _thread;
     Display* _display;
     Window _window;
+    Cursor _invisible_cursor;
 
     KbdController& _kbd;
     bool _evdev;
+    bool _tracking;
 
     uint32_t _width;
     uint32_t _height;

@@ -39,6 +39,7 @@ NoxDisplay::NoxDisplay(VGA& vga, KbdController& kbd)
     , _window (None)
     , _kbd (kbd)
     , _evdev (false)
+    , _tracking (false)
 {
 
 }
@@ -82,9 +83,18 @@ void NoxDisplay::x11_handler()
         XNextEvent(_display, &event);
 
         switch (event.type) {
+        case MotionNotify:
+            on_motion(event.xmotion.x, event.xmotion.y);
+            break;
         case Expose:
             update_area(event.xexpose.window, event.xexpose.x, event.xexpose.y,
                         event.xexpose.width, event.xexpose.height);
+            break;
+        case ButtonPress:
+            on_button_press(event.xbutton.button);
+            break;
+        case ButtonRelease:
+            on_button_release(event.xbutton.button);
             break;
         case KeyPress:
             on_key_press(event.xkey.keycode);
@@ -158,8 +168,8 @@ void* NoxDisplay::main()
     unsigned long mask = CWBorderPixel | CWEventMask;
     win_attributes.border_pixel = 1;
     win_attributes.event_mask = ExposureMask | StructureNotifyMask | KeyPressMask |
-                                KeyReleaseMask;
-
+                                KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
+                                PointerMotionMask;
 
     _back_end->get_size(&_width, &_height);
     _fb = _back_end->get_fb();
@@ -175,6 +185,15 @@ void* NoxDisplay::main()
     Atom wm_delete_window_atom = XInternAtom(_display, "WM_DELETE_WINDOW", False);
 
     XSetWMProtocols(_display, _window, &wm_delete_window_atom, 1);
+
+    XColor x_color;
+    uint8_t pixmap_data[1];
+    Pixmap cursur_pixmap = XCreateBitmapFromData(_display, DefaultRootWindow(_display),
+                                                 (char*)pixmap_data, 1, 1);
+    _invisible_cursor = XCreatePixmapCursor(_display, cursur_pixmap, cursur_pixmap,
+                                            &x_color, &x_color, 0, 0);
+    XFreePixmap(_display, cursur_pixmap);
+
     XMapWindow(_display, _window);
 
     create_fd_event(ConnectionNumber(_display), (void_callback_t)&NoxDisplay::x11_handler, this);
@@ -225,6 +244,11 @@ void NoxDisplay::on_key_press(unsigned int keycode)
         return;
     }
 
+    if (keycode == NOX_KEY_SCROLLLOCK) {
+        cancel_tracking();
+        return;
+    }
+
     _kbd.key_down((NoxKey)keycode);
 }
 
@@ -236,6 +260,79 @@ void NoxDisplay::on_key_release(unsigned int keycode)
         return;
     }
 
+    if (keycode == NOX_KEY_SCROLLLOCK) {
+        return;
+    }
+
     _kbd.key_up((NoxKey)keycode);
+}
+
+
+void NoxDisplay::on_motion(int x, int y)
+{
+    if (!_tracking || (x == 100 && y == 100)) {
+        return;
+    }
+
+    _kbd.mouse_motion(x - 100, y - 100);
+    XWarpPointer(_display, None, _window, 0, 0, 0, 0, 100, 100);
+}
+
+
+void NoxDisplay::on_button_press(unsigned int x_button)
+{
+    if (!_tracking) {
+        return;
+    }
+
+    switch (x_button) {
+    case Button1:
+        _kbd.mouse_button_press(KbdController::MOUSE_LEFT_BUTTON);
+        break;
+    case Button2:
+        _kbd.mouse_button_press(KbdController::MOUSE_MIDDLE_BUTTON);
+        break;
+    case Button3:
+        _kbd.mouse_button_press(KbdController::MOUSE_RIGHT_BUTTON);
+        break;
+    }
+}
+
+
+void NoxDisplay::cancel_tracking()
+{
+    if (!_tracking) {
+        return;
+    }
+
+    XUngrabPointer(_display, CurrentTime);
+    XUndefineCursor(_display, _window);
+    _tracking = false;
+}
+
+
+void NoxDisplay::on_button_release(unsigned int x_button)
+{
+    if (!_tracking) {
+        if (x_button == Button1) {
+            _tracking = XGrabPointer(_display, _window, True, 0, GrabModeAsync, GrabModeAsync,
+                                     None, None, CurrentTime) == GrabSuccess;
+            XWarpPointer(_display, None, _window, 0, 0, 0, 0, 100, 100);
+            XDefineCursor(_display, _window, _invisible_cursor);
+        }
+        return;
+    }
+
+    switch (x_button) {
+    case Button1:
+        _kbd.mouse_button_release(KbdController::MOUSE_LEFT_BUTTON);
+        break;
+    case Button2:
+        _kbd.mouse_button_release(KbdController::MOUSE_MIDDLE_BUTTON);
+        break;
+    case Button3:
+        _kbd.mouse_button_release(KbdController::MOUSE_RIGHT_BUTTON);
+        break;
+    }
 }
 
