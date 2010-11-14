@@ -187,11 +187,10 @@ enum {
     IO_VBE_REG_SELECT = 0x01ce,
     IO_VBE_DATA = 0x01cf,
 
-    VBE_MAX_X_RES = 1280,
-    VBE_MAX_Y_RES = 1024,
+    VBE_MAX_X_RES = 1920,
+    VBE_MAX_Y_RES = 1200,
     VBE_MAX_DEPTH = 32,
     VBE_VRAM_SIZE = ALIGN(VBE_MAX_X_RES * VBE_MAX_Y_RES * 4, 64 * KB),
-    VBE_BASE_ADDRESS = 0xe0000000,
 
     VBE_REG_DISPLAY_ID = 0,
     VBE_REG_X_RES,
@@ -204,6 +203,9 @@ enum {
     VBE_REG_X_OFFSET,
     VBE_REG_Y_OFFSET,
     VBE_REG_VIDEO_MEMORY_64K,
+    VBE_REG_LINEAR_FB,
+    VBE_REG_EDID_WINDOW,
+    VBE_REG_EDID_DATA,
     VBE_NUM_REGS,
 
     VBE_COMMAND_ENABLE = (1 << 0),
@@ -263,17 +265,32 @@ public:
     VGAFrontEnd* _front_end;
 };
 
+class HostSharedBuf: public SharedBuf {
+public:
+    HostSharedBuf(uint size)
+        : SharedBuf(size, new uint8_t[size])
+    {
+    }
+
+protected:
+    virtual ~HostSharedBuf() { delete[] get();}
+};
+
 
 enum {
     VGA_MAX_WIDTH = 740,
     VGA_MAX_HIGHT = 480,
+    VGA_PCI_FB_REGION = 0,
+    VGA_PCI_REVISION = 1,
+
+    EDID_BLOCK_SIZE = 128,
 };
 
 
 VGA::VGA(NoxVM& nox)
     : VMPart("vga", nox)
     , _mmio (NULL)
-    , _fb (new SharedBuf(VBE_MAX_X_RES * VBE_MAX_Y_RES * sizeof(uint32_t)))
+    , _fb (new HostSharedBuf(VBE_MAX_X_RES * VBE_MAX_Y_RES * sizeof(uint32_t)))
     , _width (640)
     , _height (480)
     , _caret_tick (0)
@@ -301,16 +318,11 @@ VGA::VGA(NoxVM& nox)
     _vga_vram_end = _vram + VGA_VRAM_SIZE;
     _vbe_vram_end = _vram + VBE_VRAM_SIZE;
 
-    //todo: dynamic linear fb address
-    memory_bus->map_physical_ram(_physical_ram, VBE_BASE_ADDRESS, false);
-
     uint32_t class_code = mk_pci_class_code(PCI_CLASS_DISPLAY, PCI_DISPLAY_SUBCLASS_VGA,
                                             PCI_VGA_INTERFACE_VGACOMPAT);
-    // todo: no need for double mapping of vbe linear buffer, will be resolbed by changing bios
-    // pci configuration
     _pci_device = new PCIDevice("vga-pci", *pci_bus, NOX_PCI_VENDOR_ID,
-                                NOX_PCI_DEV_ID_VGA, 1, class_code, false);
-    _pci_device->add_mem_region(0, _physical_ram, 0, VBE_VRAM_SIZE / GUEST_PAGE_SIZE, false);
+                                NOX_PCI_DEV_ID_VGA, VGA_PCI_REVISION, class_code, false);
+    _pci_device->add_mem_region(VGA_PCI_FB_REGION, _physical_ram, false);
     pci_bus->add_device(*_pci_device);
 
     reset();
@@ -718,7 +730,11 @@ void VGA::reset()
 
     _vbe_reg_index = 0;
     memset(_vbe_regs, 0, sizeof(_vbe_regs));
-    _vbe_regs[VBE_REG_VIDEO_MEMORY_64K] = (VBE_MAX_X_RES * VBE_MAX_Y_RES * 4) / (64 * KB);
+    _vbe_regs[VBE_REG_VIDEO_MEMORY_64K] = VBE_VRAM_SIZE / (64 * KB);
+
+    _vbe_regs[VBE_REG_EDID_WINDOW] = ~0;
+    _vbe_regs[VBE_REG_EDID_DATA] = ~0;
+    _edid_offset = ~0;
 }
 
 static uint8_t v_retrace = 0;
@@ -879,13 +895,7 @@ void VGA::enable_vga()
         _caret_tick = 0;
     }
 
-    // need to ensure thread safe. Holding lock while calling
-    // the front end is a potentail dead lock
-    FrontEndList::iterator iter = _front_ends.begin();
-
-    for (; iter != _front_ends.end(); iter++) {
-        (*iter)->get_front_end()->on_size_changed(width, height);
-    }
+    propagate_fb();
 
     _update_timer->arm(1000 * 1000 * 1000 / 30, true); // add arm/disarm to start/stop
 }
@@ -1078,6 +1088,7 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
     VGABackEndImp* back_end = new VGABackEndImp(this, front_and);
     Lock lock(_mutex);
     _front_ends.push_back(back_end);
+    D_MESSAGE("todo: add propagate_fb event");
     return back_end;
 }
 
@@ -1247,6 +1258,22 @@ void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
 }
 
 
+//for now: output of "monitor-get-edid | xxd -i" om my pc (Dell U2410).
+static const uint8_t edid_data[] = {
+  0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x10, 0xac, 0x15, 0xf0,
+  0x4c, 0x48, 0x47, 0x31, 0x10, 0x14, 0x01, 0x03, 0x80, 0x34, 0x20, 0x78,
+  0xee, 0x1e, 0xc5, 0xae, 0x4f, 0x34, 0xb1, 0x26, 0x0e, 0x50, 0x54, 0xa5,
+  0x4b, 0x00, 0x81, 0x80, 0xa9, 0x40, 0xd1, 0x00, 0x71, 0x4f, 0x01, 0x01,
+  0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x28, 0x3c, 0x80, 0xa0, 0x70, 0xb0,
+  0x23, 0x40, 0x30, 0x20, 0x36, 0x00, 0x06, 0x44, 0x21, 0x00, 0x00, 0x1a,
+  0x00, 0x00, 0x00, 0xff, 0x00, 0x46, 0x35, 0x32, 0x35, 0x4d, 0x30, 0x34,
+  0x45, 0x31, 0x47, 0x48, 0x4c, 0x0a, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x44,
+  0x45, 0x4c, 0x4c, 0x20, 0x55, 0x32, 0x34, 0x31, 0x30, 0x0a, 0x20, 0x20,
+  0x00, 0x00, 0x00, 0xfd, 0x00, 0x38, 0x4c, 0x1e, 0x51, 0x11, 0x00, 0x0a,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x5a
+};
+
+
 uint16_t VGA::io_vbe_read(uint16_t port)
 {
     if (port == IO_VBE_REG_SELECT) {
@@ -1269,6 +1296,19 @@ uint16_t VGA::io_vbe_read(uint16_t port)
             }
         }
 
+        if (_vbe_reg_index == VBE_REG_EDID_DATA) {
+            ASSERT(sizeof(edid_data) == EDID_BLOCK_SIZE);
+
+            if (_edid_offset < EDID_BLOCK_SIZE) {
+                _vbe_regs[VBE_REG_EDID_DATA] = *(uint16_t*)&edid_data[_edid_offset];
+                _edid_offset += 2;
+            } else if (_edid_offset == EDID_BLOCK_SIZE) {
+                D_MESSAGE("invalid edid data read");
+                _edid_offset += 2;
+                _vbe_regs[VBE_REG_EDID_DATA] = 0xffff;
+            }
+        }
+
         return _vbe_regs[_vbe_reg_index];
     }
 
@@ -1277,34 +1317,59 @@ uint16_t VGA::io_vbe_read(uint16_t port)
 }
 
 
+void VGA::propagate_fb()
+{
+    // need to ensure thread safe. Holding lock while calling
+    // the front end is a potentail dead lock
+
+    FrontEndList::iterator iter = _front_ends.begin();
+
+    if (!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) || _vbe_regs[VBE_REG_DEPTH] != 32) {
+        for (; iter != _front_ends.end(); iter++) {
+            (*iter)->get_front_end()->set(_fb.get(), _width, _height,
+                                          _width * sizeof(uint32_t));
+        }
+    } else {
+        for (; iter != _front_ends.end(); iter++) {
+            uint32_t stride = _vbe_regs[VBE_REG_VIRT_WIDTH] * sizeof(uint32_t);
+            uint8_t* base = _vram + _vbe_regs[VBE_REG_X_OFFSET] * sizeof(uint32_t) +
+                            stride * _vbe_regs[VBE_REG_Y_OFFSET];
+            uint8_t* end = base + _height * stride;
+
+            if (base < _vram || end > _vbe_vram_end || end < base) {
+                D_MESSAGE("invalid fb config");
+                return;
+            }
+
+            AutoRef<SharedBuf> buf(new SharedBuf(VBE_VRAM_SIZE, base));
+            (*iter)->get_front_end()->set(buf.get(), _width, _height,
+                                          _vbe_regs[VBE_REG_VIRT_WIDTH] * sizeof(uint32_t));
+        }
+    }
+}
+
+
 void VGA::enable_vbe()
 {
     // need to remap fb?
-
-    _update_timer->disarm();
     _vga_active = false;
 
-    if (!(_vbe_regs[_vbe_reg_index] & VBE_COMMAN_NOCLEARMEM)) {
+    if (!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAN_NOCLEARMEM)) {
         memset(_fb->get(), 0, _fb->size());
         memset(_vram, 0, _vbe_vram_end - _vram);
     }
 
-    if ((_vbe_regs[_vbe_reg_index] & VBE_COMMAND_LINEAR)) {
-         D_MESSAGE("VBE_COMMAND_LINEAR, inf sleep");
-            for (;;) sleep(2);
+    if ((_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_LINEAR)) {
+         D_MESSAGE("VBE_COMMAND_LINEAR");
+         //   for (;;) sleep(2);
+    } else {
+        _update_timer->disarm();
     }
 
     _width = _vbe_regs[VBE_REG_X_RES];
     _height = _vbe_regs[VBE_REG_Y_RES];
 
-    // need to ensure thread safe. Holding lock while calling
-    // the front end is a potentail dead lock
-    FrontEndList::iterator iter = _front_ends.begin();
-
-    for (; iter != _front_ends.end(); iter++) {
-        (*iter)->get_front_end()->on_size_changed(_vbe_regs[VBE_REG_X_RES],
-                                                  _vbe_regs[VBE_REG_Y_RES]);
-    }
+    propagate_fb();
 }
 
 
@@ -1321,12 +1386,36 @@ void VGA::disable_vbe()
 }
 
 
+void VGA::nofify_vbe_fb_config()
+{
+    if (!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE)) {
+        return;
+    }
+
+    propagate_fb();
+}
+
+
 void VGA::io_vbe_write(uint16_t port, uint16_t val)
 {
     Lock lock(_mutex);
 
     if (port == IO_VBE_REG_SELECT) {
+        if (val == VBE_REG_EDID_WINDOW) {
+            D_MESSAGE("VBE_REG_EDID_WINDOW");
+        }
         _vbe_reg_index = val;
+
+        if (_vbe_reg_index == VBE_REG_LINEAR_FB) {
+            address_t fb_address = _pci_device->get_region_address(VGA_PCI_FB_REGION);
+
+            if (!fb_address || fb_address > fb_address + VBE_VRAM_SIZE ||
+                fb_address + VBE_VRAM_SIZE > ((1ULL << 32) - 1) || (fb_address & 0xffff)) {
+                PANIC("bad fb address %lu", fb_address);
+            }
+
+            _vbe_regs[VBE_REG_LINEAR_FB] = fb_address >> 16;
+        }
     } else {
         switch (_vbe_reg_index) {
         case VBE_REG_DISPLAY_ID:
@@ -1350,14 +1439,14 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
                 D_MESSAGE("ignore x res %u", val);
                 break;
             }
-            _vbe_regs[VBE_REG_X_RES] = val;
+            _vbe_regs[VBE_REG_VIRT_WIDTH] = _vbe_regs[VBE_REG_X_RES] = val;
             break;
         case VBE_REG_Y_RES:
             if (val > VBE_MAX_Y_RES) {
                 D_MESSAGE("ignore y res %u", val);
                 break;
             }
-            _vbe_regs[VBE_REG_Y_RES] = val;
+            _vbe_regs[VBE_REG_VIRT_HEIGHT] = _vbe_regs[VBE_REG_Y_RES] = val;
             break;
         case VBE_REG_DEPTH:
             if (val != 32) {
@@ -1375,28 +1464,41 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             _vbe_regs[VBE_REG_BANK] = val;
             break;
         case VBE_REG_X_OFFSET:
-           _vbe_regs[VBE_REG_X_OFFSET] = val;
+            _vbe_regs[VBE_REG_X_OFFSET] = val;
             if (val != 0) {
                 D_MESSAGE("x offset %u", val);
             }
+            nofify_vbe_fb_config();
             break;
         case VBE_REG_Y_OFFSET:
-            _vbe_regs[VBE_REG_Y_OFFSET] =val;
+            _vbe_regs[VBE_REG_Y_OFFSET] = val;
             if (val != 0) {
                 D_MESSAGE("y offset %u", val);
             }
+            nofify_vbe_fb_config();
             break;
         case VBE_REG_VIRT_WIDTH:
             if (val != _vbe_regs[VBE_REG_X_RES]) {
                 D_MESSAGE("ignoring virtual width %u (%u)", val, _vbe_regs[VBE_REG_X_RES]);
             }
             _vbe_regs[VBE_REG_VIRT_WIDTH] = val;
+            nofify_vbe_fb_config();
             break;
         case VBE_REG_VIRT_HEIGHT:
             if (val != _vbe_regs[VBE_REG_Y_RES]) {
                 D_MESSAGE("ignoring virtual height %u (%u)", val, _vbe_regs[VBE_REG_Y_RES]);
             }
             _vbe_regs[VBE_REG_VIRT_HEIGHT] = val;
+            break;
+        case VBE_REG_EDID_WINDOW:
+            if (val == 0) {
+                _vbe_regs[VBE_REG_EDID_WINDOW] = val;
+                _edid_offset = 0;
+            } else {
+                _vbe_regs[VBE_REG_EDID_WINDOW] = 0xffff;
+                _vbe_regs[VBE_REG_EDID_DATA] = 0xffff;
+                _edid_offset = EDID_BLOCK_SIZE;
+            }
             break;
         default:
             D_MESSAGE("unhandled %u, inf sleep", _vbe_reg_index);
