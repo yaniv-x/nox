@@ -43,8 +43,7 @@ public:
     NoxDisplay(VGA& vga, KbdController& kbd);
 
 private:
-    virtual void on_size_changed(uint32_t width, uint32_t hight);
-    virtual void invalid();
+    virtual void set(SharedBuf* fb, uint32_t width, uint32_t height, int32_t stride);
 
     void update_area(Window window, int x, int y, int width, int height);
     void x11_handler();
@@ -56,15 +55,21 @@ private:
     void on_button_release(unsigned int x_button);
     void cancel_tracking();
     void query_input_driver();
+    void prepare_x_image();
+    void create_window();
+    void prepare_window();
     void* main();
 
 private:
+    Mutex _mutex;
     VGA& _vga;
     VGABackEnd* _back_end;
     std::auto_ptr<Thread> _thread;
     Display* _display;
     Window _window;
     Cursor _invisible_cursor;
+    Timer* _update_timer;
+    GC _gc;
 
     KbdController& _kbd;
     bool _evdev;
@@ -72,7 +77,10 @@ private:
 
     uint32_t _width;
     uint32_t _height;
-    const uint8_t* _fb;
+    AutoRef<SharedBuf> _fb;
+    uint32_t _stride;
+    bool _valid_x_image;
+    XImage _x_image;
 };
 
 #endif

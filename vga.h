@@ -39,10 +39,10 @@ class PCIDevice;
 
 class SharedBuf: public NonCopyable {
 public:
-    SharedBuf(uint size)
+    SharedBuf(uint size, uint8_t* buf)
         : _refs (1)
         , _size (size)
-        , _data (new uint8_t[size])
+        , _data (buf)
     {
     }
 
@@ -53,7 +53,7 @@ public:
     uint size() { return _size;}
 
 protected:
-    virtual ~SharedBuf() { delete[] _data;}
+    virtual ~SharedBuf() {}
 
 private:
     Atomic _refs;
@@ -63,15 +63,12 @@ private:
 
 class VGAFrontEnd {
 public:
-    virtual void on_size_changed(uint32_t width, uint32_t hight) = 0;
-    virtual void invalid() = 0;
+    virtual void set(SharedBuf* fb, uint32_t width, uint32_t height, int32_t stride) = 0;
 };
 
 class VGABackEnd {
 public:
     virtual void detach() = 0;
-    virtual const uint8_t* get_fb() = 0;
-    virtual void get_size(uint32_t* width, uint32_t* hight) = 0;
 };
 
 class VGA: public VMPart {
@@ -110,6 +107,8 @@ private:
     void enable_vga();
     void enable_vbe();
     void disable_vbe();
+    void propagate_fb();
+    void nofify_vbe_fb_config();
 
     void vram_load_one(uint32_t offset, uint8_t& dest);
     void vram_read_one(uint32_t src, uint8_t& dest);
@@ -128,7 +127,7 @@ private:
         GRAPHICS_NUM_REGS = 16,
         PALETTE_SIZE = 256,
         CRT_NUM_REGS = 0x25,
-        NUM_VBE_REGS = 11,
+        NUM_VBE_REGS = 14,
     };
 
 private:
@@ -187,6 +186,8 @@ private:
 
     uint16_t _vbe_reg_index;
     uint16_t _vbe_regs[NUM_VBE_REGS];
+
+    uint _edid_offset;
 
     friend class VGABackEndImp;
 };
