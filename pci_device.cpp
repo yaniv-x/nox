@@ -113,7 +113,7 @@ public:
 #ifdef PCI_STRICT
         , read_back (false)
 #endif
-        , _map_base (0)
+        , base_address (0)
     {}
 
     virtual ~Region() {}
@@ -127,8 +127,7 @@ public:
     bool is_high_bar(uint bar_index) {return !is_low_bar(bar_index);}
     uint64_t get_mask() { return ~(size - 1);}
     bool is_mem() { return !is_io();}
-    void pre_map(uint64_t start);
-    void post_map(uint64_t start) { _map_base = start;}
+    address_t get_address() { return base_address;}
 
 public:
     uint64_t size;
@@ -136,21 +135,9 @@ public:
     bool read_back;
 #endif
 
-private:
-    uint64_t _map_base;
+protected:
+    address_t base_address;
 };
-
-void PCIDevice::Region::pre_map(uint64_t start)
-{
-    ASSERT(size > 0 && start > 0);
-    ASSERT(!_map_base ||  _map_base == start); // not sure if it is allow to remap while io/mem is
-                                               // enabeld
-
-    if (_map_base != start) {
-        unmap();
-        _map_base = 0;
-    }
-}
 
 
 class IOMap: public PCIDevice::Region {
@@ -223,9 +210,13 @@ IOMap::~IOMap()
 
 void IOMap::map(PCIDevice& owner, uint64_t start)
 {
-    if (_io_region) {
+    if (start == base_address) {
         return;
     }
+
+    unmap();
+
+    base_address = start;
 
     if (start + size > (1 << 16)) {
         W_MESSAGE("bad mapping start 0x%lx size %lu", start, size);
@@ -244,6 +235,8 @@ void IOMap::map(PCIDevice& owner, uint64_t start)
 
 void IOMap::unmap()
 {
+    base_address = 0;
+
     if (!_io_region) {
         return;
     }
@@ -356,9 +349,12 @@ public:
 
     virtual void map(PCIDevice& owner, uint64_t start)
     {
-        if (_mapped) {
+        if (start == base_address) {
             return;
         }
+
+        unmap();
+        base_address = start;
 
         if (start + size > (1ULL << MemoryBus::ADDRESS_BITS) || start + size < start
             || (!is_64bit() && start + size > (1ULL << 32)) ) {
@@ -373,12 +369,14 @@ public:
 
     virtual void unmap()
     {
+        base_address = 0;
+
         if (!_mapped) {
             return;
         }
 
-        memory_bus->unmap_physical_ram(_physical);
         _mapped = !_mapped;
+        memory_bus->unmap_physical_ram(_physical);
         unmap_gap();
     }
 
@@ -410,9 +408,13 @@ public:
 
     virtual void map(PCIDevice& owner, uint64_t start)
     {
-        if (_section) {
+        if (start == base_address) {
             return;
         }
+
+        unmap();
+
+        base_address = start;
 
         if (start + size > (1ULL << MemoryBus::ADDRESS_BITS) || start + size < start
             || (!is_64bit() && start + size > (1ULL << 32)) ) {
@@ -427,6 +429,8 @@ public:
 
     virtual void unmap()
     {
+        base_address = 0;
+
         if (!_section) {
             return;
         }
@@ -464,9 +468,13 @@ public:
     }
     virtual void map(PCIDevice& owner, uint64_t start)
     {
-        if (_map) {
+        if (start == base_address) {
             return;
         }
+
+        unmap();
+
+        base_address = start;
 
         if (start + size > (1ULL << MemoryBus::ADDRESS_BITS) || start + size < start
             || (!is_64bit() && start + size > (1ULL << 32)) ) {
@@ -483,6 +491,8 @@ public:
 
     virtual void unmap()
     {
+        base_address = 0;
+
         if (!_map) {
             return;
         }
@@ -614,6 +624,16 @@ void PCIDevice::add_io_region(uint bar, uint16_t size, void* opaque,
 }
 
 
+address_t PCIDevice::get_region_address(uint bar)
+{
+    if (bar >= NUM_BARS || !_regions[bar] || _regions[bar]->is_high_bar(bar)) {
+        return 0;
+    }
+
+    return _regions[bar]->get_address();
+}
+
+
 void PCIDevice::set_interrupt_level(uint level)
 {
     if (!(*reg16(PCI_CONF_STATUS) & PCI_STATUS_INTERRUPT_MASK) == !level) {
@@ -675,9 +695,7 @@ void PCIDevice::map_io()
             continue;
         }
 
-        _regions[i]->pre_map(start);
         _regions[i]->map(*this, start);
-        _regions[i]->post_map(start);
     }
 }
 
@@ -717,9 +735,7 @@ void PCIDevice::map_mem()
             continue;
         }
 
-        _regions[i]->pre_map(start);
         _regions[i]->map(*this, start);
-        _regions[i]->post_map(start);
     }
 }
 

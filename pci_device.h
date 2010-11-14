@@ -63,6 +63,7 @@ public:
                        io_read_byte_proc_t rb, io_write_byte_proc_t wb = NULL,
                        io_read_word_proc_t rw = NULL, io_write_word_proc_t ww = NULL,
                        io_read_dword_proc_t rd = NULL, io_write_dword_proc_t wd = NULL);
+    uint64_t get_region_address(uint bar);
 
     virtual uint get_hard_id() { return ~0;}
     uint get_preferd_id() { return ~0;}
