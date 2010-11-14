@@ -73,11 +73,14 @@ private:
 template<class T>
 class AutoRef {
 public:
+    AutoRef() : _obj (NULL) {}
     AutoRef(T* obj) : _obj (obj) {}
-    ~AutoRef() { _obj->unref();}
+    ~AutoRef() {  if (_obj) _obj->unref();}
 
     T* get() {return _obj;}
     T* operator -> () {return _obj;}
+    void reset(T* obj) { if (_obj) _obj->unref(); _obj = obj;}
+    T* release() {T* tmp = _obj; _obj = NULL; return tmp;}
 
 private:
     T* _obj;
