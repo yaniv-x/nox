@@ -1300,7 +1300,8 @@ uint16_t VGA::io_vbe_read(uint16_t port)
             ASSERT(sizeof(edid_data) == EDID_BLOCK_SIZE);
 
             if (_edid_offset < EDID_BLOCK_SIZE) {
-                _vbe_regs[VBE_REG_EDID_DATA] = *(uint16_t*)&edid_data[_edid_offset];
+                const uint8_t* ptr = &edid_data[_edid_offset];
+                _vbe_regs[VBE_REG_EDID_DATA] = *(const uint16_t*)ptr;
                 _edid_offset += 2;
             } else if (_edid_offset == EDID_BLOCK_SIZE) {
                 D_MESSAGE("invalid edid data read");
