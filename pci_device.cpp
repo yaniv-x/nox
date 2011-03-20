@@ -114,6 +114,7 @@ public:
         , read_back (false)
 #endif
         , base_address (0)
+        , _fixed (false)
     {}
 
     virtual ~Region() {}
@@ -128,6 +129,8 @@ public:
     uint64_t get_mask() { return ~(size - 1);}
     bool is_mem() { return !is_io();}
     address_t get_address() { return base_address;}
+    bool is_fixed() { return _fixed;}
+    void set_fixed() { _fixed = true;}
 
 public:
     uint64_t size;
@@ -137,6 +140,9 @@ public:
 
 protected:
     address_t base_address;
+
+private:
+    bool _fixed;
 };
 
 
@@ -798,8 +804,10 @@ void PCIDevice::write_command(uint16_t val)
 
         if (val & PCI_COMMAND_ENABLE_IO) {
             map_io();
+            on_io_enabled();
         } else {
             unmap_io();
+            on_io_disabled();
         }
     }
 
@@ -867,6 +875,22 @@ void PCIDevice::write_config_word(uint index, uint offset, uint16_t val)
 }
 
 
+void PCIDevice::set_io_address(uint bar, uint16_t address, bool fix)
+{
+    ASSERT(_regions[bar]);
+    ASSERT(_regions[bar]->is_io());
+    ASSERT((address & ~_regions[bar]->get_mask()) == 0);
+
+    uint reg_index = (PCI_CONF_BAR_0 >> 2) + bar;
+
+    _config_space[reg_index] &= ~_regions[bar]->get_mask();
+    _config_space[reg_index] |= address;
+
+    if (fix) {
+        _regions[bar]->set_fixed();
+    }
+}
+
 void PCIDevice::write_bar(uint reg_index, uint32_t val)
 {
     Lock lock(_mutex);
@@ -921,6 +945,11 @@ void PCIDevice::write_bar(uint reg_index, uint32_t val)
 #ifdef PCI_STRICT
     _regions[bar]->read_back = false;
 #endif
+
+    if (_regions[bar]->is_fixed()) {
+        D_MESSAGE("fixed 0x%x", val);
+        return;
+    }
 
     if (_regions[bar]->is_io()) {
         mask = _regions[bar]->get_mask() & ((1 << 16) - 1);
