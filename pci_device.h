@@ -64,6 +64,7 @@ public:
                        io_read_word_proc_t rw = NULL, io_write_word_proc_t ww = NULL,
                        io_read_dword_proc_t rd = NULL, io_write_dword_proc_t wd = NULL);
     uint64_t get_region_address(uint bar);
+    void set_io_address(uint bar, uint16_t address, bool fixed);
 
     virtual uint get_hard_id() { return ~0;}
     uint get_preferd_id() { return ~0;}
@@ -71,6 +72,10 @@ public:
     void set_interrupt_level(uint level);
 
     class Region;
+
+protected:
+    virtual void on_io_enabled() {}
+    virtual void on_io_disabled() {}
 
 private:
     uint8_t read_config_byte(uint index, uint offset);
