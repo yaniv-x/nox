@@ -57,8 +57,6 @@ enum {
 
     IO_PORT_VGA_BIOS_MESSAGE = 0x500,
 
-    ATA0_IRQ = 14,
-
     LOW_RAM_SIZE = 640 * KB,
     MID_RAM_START = 768 * KB,
     MID_RAM_MAX_ADDRESS = 0xe0000000,
@@ -85,7 +83,7 @@ NoxVM::NoxVM()
     , _bochs_io_region (NULL)
     , _pit (new PIT(*this))
     , _kbd (new KbdController(*this))
-    , _ata (new ATAController(*this, ATA0_IRQ))
+    , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
     , _nmi_mask (false)
     , _misc_port (0x01)
@@ -325,7 +323,7 @@ bool NoxVM::init()
 
     //boot device
     _cmos->host_write(0x3d, 0x02); //first boot device is first HD
-    _ata->set_disk(new Disk("/home/yaniv/images/f13_64.raw"));
+    _ata_host->set_device_0(new Disk("/home/yaniv/images/f13_64.raw"));
 
     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));

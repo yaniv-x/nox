@@ -39,7 +39,7 @@ class PIT;
 class IORegion;
 class PCIBus;
 class CMOS;
-class ATAController;
+class ATAHost;
 class KbdController;
 class IOBus;
 class VGA;
@@ -95,7 +95,7 @@ private:
     std::auto_ptr<PIT> _pit;
     IORegion* _post_diagnostic;
     std::auto_ptr<KbdController> _kbd;
-    std::auto_ptr<ATAController> _ata;
+    std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
     uint64_t _ram_size;
 

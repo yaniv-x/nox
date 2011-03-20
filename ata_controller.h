@@ -27,80 +27,28 @@
 #ifndef _H_ATA_CONTROLLER
 #define _H_ATA_CONTROLLER
 
-#include "vm_part.h"
-#include "threads.h"
+#include "pci_device.h"
 #include "wire.h"
 
-class NoxVM;
+class ATAController;
 class Disk;
 
-class ATAController: public VMPart {
+class ATAHost: public PCIDevice {
 public:
-    ATAController(NoxVM& nox, uint irq);
+    ATAHost();
 
-    virtual void reset();
-    virtual void start() {}
-    virtual void stop() {}
-    virtual void power() {}
-    virtual void save(OutStream& stream) {}
-    virtual void load(InStream& stream) {}
+    void set_device_0(Disk* disk);
+    void set_device_1(Disk* disk);
 
-    void set_disk(Disk* disk) { _disk = disk;}
+protected:
+    virtual void on_io_enabled();
+    virtual void on_io_disabled();
 
 private:
-    void soft_reset();
-    uint8_t io_alt_status(uint16_t port);
-    void io_control(uint16_t port, uint8_t val);
-    uint8_t io_read(uint16_t port);
-    void io_write(uint16_t port, uint8_t val);
-    uint16_t io_read_word(uint16_t port);
-    void io_write_word(uint16_t port, uint16_t data);
-    void set_signature();
-    void command_abort_error();
-    void clear_HOB();
-    void set_config();
-    void identify_device();
-    void do_read_sectors_common(uint64_t start, uint64_t end);
-    void do_read_sectors();
-    void do_read_sectors_ext();
-    void do_write_sectors_common(uint64_t start, uint64_t end);
-    void do_write_sectors();
-    void do_write_sectors_ext();
-    void do_command(uint8_t command);
-    void raise();
-    bool is_valid_sectors_range(uint64_t start, uint64_t end);
-    uint get_sector_count();
-    uint get_sector_count_ext();
-    uint64_t get_num_sectors();
-    uint64_t get_sector_address();
-    uint64_t get_sector_address_ext();
-
-private:
-    Mutex _mutex;
-    Disk* _disk;
-    Wire _irq_wire;
-
-    union {
-        uint16_t _identity[256];
-        uint8_t _sector[512];
-    };
-
-    uint _status;
-    uint _control;
-    uint _error;
-    uint _device;
-    uint _count;
-    uint _lba_low;
-    uint _lba_mid;
-    uint _lba_high;
-    uint _feature;
-
-    uint _heads_per_cylinder;
-    uint _sectors_per_track;
-    uint16_t* _data_in;
-    uint16_t* _data_in_end;
-    uint64_t _next_sector;
-    uint64_t _end_sector;
+    Wire _irq_wire_0;
+    std::auto_ptr<ATAController> _channel_0;
+    Wire _irq_wire_1;
+    std::auto_ptr<ATAController> _channel_1;
 };
 
 #endif
