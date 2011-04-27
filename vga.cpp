@@ -405,6 +405,42 @@ uint8_t VGA::fetch_pix_16(const uint8_t* fb_ptr, uint offset)
 }
 
 
+static uint8_t fetch_pix_4(const uint8_t* fb_ptr, uint offset, uint w)
+{
+    const uint8_t* byte = fb_ptr + offset / 8 * 4;
+    uint8_t ret;
+
+    switch (offset % 8) {
+    case 0:
+        ret = (byte[0] >> 6) & 0x03;
+        break;
+    case 1:
+        ret = (byte[0] >> 4) & 0x03;
+        break;
+    case 2:
+        ret = (byte[0] >> 2) & 0x03;
+        break;
+    case 3:
+        ret = (byte[0] >> 0) & 0x03;
+        break;
+    case 4:
+        ret = (byte[1] >> 6) & 0x03;
+        break;
+    case 5:
+        ret = (byte[1] >> 4) & 0x03;
+        break;
+    case 6:
+        ret = (byte[1] >> 2) & 0x03;
+        break;
+    case 7:
+        ret = (byte[1] >> 0) & 0x03;
+        break;
+    }
+
+    return ret;
+}
+
+
 uint32_t VGA::foreground_color_at(uint fb_pos)
 {
     return text_color(_vram[(fb_pos << 2) + 1] & 0xf);
@@ -602,6 +638,8 @@ void VGA::update()
          return;
     }
 
+    D_MESSAGE_ONCE("todo: handle double, plane mask, etc. (AR12 CR17 AR10 SR01...)");
+
     if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_256C_MASK) {
 
         uint32_t* dest = (uint32_t*)_fb->get();
@@ -615,7 +653,35 @@ void VGA::update()
             }
         }
     } else if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_4C_MASK ) {
-        D_MESSAGE("4 colors");
+        uint8_t pal_high_bits;
+        uint8_t pal_mask;
+
+        if (_attributes_regs[ATTRIB_REG_MODE] & ATTRIB_MODE_PAL_FIXED_4_5_MASK) {
+            pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xf0;
+            pal_mask = 0x0f;
+        } else {
+            pal_high_bits = (_attributes_regs[ATTRIB_REG_COLOR_SELECT] << 4) & 0xc0;
+            pal_mask = 0x3f;
+        }
+
+        uint32_t* dest = (uint32_t*)_fb->get();
+        uint offset = 0;
+
+        for (uint i = 0; i < height / 4; i++) {
+            for (uint j =  0; j < width; j++, offset++) {
+                uint8_t pal_index;
+
+                pal_index = (_attributes_regs[fetch_pix_4(fb_ptr, offset, width)] & pal_mask) |
+                                                                                      pal_high_bits;
+                dest[i * 4 * width + j] = _palette[pal_index & _color_index_mask].color;
+                dest[(i * 4 + 1) * width + j] = dest[i * 4 * width + j];
+
+                pal_index = (_attributes_regs[fetch_pix_4(fb_ptr + (0x2000 << 1), offset, width)]
+                                                                        & pal_mask) | pal_high_bits;
+                dest[(i * 4  + 2) * width + j] = _palette[pal_index & _color_index_mask].color;
+                dest[(i * 4  + 3) * width + j] = dest[(i * 4  + 2) * width + j] ;
+            }
+        }
     } else {
         uint8_t pal_high_bits;
         uint8_t pal_mask;
