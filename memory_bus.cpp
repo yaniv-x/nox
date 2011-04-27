@@ -271,7 +271,25 @@ MemoryBus::~MemoryBus()
 
 void MemoryBus::read_from_pages(uint64_t src, uint64_t length, uint8_t* dest)
 {
-    PANIC("implement me");
+    uint64_t n = GUEST_PAGE_SIZE - (src & GUEST_PAGE_OFFSET_MASK);
+    ASSERT(n < length);
+
+    read(src, n, dest);
+    src += n;
+    dest += n;
+    length -= n;
+
+    for (;;) {
+        n = MIN(GUEST_PAGE_SIZE, length);
+        read(src, n, dest);
+        length -= n;
+
+        if (length == 0) {
+            return;
+        }
+        src += n;
+        dest += n;
+    }
 }
 
 
@@ -304,7 +322,25 @@ void MemoryBus::read(uint64_t src, uint64_t length, void* dest)
 
 void MemoryBus::write_to_pages(const uint8_t* src, uint64_t length, uint64_t dest)
 {
-    PANIC("implement me");
+    uint64_t n = GUEST_PAGE_SIZE - (dest & GUEST_PAGE_OFFSET_MASK);
+    ASSERT(n < length);
+
+    write(src, n, dest);
+    src += n;
+    dest += n;
+    length -= n;
+
+    for (;;) {
+        n = MIN(GUEST_PAGE_SIZE, length);
+        write(src, n, dest);
+        length -= n;
+
+        if (length == 0) {
+            return;
+        }
+        src += n;
+        dest += n;
+    }
 }
 
 
