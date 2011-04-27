@@ -75,12 +75,12 @@ public:
 
     virtual void read(uint64_t src, uint64_t length, uint8_t* dest)
     {
-        D_MESSAGE("0x%016lx length %lu", _start + src, length);
+        D_MESSAGE_SOME(100, "0x%016lx length %lu", _start + src, length);
     }
 
     virtual void write(const uint8_t* src, uint64_t length, uint64_t dest)
     {
-        D_MESSAGE("0x%016lx length %lu", _start + dest, length);
+        D_MESSAGE_SOME(100, "0x%016lx length %lu", _start + dest, length);
     }
 
 
