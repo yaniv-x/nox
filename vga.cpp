@@ -575,7 +575,17 @@ void VGA::update()
     }
 
     if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_256C_MASK) {
-        D_MESSAGE("256 colors");
+
+        uint32_t* dest = (uint32_t*)_fb->get();
+
+        for (uint pixel = 0, i = 0; i < height / 2; i++) {
+            for (uint j =  0; j < width / 2; j++, pixel++) {
+                dest[i * 2 * width + j * 2] = _palette[fb_ptr[pixel]].color;
+                dest[i * 2 * width + j * 2 + 1] = _palette[fb_ptr[pixel]].color;
+                dest[(i * 2 + 1) * width + j * 2] = _palette[fb_ptr[pixel]].color;
+                dest[(i * 2 + 1) * width + j * 2 + 1] = _palette[fb_ptr[pixel]].color;
+            }
+        }
     } else if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_4C_MASK ) {
         D_MESSAGE("4 colors");
     } else {
