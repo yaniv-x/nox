@@ -325,6 +325,9 @@ bool NoxVM::init()
     _cmos->host_write(0x3d, 0x02); //first boot device is first HD
     _ata_host->set_device_0(new Disk("/home/yaniv/images/f13_64.raw"));
 
+    //equipment byte
+    _cmos->host_write(0x14, (1 << 1 /* math coproccssor*/) | (1 << 2) /* mouse port*/);
+
     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
     _cmos->host_write(0x16, (LOW_RAM_SIZE / KB) >> 8);
