@@ -582,6 +582,24 @@ void VGA::update()
 
                 src += src_skip;
             }
+        } else if (_vbe_regs[VBE_REG_DEPTH] == 8) {
+            //todo: verifay access vaiolation
+            uint32_t* dest = (uint32_t*)_fb->get();
+            uint32_t* end = dest + _width * _height;
+            uint8_t* src = _vram + _vbe_regs[VBE_REG_X_OFFSET] +
+                           _vbe_regs[VBE_REG_VIRT_WIDTH] * _vbe_regs[VBE_REG_Y_OFFSET];
+
+            uint32_t src_skip = _vbe_regs[VBE_REG_VIRT_WIDTH] - _width;
+
+            while (dest < end) {
+                uint32_t* line_end = dest + _width;
+
+                for (; dest < line_end; dest++, src++) {
+                    *dest = _palette[*src].color;
+                }
+
+                src += src_skip;
+            }
         }
         return;
     }
@@ -1240,7 +1258,7 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
         ASSERT(length <= 64 * KB);
 
         src += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
-        memcpy(dest, _fb->get() + src, length);
+        memcpy(dest, _vram + src, length);
         return;
     }
 
@@ -1380,7 +1398,7 @@ void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
         ASSERT(length <= 64 * KB);
 
         dest += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
-        memcpy(_fb->get() + dest, src, length);
+        memcpy(_vram + dest, src, length);
         _dirty = true;
         return;
     }
@@ -1588,7 +1606,7 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             _vbe_regs[VBE_REG_VIRT_HEIGHT] = _vbe_regs[VBE_REG_Y_RES] = val;
             break;
         case VBE_REG_DEPTH:
-            if (val != 32 && val != 24) {
+            if (val != 32 && val != 24 && val !=8) {
                 D_MESSAGE("%u bpp is not supported", val);
                 break;
             }
