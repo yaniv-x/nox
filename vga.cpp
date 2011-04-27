@@ -522,6 +522,34 @@ void VGA::update()
 {
     Lock lock(_mutex);
 
+    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
+        if (_vbe_regs[VBE_REG_DEPTH] == 24) {
+            //todo: verifay access vaiolation
+            uint8_t* dest = (uint8_t*)_fb->get();
+            uint32_t dest_stride = _width * sizeof(uint32_t);
+            uint8_t* end = dest + dest_stride * _height;
+            uint32_t src_stride = _vbe_regs[VBE_REG_VIRT_WIDTH] * 3;
+            uint8_t* src = _vram + _vbe_regs[VBE_REG_X_OFFSET] * 3 +
+                            src_stride * _vbe_regs[VBE_REG_Y_OFFSET];
+
+            uint32_t src_skip = src_stride - _width * 3;
+
+            while (dest < end) {
+                uint8_t* line_end = dest + dest_stride;
+
+                for (; dest < line_end; dest += 4, src += 3) {
+                    dest[0] = src[0];
+                    dest[1] = src[1];
+                    dest[2] = src[2];
+                    dest[3] = 0;
+                }
+
+                src += src_skip;
+            }
+        }
+        return;
+    }
+
     if (!_vga_active) {
         return;
     }
@@ -1393,6 +1421,7 @@ void VGA::propagate_fb()
 
 void VGA::enable_vbe()
 {
+    VGA_D_MESSAGE("----------------------------------------------------");
     // need to remap fb?
     _vga_active = false;
 
@@ -1401,10 +1430,11 @@ void VGA::enable_vbe()
         memset(_vram, 0, _vbe_vram_end - _vram);
     }
 
-    if ((_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_LINEAR)) {
-         D_MESSAGE("VBE_COMMAND_LINEAR");
-         //   for (;;) sleep(2);
-    } else {
+    if (!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_LINEAR)) {
+         D_MESSAGE("VBE_COMMAND_LINEAR is not set");
+    }
+
+    if (_vbe_regs[VBE_REG_DEPTH] == 32) {
         _update_timer->disarm();
     }
 
@@ -1417,6 +1447,7 @@ void VGA::enable_vbe()
 
 void VGA::disable_vbe()
 {
+    VGA_D_MESSAGE("----------------------------------------------------");
     bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
 
     if (!active) {
@@ -1491,10 +1522,11 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             _vbe_regs[VBE_REG_VIRT_HEIGHT] = _vbe_regs[VBE_REG_Y_RES] = val;
             break;
         case VBE_REG_DEPTH:
-            if (val != 32) {
+            if (val != 32 && val != 24) {
                 D_MESSAGE("%u bpp is not supported", val);
                 break;
             }
+            VGA_D_MESSAGE("%u bpp", val);
             _vbe_regs[VBE_REG_DEPTH] = val;
             break;
         case VBE_REG_BANK:
