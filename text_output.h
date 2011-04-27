@@ -87,6 +87,7 @@ static inline std::string strip_pretty_function(const std::string& pretty_functi
 }
 
 #define W_MESSAGE_ONCE(format, ...) OUTPUT_MESSAGE_ONCE(WARNING, format, ## __VA_ARGS__)
+#define D_MESSAGE_ONCE(format, ...) OUTPUT_MESSAGE_ONCE(DEBUG, format, ## __VA_ARGS__)
 
 #endif
 
