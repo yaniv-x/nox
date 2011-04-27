@@ -386,6 +386,7 @@ void KbdController::write_to_mouse(uint8_t val)
             reset_mouse();
             put_mouse_data(KBD_ACK);
             put_mouse_data(KBD_SELF_TEST_REPLAY);
+            put_mouse_data(0); // id
             break;
         case MOUSE_CMD_STATUS:
             put_mouse_data(KBD_ACK);
