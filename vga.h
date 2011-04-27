@@ -128,6 +128,7 @@ private:
         PALETTE_SIZE = 256,
         CRT_NUM_REGS = 0x25,
         NUM_VBE_REGS = 14,
+        NUM_PLANS = 4,
     };
 
 private:
@@ -172,6 +173,8 @@ private:
             uint32_t color;
         };
     } _palette[PALETTE_SIZE];
+
+    uint8_t _latch[NUM_PLANS];
 
     AutoRef<SharedBuf> _fb;
     uint _width;

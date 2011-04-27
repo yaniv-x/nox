@@ -139,8 +139,8 @@ enum {
     SEQUENCER_REG_FONT = 0x03,
     SEQUENCER_REG_MEM_MODE = 0x04,
 
-    SEQUENCER_CLOCKIND_BLANK_BIT = 5,
-    SEQUENCER_CLOCKIND_DOTS_BIT = 0,
+    SEQUENCER_CLOCKING_BLANK_BIT = 5,
+    SEQUENCER_CLOCKING_DOTS_BIT = 0,
 
     SEQUENCER_FONT_MAPA_BIT0 = 5,
     SEQUENCER_FONT_MAPA_BIT1 = 2,
@@ -159,6 +159,7 @@ enum {
     GRAPHICS_REG_READ_PLAN = 0x04,
     GRAPHICS_REG_MODE = 0x05,
     GRAPHICS_REG_MISC = 0x06,
+    GRAPHICS_REG_MASK = 0x08,
 
     GRAPHICS_ROTATE_COUNT_MASK = (1 << 3) - 1,
     GRAPHICS_ROTATE_FUNC_MASK = (0x03 << 3),
@@ -420,7 +421,7 @@ void VGA::show_caret()
     uint char_w;
     uint char_h;
 
-    char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+    char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_DOTS_BIT) ? 8 : 9;
     char_h = (_crt_regs[CRT_REG_MAX_SCAN_LINE] & CRT_MAX_SCAN_LINE_TEXT_HIGHET_MASK) + 1;
 
     uint line_size = _width / char_w;
@@ -471,7 +472,7 @@ void VGA::hide_caret()
     uint char_w;
     uint char_h;
 
-    char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+    char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_DOTS_BIT) ? 8 : 9;
     char_h = (_crt_regs[CRT_REG_MAX_SCAN_LINE] & CRT_MAX_SCAN_LINE_TEXT_HIGHET_MASK) + 1;
     uint line_size = _width / char_w;
     uint lines = _height / char_h;
@@ -546,7 +547,7 @@ void VGA::update()
          uint char_w;
          uint char_h;
 
-         char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+         char_w = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_DOTS_BIT) ? 8 : 9;
          char_h = (_crt_regs[CRT_REG_MAX_SCAN_LINE] & CRT_MAX_SCAN_LINE_TEXT_HIGHET_MASK) + 1;
 
          uint line_size = width / char_w;
@@ -735,6 +736,8 @@ void VGA::reset()
     _vbe_regs[VBE_REG_EDID_WINDOW] = ~0;
     _vbe_regs[VBE_REG_EDID_DATA] = ~0;
     _edid_offset = ~0;
+
+    memset(_latch, 0, sizeof(_latch));
 }
 
 static uint8_t v_retrace = 0;
@@ -865,7 +868,7 @@ void VGA::enable_vga()
 
     uint dot_clocks;
 
-    dot_clocks = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKIND_DOTS_BIT) ? 8 : 9;
+    dot_clocks = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_DOTS_BIT) ? 8 : 9;
 
     //maybe vga bios bug?
     if ((_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
@@ -946,7 +949,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             VGA_D_MESSAGE("sequencer[SEQUENCER_REG_MEM_MODE] = 0x%x (%u)", val, val);
         }
 
-        if (_sequencer_index == SEQUENCER_REG_CLOCKING && (val & SEQUENCER_CLOCKIND_BLANK_BIT)) {
+        if (_sequencer_index == SEQUENCER_REG_CLOCKING && (val & SEQUENCER_CLOCKING_BLANK_BIT)) {
             blank_screen();
         }
 
@@ -1101,7 +1104,9 @@ inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
         return;
     }
 
-    dest = _vram[offset];
+    uint32_t plan = offset & 0x03;
+    *(uint32_t*)_latch = *(uint32_t*)(_vram + offset - plan);
+    dest = _latch[plan];
 }
 
 
@@ -1157,21 +1162,47 @@ inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
     case 0: {
         uint plan = offset & 0x03;
         if (_graphics_regs[GRAPHICS_REG_ENABLE_SET_RESET] & (1 << plan)) {
-            _vram[offset] = (_graphics_regs[GRAPHICS_REG_SET_RESET] & (1 << plan)) ? ~0 : 0;
-            return;
+            val = (_graphics_regs[GRAPHICS_REG_SET_RESET] & (1 << plan)) ? ~0 : 0;
         }
 
         if (_graphics_regs[GRAPHICS_REG_ROTATE] & GRAPHICS_ROTATE_COUNT_MASK) {
-            D_MESSAGE_SOME(100, "need to rotate");
+            D_MESSAGE_SOME(100, "rotate, implement me");
         }
 
-        _vram[offset] = val;
+        switch (_graphics_regs[GRAPHICS_REG_ROTATE] & GRAPHICS_ROTATE_FUNC_MASK) {
+        case GRAPHICS_ROTATE_FUNC_NONE:
+            break;
+        case GRAPHICS_ROTATE_FUNC_AND:
+            val &= _latch[plan];
+            break;
+        case GRAPHICS_ROTATE_FUNC_OR:
+            val |= _latch[plan];
+            break;
+        case GRAPHICS_ROTATE_FUNC_XOR:
+            val ^= _latch[plan];
+            break;
+        }
+
+        _vram[offset] = (val & _graphics_regs[GRAPHICS_REG_MASK]) |
+                        (_vram[offset] & ~_graphics_regs[GRAPHICS_REG_MASK]);
         break;
     }
     case 1:
-    case 2:
+        _vram[offset] = _latch[offset & 0x03];
+        break;
+    case 2: {
+        uint plan = offset & 0x03;
+        if ((1 << plan) & val) {
+            val = 0xff;
+        } else {
+            val = 0;
+        }
+        _vram[offset] = (val & _graphics_regs[GRAPHICS_REG_MASK]) |
+                        (_latch[offset & 0x03] & ~_graphics_regs[GRAPHICS_REG_MASK]);
+        break;
+    }
     case 3:
-        D_MESSAGE("implement me %u",
+        D_MESSAGE_SOME(10, "implement me %u",
                   _graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_WRITE_MODE_MASK);
         _vram[offset] = val;
         break;
