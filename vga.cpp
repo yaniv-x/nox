@@ -556,6 +556,28 @@ void VGA::update_caret()
 }
 
 
+static inline uint32_t rgb565_to_rgb888(uint32_t color)
+{
+    uint32_t ret;
+
+    ret = ((color & 0x001f) << 3) | ((color & 0x001c) >> 2);
+    ret |= ((color & 0x07e0) << 5) | ((color & 0x00600) >> 1);
+    ret |= ((color & 0xf800) << 8) | ((color & 0xe000) << 3);
+
+    return ret;
+}
+
+static inline uint32_t rgb555_to_rgb888(uint32_t color)
+{
+    uint32_t ret;
+
+    ret = ((color & 0x001f) << 3) | ((color & 0x001c) >> 2);
+    ret |= ((color & 0x03e0) << 6) | ((color & 0x00380) << 1);
+    ret |= ((color & 0x7c00) << 9) | ((color & 0x7000) << 4);
+
+    return ret;
+}
+
 void VGA::update()
 {
     Lock lock(_mutex);
@@ -580,6 +602,42 @@ void VGA::update()
                     dest[1] = src[1];
                     dest[2] = src[2];
                     dest[3] = 0;
+                }
+
+                src += src_skip;
+            }
+        } else if (_vbe_regs[VBE_REG_DEPTH] == 16) {
+            //todo: verifay access vaiolation
+            uint32_t* dest = (uint32_t*)_fb->get();
+            uint32_t* end = dest + _width * _height;
+            uint16_t* src = (uint16_t*)_vram + _vbe_regs[VBE_REG_X_OFFSET] +
+                            _vbe_regs[VBE_REG_VIRT_WIDTH] * _vbe_regs[VBE_REG_Y_OFFSET];
+
+            uint32_t src_skip = _vbe_regs[VBE_REG_VIRT_WIDTH] - _width;
+
+            while (dest < end) {
+                uint32_t* line_end = dest + _width;
+
+                for (; dest < line_end; dest++, src++) {
+                    *dest = rgb565_to_rgb888(*src);
+                }
+
+                src += src_skip;
+            }
+        } else if (_vbe_regs[VBE_REG_DEPTH] == 15) {
+            //todo: verifay access vaiolation
+            uint32_t* dest = (uint32_t*)_fb->get();
+            uint32_t* end = dest + _width * _height;
+            uint16_t* src = (uint16_t*)_vram + _vbe_regs[VBE_REG_X_OFFSET] +
+                            _vbe_regs[VBE_REG_VIRT_WIDTH] * _vbe_regs[VBE_REG_Y_OFFSET];
+
+            uint32_t src_skip = _vbe_regs[VBE_REG_VIRT_WIDTH] - _width;
+
+            while (dest < end) {
+                uint32_t* line_end = dest + _width;
+
+                for (; dest < line_end; dest++, src++) {
+                    *dest = rgb555_to_rgb888(*src);
                 }
 
                 src += src_skip;
@@ -1629,7 +1687,7 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             _vbe_regs[VBE_REG_VIRT_HEIGHT] = _vbe_regs[VBE_REG_Y_RES] = val;
             break;
         case VBE_REG_DEPTH:
-            if (val != 32 && val != 24 && val != 8) {
+            if (val != 32 && val != 24 && val != 16 && val != 15 && val != 8) {
                 D_MESSAGE("%u bpp is not supported", val);
                 break;
             }
