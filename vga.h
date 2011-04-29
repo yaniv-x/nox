@@ -109,6 +109,7 @@ private:
     void disable_vbe();
     void propagate_fb();
     void nofify_vbe_fb_config();
+    void update_one_effective_palette(uint index);
 
     void vram_load_one(uint32_t offset, uint8_t& dest);
     void vram_read_one(uint32_t src, uint8_t& dest);
@@ -127,7 +128,7 @@ private:
         GRAPHICS_NUM_REGS = 16,
         PALETTE_SIZE = 256,
         CRT_NUM_REGS = 0x25,
-        NUM_VBE_REGS = 14,
+        NUM_VBE_REGS = 16,
         NUM_PLANS = 4,
     };
 
@@ -167,12 +168,18 @@ private:
     uint8_t _crt_index;
     uint8_t _crt_regs[CRT_NUM_REGS];
 
+    struct {
+        uint8_t components[3];
+    } _palette[PALETTE_SIZE];
+
+    uint _palette_shift;
+
     struct PaletteEnt {
         union {
             uint8_t components[4];
             uint32_t color;
         };
-    } _palette[PALETTE_SIZE];
+    } _effective_palette[PALETTE_SIZE];
 
     uint8_t _latch[NUM_PLANS];
 
@@ -191,6 +198,7 @@ private:
     uint16_t _vbe_regs[NUM_VBE_REGS];
 
     uint _edid_offset;
+    bool _vba_palette_expect_red;
 
     friend class VGABackEndImp;
 };

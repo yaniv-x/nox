@@ -207,6 +207,8 @@ enum {
     VBE_REG_LINEAR_FB,
     VBE_REG_EDID_WINDOW,
     VBE_REG_EDID_DATA,
+    VBE_REG_PALETTE_WRITE_INDEX,
+    VBE_REG_PALETTE_DATA,
     VBE_NUM_REGS,
 
     VBE_COMMAND_ENABLE = (1 << 0),
@@ -366,7 +368,7 @@ uint32_t VGA::text_color(uint nibble)
 
     uint index = _attributes_regs[nibble] | pal_high_bits;
 
-    return _palette[index & _color_index_mask].color;
+    return _effective_palette[index & _color_index_mask].color;
 }
 
 
@@ -595,7 +597,7 @@ void VGA::update()
                 uint32_t* line_end = dest + _width;
 
                 for (; dest < line_end; dest++, src++) {
-                    *dest = _palette[*src].color;
+                    *dest = _effective_palette[*src].color;
                 }
 
                 src += src_skip;
@@ -664,10 +666,11 @@ void VGA::update()
 
         for (uint pixel = 0, i = 0; i < height / 2; i++) {
             for (uint j =  0; j < width / 2; j++, pixel++) {
-                dest[i * 2 * width + j * 2] = _palette[fb_ptr[pixel]].color;
-                dest[i * 2 * width + j * 2 + 1] = _palette[fb_ptr[pixel]].color;
-                dest[(i * 2 + 1) * width + j * 2] = _palette[fb_ptr[pixel]].color;
-                dest[(i * 2 + 1) * width + j * 2 + 1] = _palette[fb_ptr[pixel]].color;
+                uint32_t color = _effective_palette[fb_ptr[pixel]].color;
+                dest[i * 2 * width + j * 2] = color;
+                dest[i * 2 * width + j * 2 + 1] = color;
+                dest[(i * 2 + 1) * width + j * 2] = color;
+                dest[(i * 2 + 1) * width + j * 2 + 1] = color;
             }
         }
     } else if (_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_4C_MASK ) {
@@ -691,12 +694,13 @@ void VGA::update()
 
                 pal_index = (_attributes_regs[fetch_pix_4(fb_ptr, offset, width)] & pal_mask) |
                                                                                       pal_high_bits;
-                dest[i * 4 * width + j] = _palette[pal_index & _color_index_mask].color;
+                dest[i * 4 * width + j] = _effective_palette[pal_index & _color_index_mask].color;
                 dest[(i * 4 + 1) * width + j] = dest[i * 4 * width + j];
 
                 pal_index = (_attributes_regs[fetch_pix_4(fb_ptr + (0x2000 << 1), offset, width)]
                                                                         & pal_mask) | pal_high_bits;
-                dest[(i * 4  + 2) * width + j] = _palette[pal_index & _color_index_mask].color;
+                dest[(i * 4  + 2) * width + j] =
+                                            _effective_palette[pal_index & _color_index_mask].color;
                 dest[(i * 4  + 3) * width + j] = dest[(i * 4  + 2) * width + j] ;
             }
         }
@@ -724,7 +728,7 @@ void VGA::update()
             uint8_t pal_index;
 
             pal_index = (_attributes_regs[fetch_pix_16(fb_ptr, i)] & pal_mask) | pal_high_bits;
-            dest[i] = _palette[pal_index & _color_index_mask].color;
+            dest[i] = _effective_palette[pal_index & _color_index_mask].color;
         }
     }
 
@@ -832,10 +836,12 @@ void VGA::reset()
     _color_index_mask = ~0;
     _dac_state = 0;
     _palette_read_index = 0;
-    _palette_read_comp = 2;
+    _palette_read_comp = 0;
     _palette_write_index = 0;
-    _palette_write_comp = 2;
+    _palette_write_comp = 0;
     memset(_palette, 0, sizeof(_palette));
+    memset(_effective_palette, 0, sizeof(_effective_palette));
+    _palette_shift = 2;
 
     _graphics_index = 0;
     memset(_graphics_regs, 0, sizeof(_graphics_regs));
@@ -858,6 +864,7 @@ void VGA::reset()
     _vbe_regs[VBE_REG_EDID_WINDOW] = ~0;
     _vbe_regs[VBE_REG_EDID_DATA] = ~0;
     _edid_offset = ~0;
+    _vba_palette_expect_red = false;
 
     memset(_latch, 0, sizeof(_latch));
 }
@@ -924,14 +931,16 @@ uint8_t VGA::io_read_byte(uint16_t port)
         return _color_index_mask;
     case IO_DEC_DAC_STATE:
         return _dac_state;
-    case IO_PALETTE_WRITE_INDEX:
-        return _palette_read_index;
-    case IO_PALETTE_DATA:
-        if (_palette_read_comp == -1) {
+    case IO_PALETTE_DATA: {
+        uint8_t ret = _palette[_palette_read_index].components[_palette_read_comp++];
+
+        if (_palette_read_comp == 3) {
             _palette_read_index++;
-            _palette_read_comp = 2;
+            _palette_read_comp = 0;
         }
-        return _palette[_palette_read_index].components[_palette_read_comp--] >> 2;
+
+        return ret;
+    }
     case IO_ATTRIB_CONTROL_INDEX:
         return _attrib_control_index;
     case IO_ATTRIB_READ:
@@ -1084,26 +1093,29 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
         return;
     case IO_PALETTE_READ_INDEX:
         _dac_state = 0x3;
-        _palette_read_comp = 2;
+        _palette_read_comp = 0;
         _palette_read_index = val;
         return;
     case IO_PALETTE_WRITE_INDEX:
         _dac_state = 0;
-        _palette_write_comp = 2;
+        _palette_write_comp = 0;
         _palette_write_index = val;
         return;
     case IO_PALETTE_DATA:
-        if (_palette_write_comp == -1) {
-            _palette_write_index++;
-            _palette_write_comp = 2;
-        }
-
-        VGA_D_MESSAGE("palette[%u].%s = 0x%x", _palette_write_index,
-                      _palette_write_comp == 2 ? "red"
-                                               : (_palette_write_comp == 1 ? "green" : "blue"),
+        VGA_D_MESSAGE("palette[%u].%s = 0x%x",
+                      _palette_write_index,
+                      _palette_write_comp == 0 ? "red" :
+                                 (_palette_write_comp == 1 ? "green" : "blue"),
                       val);
 
-        _palette[_palette_write_index].components[_palette_write_comp--] = val << 2;
+        _palette[_palette_write_index].components[_palette_write_comp++] = val;
+
+        if (_palette_write_comp == 3) {
+            update_one_effective_palette(_palette_write_index);
+            _palette_write_index++;
+            _palette_write_comp = 0;
+        }
+
         _dirty = true;
         return;
     case IO_ATTRIB_CONTROL_INDEX:
@@ -1518,6 +1530,8 @@ void VGA::enable_vbe()
          D_MESSAGE("VBE_COMMAND_LINEAR is not set");
     }
 
+    _palette_shift = (_vbe_regs[VBE_REG_COMMAND] & VBE_DISPI_8BIT_DAC) ? 0 : 2;
+
     if (_vbe_regs[VBE_REG_DEPTH] == 32) {
         _update_timer->disarm();
     }
@@ -1539,6 +1553,7 @@ void VGA::disable_vbe()
     }
 
     _vga_active = true;
+    _palette_shift = 2;
     enable_vga();
 }
 
@@ -1552,6 +1567,14 @@ void VGA::nofify_vbe_fb_config()
     propagate_fb();
 }
 
+
+void VGA::update_one_effective_palette(uint index)
+{
+    ASSERT(index < PALETTE_SIZE);
+    _effective_palette[index].components[0] = _palette[index].components[2] << _palette_shift;
+    _effective_palette[index].components[1] = _palette[index].components[1] << _palette_shift;
+    _effective_palette[index].components[2] = _palette[index].components[0] << _palette_shift;
+}
 
 void VGA::io_vbe_write(uint16_t port, uint16_t val)
 {
@@ -1573,7 +1596,7 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
 
             _vbe_regs[VBE_REG_LINEAR_FB] = fb_address >> 16;
         }
-    } else {
+    } else if (port == IO_VBE_DATA){
         switch (_vbe_reg_index) {
         case VBE_REG_DISPLAY_ID:
             _vbe_regs[_vbe_reg_index] = val;
@@ -1606,7 +1629,7 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             _vbe_regs[VBE_REG_VIRT_HEIGHT] = _vbe_regs[VBE_REG_Y_RES] = val;
             break;
         case VBE_REG_DEPTH:
-            if (val != 32 && val != 24 && val !=8) {
+            if (val != 32 && val != 24 && val != 8) {
                 D_MESSAGE("%u bpp is not supported", val);
                 break;
             }
@@ -1658,10 +1681,34 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
                 _edid_offset = EDID_BLOCK_SIZE;
             }
             break;
+        case VBE_REG_PALETTE_WRITE_INDEX:
+            if (val > 0xff) {
+                W_MESSAGE("bad palett index", val);
+            }
+            _vbe_regs[VBE_REG_PALETTE_WRITE_INDEX] = val & 0xff;
+            _vba_palette_expect_red = 0;
+            break;
+        case VBE_REG_PALETTE_DATA: {
+            uint index = _vbe_regs[VBE_REG_PALETTE_WRITE_INDEX];
+
+            if (_vba_palette_expect_red) {
+                _palette[index].components[0] = val;
+                _vbe_regs[VBE_REG_PALETTE_WRITE_INDEX] = (index + 1) & 0xff;
+                update_one_effective_palette(index);
+            } else {
+                _palette[index].components[2] = val;
+                _palette[index].components[1] = val >> 8;
+            }
+
+            _vba_palette_expect_red = !_vba_palette_expect_red;
+            break;
+        }
         default:
             D_MESSAGE("unhandled %u, inf sleep", _vbe_reg_index);
             for (;;) sleep(2);
         }
+    } else {
+        W_MESSAGE("bad port 0x%x", port);
     }
 }
 
