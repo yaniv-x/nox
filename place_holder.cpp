@@ -82,6 +82,30 @@ PlaceHolder::PlaceHolder(NoxVM& nox)
                                       (io_write_byte_proc_t)&PlaceHolder::write_byte));
 
 
+    // game port
+    add_io_region(_io.register_region(*this, 0x0200, 0x0210 - 0x0200, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte));
+
+    //sound blaster
+    add_io_region(_io.register_region(*this, 0x0220, 0x0230 - 0x0220, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte));
+
+    //Gravis ultra sound
+    add_io_region(_io.register_region(*this, 0x0240, 0x0250 - 0x0240, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte));
+
+    //prototype cards
+    add_io_region(_io.register_region(*this, 0x0300, 0x0320 - 0x0300, this,
+                                      (io_read_byte_proc_t)&PlaceHolder::read_byte,
+                                      (io_write_byte_proc_t)&PlaceHolder::write_byte));
+
+
+
+
+
     t2 = application->create_timer((void_callback_t)&PlaceHolder::timer_call_2222222222, this);
     //t2->arm(1000ULL * NUM_MICRO , true);
 
