@@ -371,6 +371,10 @@ bool NoxVM::init()
     //num of cpus (is num of cpus - 1)
     _cmos->host_write(0x5f, 0);
 
+
+    //century (BCD)
+    _cmos->host_write(0x32, 0x20);
+
     init_cpus();
 
     return true;
