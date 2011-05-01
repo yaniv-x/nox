@@ -356,7 +356,7 @@ void KbdController::write_to_mouse(uint8_t val)
             break;
         case MOUSE_CMD_RESET_WARP_MOD:
             put_mouse_data(KBD_ACK);
-            _mouse_warp_mode = true;
+            _mouse_warp_mode = false;
             break;
         case MOUSE_CMD_SET_WARP_MODE:
             put_mouse_data(KBD_ACK);
