@@ -991,6 +991,9 @@ uint8_t VGA::io_read_byte(uint16_t port)
         return _color_index_mask;
     case IO_DEC_DAC_STATE:
         return _dac_state;
+    case IO_PALETTE_WRITE_INDEX:
+        W_MESSAGE("read from write only port");
+        return _palette_write_index;
     case IO_PALETTE_DATA: {
         uint8_t ret = _palette[_palette_read_index].components[_palette_read_comp++];
 
