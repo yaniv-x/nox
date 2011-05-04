@@ -112,7 +112,8 @@ private:
     void update_one_effective_palette(uint index);
 
     void vram_load_one(uint32_t offset, uint8_t& dest);
-    void vram_read_one(uint32_t src, uint8_t& dest);
+    void vram_read_mode_0(uint32_t src, uint8_t& dest);
+    void vram_read_mode_1(uint32_t src, uint8_t& dest);
     void vram_read(uint64_t src, uint64_t length, uint8_t* dest);
 
     void vram_store_byte(uint64_t offset, uint8_t val);
