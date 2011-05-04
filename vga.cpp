@@ -155,10 +155,12 @@ enum {
 
     GRAPHICS_REG_SET_RESET = 0x00,
     GRAPHICS_REG_ENABLE_SET_RESET = 0x01,
+    GRAPHICS_REG_COLOR_COMPER = 0x02,
     GRAPHICS_REG_ROTATE = 0x03,
     GRAPHICS_REG_READ_PLAN = 0x04,
     GRAPHICS_REG_MODE = 0x05,
     GRAPHICS_REG_MISC = 0x06,
+    GRAPHICS_REG_COLOR_DONT_CARE = 0x07,
     GRAPHICS_REG_MASK = 0x08,
 
     GRAPHICS_ROTATE_COUNT_MASK = (1 << 3) - 1,
@@ -1288,6 +1290,37 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 }
 
 
+inline void VGA::vram_read_mode_1(uint32_t src, uint8_t& dest)
+{
+    uint8_t* quad = _vram + (src << 2);
+
+    if (quad < _vram || quad + 4 > _vga_vram_end) {
+        D_MESSAGE("out of bounds");
+        dest = 0xff;
+        return;
+    }
+
+    *(uint32_t*)_latch = *(uint32_t*)quad;
+
+    uint8_t color_dont_care = _graphics_regs[GRAPHICS_REG_COLOR_DONT_CARE] & 0x0f;
+    uint8_t color_comper = _graphics_regs[GRAPHICS_REG_COLOR_COMPER] & color_dont_care;
+
+    uint8_t res = 0;
+
+    for (int i = 7; i >= 0; i--) {
+        uint8_t color = ((quad[0] >> i) & 1);
+        color |= ((quad[1] >> i) & 1) << 1;
+        color |= ((quad[2] >> i) & 1) << 2;
+        color |= ((quad[3] >> i) & 1) << 3;
+
+        if ((color & color_dont_care) == color_comper) {
+            res |= 1 << i;
+        }
+    }
+
+    dest = res;
+}
+
 inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 {
     if (_vram + offset >= _vga_vram_end) {
@@ -1302,7 +1335,7 @@ inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 }
 
 
-inline void VGA::vram_read_one(uint32_t src, uint8_t& dest)
+inline void VGA::vram_read_mode_0(uint32_t src, uint8_t& dest)
 {
     ASSERT(!!(_sequencer_regs[SEQUENCER_REG_MEM_MODE] & SEQUENCER_MEM_MODE_ODD_EVEN_MASK) ==
            !(_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_ODD_EVEN));
@@ -1326,20 +1359,21 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 
     if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
         ASSERT(length <= 64 * KB);
-
+        // verify access
         src += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
         memcpy(dest, _vram + src, length);
         return;
     }
 
     if ((_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_READ_MODE_MASK)) {
-         W_MESSAGE_SOME(100, "implement me");
-         memset(dest, 0xff, length);
-        return;
-    }
-
-    for (int i = 0; i < length; i++) {
-        vram_read_one(src + i, dest[i]);
+        W_MESSAGE_SOME(100, "implement me");
+        for (int i = 0; i < length; i++) {
+            vram_read_mode_1(src + i, dest[i]);
+        }
+    } else {
+        for (int i = 0; i < length; i++) {
+            vram_read_mode_0(src + i, dest[i]);
+        }
     }
 }
 
