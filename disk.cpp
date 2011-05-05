@@ -108,12 +108,13 @@ bool Disk::write(uint64_t sector, const uint8_t* buf)
         return true;
     }
 
+#if 0
     uint8_t* sec_buf = new uint8_t[SECTOR_SIZE];
     memcpy(sec_buf, buf, SECTOR_SIZE);
 
     _sectors[sector] = sec_buf;
 
-#if 0
+#else
     sector <<= SECTOR_SHIFT;
 
     if (sector + SECTOR_SIZE > _size) {
@@ -128,6 +129,65 @@ bool Disk::write(uint64_t sector, const uint8_t* buf)
         return false;
     }
 #endif
+
+    return true;
+}
+
+
+ATAPIDevice::ATAPIDevice(const char* file_name)
+    : _file (open(file_name, O_RDONLY /*| O_DIRECT*/))
+{
+    if (!_file.is_valid()) {
+        THROW("open %s failed", file_name);
+    }
+
+    struct stat stat;
+
+    if (fstat(_file.get(), &stat) == -1) {
+        THROW("fstat failed");
+    }
+
+    if (!stat.st_size || stat.st_size > (99 * 60 * 75 * 2048 /* 99 minutes cd*/) ||
+                                                           stat.st_size & (2048 - 1)) {
+        THROW("invalid file size ", stat.st_size);
+    }
+
+    _size = stat.st_size;
+}
+
+
+bool ATAPIDevice::read(uint64_t sector, uint8_t* buf)
+{
+    uint64_t start = sector * 2048;
+
+    if (start + 2048 > _size) {
+        return false;
+    }
+
+    ssize_t n = ::lseek(_file.get(), start, SEEK_SET);
+    if (n != start) {
+        if (n == -1) {
+            int err = errno;
+            W_MESSAGE("seek failed %d", err);
+        }
+        return false;
+    }
+
+    uint8_t* end = buf + 2048;
+
+    do {
+        n = ::read(_file.get(), buf, 2048);
+        if ( n <= 0) {
+            if (n == -1) {
+                int err = errno;
+                W_MESSAGE("write failed %d", err);
+            } else {
+                W_MESSAGE("write failed on EOF");
+            }
+            return false;
+        }
+        buf += n;
+    } while (buf != end);
 
     return true;
 }
