@@ -290,14 +290,32 @@ void NoxVM::init_cpus()
 }
 
 enum {
-    DISK_SIZE = 1 * GB,
     MAX_HEADS = 16,
     MAX_SECTORS_PER_CYL = 63,
-    MAX_CYL = 16383, //this is BOCHS limit, why?
-                     // BIOS (cyl 1024, head 256, sec 63)
-                     // IDE (cyl 65536, head 16, sec 256)
-
+    MAX_CYL = 16383,
+    SECTOR_SIZE = 512,
 };
+
+
+static uint64_t file_size(const char* file_name)
+{
+    int fd  = open(file_name, O_RDWR);
+    if (fd == -1) {
+        THROW("open %s failed", file_name);
+    }
+
+    struct stat stat;
+
+    if (fstat(fd, &stat) == -1) {
+        THROW("fstat failed");
+    }
+
+    if (stat.st_size % SECTOR_SIZE) {
+        THROW("invalid file size ", stat.st_size);
+    }
+
+    return stat.st_size;
+}
 
 bool NoxVM::init()
 {
@@ -313,17 +331,43 @@ bool NoxVM::init()
     _cmos->host_write(0x12, 0xf0);   // hard disk 0 in extended cmos
     _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
 
-    uint cyl = MIN(MAX_CYL, DISK_SIZE / MAX_HEADS / MAX_SECTORS_PER_CYL);
+    const char* disk_file_name =
+        //"/home/yaniv/images/winxp_no_acpi.raw";
+        "/home/yaniv/images/f14_64.raw";
+        //"/home/yaniv/images/freedos.raw.base.T"
 
-    // hd 0 params
+    const char* cdrom_file_name =
+        //"/home/yaniv/iso/WindowsXP-sp2-vlk.iso";
+        //"/home/yaniv/iso/FreeBSD-8.2-RELEASE-amd64-disc1.iso";
+        "/home/yaniv/Downloads/Fedora-14-x86_64-Live-Desktop.iso";
+        //"/home/yaniv/Downloads/fdfullws.iso";
+        //"/tmp/dos_test.iso";
+        //NULL;
+
+    uint64_t disk_size = file_size(disk_file_name);
+
+    uint cyl = MIN(MAX_CYL, disk_size / MAX_HEADS / MAX_SECTORS_PER_CYL / SECTOR_SIZE);
+
+    // hd 0 params as in AMI BIOS
     _cmos->host_write(0x1b, cyl);
-    _cmos->host_write(0x1c, cyl >> 0);
+    _cmos->host_write(0x1c, cyl >> 8);
     _cmos->host_write(0x1d, MAX_HEADS);
+    _cmos->host_write(0x1e, 0xff); // precompensation
+    _cmos->host_write(0x1f, 0xff); // precompensation
+    _cmos->host_write(0x20, 0xc0 | ((MAX_SECTORS_PER_CYL > 8) << 3));
+    _cmos->host_write(0x21, cyl); // landing zone
+    _cmos->host_write(0x22, cyl >> 8); // landing zone
     _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
 
     //boot device
-    _cmos->host_write(0x3d, 0x02); //first boot device is first HD
-    _ata_host->set_device_0(new Disk("/home/yaniv/images/f13_64.raw"));
+    //_cmos->host_write(0x3d, 0x02); //first boot device is first HD
+    _cmos->host_write(0x3d, 0x03); //first boot device is CD
+
+    _ata_host->set_device_0(new Disk(disk_file_name));
+
+    if (cdrom_file_name){
+        _ata_host->set_device_1(new ATAPIDevice(cdrom_file_name));
+    }
 
     //equipment byte
     _cmos->host_write(0x14, (1 << 1 /* math coproccssor*/) | (1 << 2) /* mouse port*/);
@@ -373,7 +417,11 @@ bool NoxVM::init()
 
 
     //century (BCD)
-    _cmos->host_write(0x32, 0x20);
+    _cmos->host_write(0x32, 0x20); // IBM
+    //_cmos->host_write(0x37, 0x20); // PS2 ????
+
+
+    _cmos->host_write(0x39, 0x55); //use LBA translation
 
     init_cpus();
 
