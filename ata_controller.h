@@ -31,18 +31,22 @@
 #include "wire.h"
 
 class ATAController;
-class Disk;
+class ATADevice;
 
 class ATAHost: public PCIDevice {
 public:
     ATAHost();
 
-    void set_device_0(Disk* disk);
-    void set_device_1(Disk* disk);
+    void set_device_0(ATADevice* device);
+    void set_device_1(ATADevice* device);
 
 protected:
     virtual void on_io_enabled();
     virtual void on_io_disabled();
+
+private:
+    uint8_t io_bus_master_read(uint16_t port);
+    void io_bus_master_write(uint16_t port, uint8_t val);
 
 private:
     Wire _irq_wire_0;

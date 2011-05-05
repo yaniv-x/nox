@@ -30,15 +30,41 @@
 #include "common.h"
 #include "non_copyable.h"
 
-class Disk: public NonCopyable {
+
+class ATADevice: public NonCopyable {
+public:
+    virtual bool is_ATAPI() = 0;
+    virtual uint64_t get_size() = 0;
+    virtual bool read(uint64_t sector, uint8_t* buf) = 0;
+    virtual bool write(uint64_t sector, const uint8_t* buf) = 0;
+};
+
+
+class ATAPIDevice: public ATADevice {
+public:
+    ATAPIDevice(const char* file_name);
+
+    virtual bool is_ATAPI() { return true;}
+
+    virtual uint64_t get_size() { return _size;}
+    virtual bool read(uint64_t sector, uint8_t* buf);
+    virtual bool write(uint64_t sector, const uint8_t* buf) { THROW("");}
+
+private:
+    AutoFD _file;
+    uint64_t _size;
+};
+
+class Disk: public ATADevice {
 public:
     Disk(const char* file_name, uint read_cache = 0, uint write_cache = 0);
     virtual ~Disk();
 
-    uint64_t get_size() { return _size;}
+    virtual bool is_ATAPI() { return false;}
+    virtual uint64_t get_size() { return _size;}
 
-    bool read(uint64_t sector, uint8_t* buf);
-    bool write(uint64_t sector, const uint8_t* buf);
+    virtual bool read(uint64_t sector, uint8_t* buf);
+    virtual bool write(uint64_t sector, const uint8_t* buf);
 
     //void enable_cache();
     //void disable_cache();
