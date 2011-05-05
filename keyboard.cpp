@@ -617,7 +617,8 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         if (!_keyboard_output.buf.is_empty()) {
             D_MESSAGE("CTRL_CMD_READ_INPUT_PORT while output is not ready")
         }
-        put_data(0);
+        // not sure about the following.
+        put_data(0xa7); // the value I got on physical machine
         break;
     case CTRL_CMD_READ_OUTPUT_PORT: {
         if (!_keyboard_output.buf.is_empty()) {
