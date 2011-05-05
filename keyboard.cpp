@@ -268,10 +268,6 @@ void KbdController::set_command_byte(uint8_t command_byte)
         _state &= ~CTRL_STATUS_SELF_TEST_MASK;
     }
 
-    if (_command_byte & COMMAND_BYTE_TRANSLATE_MASK) {
-        D_MESSAGE("translate");
-    }
-
     _command_byte = command_byte;
 }
 
