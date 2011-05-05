@@ -293,23 +293,7 @@ void KbdController::write_output_port(uint8_t output_port)
         memory_bus->disable_address_line_20();
     }
 
-    // not sure about the following
-
-    if (output_port & OUTPUT_PORT_IRQ1_MASK) {
-        D_MESSAGE("raising keyboard irq");
-        _keyboard_output.irq_wire.raise();
-    } else {
-        D_MESSAGE("dropping keyboard irq");
-        _keyboard_output.irq_wire.drop();
-    }
-
-    if (output_port & OUTPUT_PORT_IRQ12_MASK) {
-        D_MESSAGE("raising mouse irq");
-        _mouse_output.irq_wire.raise();
-    } else {
-        D_MESSAGE("dropping mouse irq");
-        _mouse_output.irq_wire.drop();
-    }
+    // OUTPUT_PORT_IRQ1_MASK and OUTPUT_PORT_IRQ12_MASK have no efect in my physical test machine
 }
 
 
