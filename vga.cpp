@@ -1369,7 +1369,6 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
     }
 
     if ((_graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_READ_MODE_MASK)) {
-        W_MESSAGE_SOME(100, "implement me");
         for (int i = 0; i < length; i++) {
             vram_read_mode_1(src + i, dest[i]);
         }
