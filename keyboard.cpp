@@ -67,8 +67,8 @@ enum {
     CTRL_CMD_PULSE_0UTPUT_LAST = 0xff,
 
     CTRL_SELF_TEST_REPLAY = 0x55,
-    CTRL_KEYBOARD_INTERFACE_TEST_REPLAY = 0,
-    CTRL_MOUSE_INTERFACE_TEST_REPLAY = 0,
+    CTRL_KEYBOARD_INTERFACE_TEST_REPLY_NO_ERROR = 0,
+    CTRL_MOUSE_INTERFACE_TEST_REPLY_NO_ERROR = 0,
 
     KBD_CMD_LED = 0xed,
     KBD_CMD_ECHO = 0xee,
@@ -234,11 +234,6 @@ void KbdController::reset_keyboard()
     restore_keyboard_defaults();
     _keyboard_output.buf.reset();
     _keyboard_output.irq_wire.drop();
-
-    /*if (!(_state & CTRL_STATUS_MOUSE_DATA_READY_MASK)) {
-        _state &= ~CTRL_STATUS_DATA_READY_MASK;
-        refill_outgoing();
-    }*/
 }
 
 
@@ -578,13 +573,13 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         if (!_keyboard_output.buf.is_empty()) {
             D_MESSAGE("CTRL_INTERFACE_TEST_REPLAY while output is not ready")
         }
-        put_data(CTRL_KEYBOARD_INTERFACE_TEST_REPLAY); // use COMMAND_BYTE_DISABLE_KYBD_MASK here?
+        put_data(CTRL_KEYBOARD_INTERFACE_TEST_REPLY_NO_ERROR);
         break;
     case CTRL_CMD_MOUSE_INTERFACE_TEST:
         if (!_keyboard_output.buf.is_empty()) {
             D_MESSAGE("CTRL_CMD_MOUSE_INTERFACE_TEST while output is not ready")
         }
-        put_data(CTRL_MOUSE_INTERFACE_TEST_REPLAY); // use COMMAND_BYTE_DISABLE_MOUSE_MASK here?
+        put_data(CTRL_MOUSE_INTERFACE_TEST_REPLY_NO_ERROR);
         break;
     case CTRL_CMD_DIAGNOSTIC_DUMP:
         PANIC("CTRL_CMD_DIAGNOSTIC_DUMP: what?");
