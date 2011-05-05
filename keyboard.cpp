@@ -647,9 +647,8 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         memory_bus->enable_address_line_20();
         break;
     case CTRL_CMD_READ_TEST_INPUTS:
-        put_data(0x3);  // keybaord and mouse input clock is up.
-                        // do we need to use COMMAND_BYTE_DISABLE_KYBD_MASK and
-                        // COMMAND_BYTE_DISABLE_MOUSE_MASK here?
+        put_data(!!(_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK) |
+                 (!!(_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) << 1));
         break;
     default:
         if (val < CTRL_CMD_PULSE_0UTPUT_FIRST) {
