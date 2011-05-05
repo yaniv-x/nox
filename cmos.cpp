@@ -52,6 +52,7 @@ enum {
     CMOD_OFFSET_EXT_MEM_LOW_ALIAS = 0x30,
     CMOD_OFFSET_EXT_MEM_HIGH_ALIAS = 0x31,
     CMOD_OFFSET_CENTURY = 0x32,
+    CMOD_OFFSET_PS2_CENTURY = 0x37,
     CMOD_OFFSET_MEM_ABOVE_16M_LOW = 0x34,
     CMOD_OFFSET_MEM_ABOVE_16M_HIGH = 0x35,
     CMOD_OFFSET_BOOT_DEV_LOW = 0x3d,
@@ -390,6 +391,7 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
         case CMOD_OFFSET_MEM_ABOVE_4G_HIGH:
         case CMOD_OFFSET_NUM_CPUS:
         case CMOD_OFFSET_CENTURY:
+        case CMOD_OFFSET_PS2_CENTURY:
             _user_ares[_index - USER_0] = val;
             return;
         default:
@@ -517,6 +519,7 @@ uint8_t CMOS::read_byte(uint16_t port)
         case CMOD_OFFSET_MEM_ABOVE_4G_HIGH:
         case CMOD_OFFSET_NUM_CPUS:
         case CMOD_OFFSET_CENTURY:
+        case CMOD_OFFSET_PS2_CENTURY:
         case CMOD_OFFSET_BOOT_DEV_HIGH:
         case CMOD_OFFSET_HD_GEO_TRANSLATION:
             return _user_ares[_index - USER_0];

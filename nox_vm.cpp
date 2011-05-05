@@ -332,17 +332,18 @@ bool NoxVM::init()
     _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
 
     const char* disk_file_name =
-        //"/home/yaniv/images/winxp_no_acpi.raw";
-        "/home/yaniv/images/f14_64.raw";
-        //"/home/yaniv/images/freedos.raw.base.T"
+        "/home/yaniv/images/winxp_no_acpi.raw";
+        //"/home/yaniv/images/f14_64.raw";
+        //"/home/yaniv/images/freedos.raw.base.T";
+        //"/home/yaniv/images/freebsd.raw";
 
     const char* cdrom_file_name =
         //"/home/yaniv/iso/WindowsXP-sp2-vlk.iso";
         //"/home/yaniv/iso/FreeBSD-8.2-RELEASE-amd64-disc1.iso";
-        "/home/yaniv/Downloads/Fedora-14-x86_64-Live-Desktop.iso";
+        //"/home/yaniv/Downloads/Fedora-14-x86_64-Live-Desktop.iso";
         //"/home/yaniv/Downloads/fdfullws.iso";
         //"/tmp/dos_test.iso";
-        //NULL;
+        NULL;
 
     uint64_t disk_size = file_size(disk_file_name);
 
@@ -360,8 +361,8 @@ bool NoxVM::init()
     _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
 
     //boot device
-    //_cmos->host_write(0x3d, 0x02); //first boot device is first HD
-    _cmos->host_write(0x3d, 0x03); //first boot device is CD
+    _cmos->host_write(0x3d, 0x02); //first boot device is first HD
+    //_cmos->host_write(0x3d, 0x03); //first boot device is CD
 
     _ata_host->set_device_0(new Disk(disk_file_name));
 
@@ -418,7 +419,7 @@ bool NoxVM::init()
 
     //century (BCD)
     _cmos->host_write(0x32, 0x20); // IBM
-    //_cmos->host_write(0x37, 0x20); // PS2 ????
+    _cmos->host_write(0x37, 0x20); // PS2
 
 
     _cmos->host_write(0x39, 0x55); //use LBA translation
