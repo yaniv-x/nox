@@ -140,6 +140,7 @@ enum {
     SEQUENCER_REG_MEM_MODE = 0x04,
 
     SEQUENCER_CLOCKING_BLANK_BIT = 5,
+    SEQUENCER_CLOCKING_BLANK_MASK = 1 << SEQUENCER_CLOCKING_BLANK_BIT,
     SEQUENCER_CLOCKING_DOTS_BIT = 0,
 
     SEQUENCER_FONT_MAPA_BIT0 = 5,
@@ -283,8 +284,10 @@ protected:
 
 
 enum {
-    VGA_MAX_WIDTH = 740,
-    VGA_MAX_HIGHT = 480,
+    VGA_MAX_WIDTH = 800,
+    VGA_MAX_HIGHT = 600,
+    VGA_MIN_WIDTH = 320,
+    VGA_MIN_HIGHT = 200,
     VGA_PCI_FB_REGION = 0,
     VGA_PCI_REVISION = 1,
 
@@ -666,7 +669,7 @@ void VGA::update()
         return;
     }
 
-    if (!_vga_active) {
+    if (!_vga_draw_logic) {
         return;
     }
 
@@ -812,6 +815,8 @@ void VGA::reset_io()
     _region2 = NULL;
     io_bus->unregister_region(region);
 
+    VGA_D_MESSAGE("0x%x 0x%x", IO_INPUT_STATUS_1_MDA + delta, IO_CRT_CONTROL_INDEX_MDA + delta);
+
     _region1 = io_bus->register_region(*this, IO_INPUT_STATUS_1_MDA + delta, 1, this,
                                        (io_read_byte_proc_t)&VGA::io_read_byte,
                                        (io_write_byte_proc_t)&VGA::io_write_byte);
@@ -846,6 +851,7 @@ void VGA::reset_fb()
     _mmio = NULL;
 
     if (!fb_accesibel) {
+        VGA_D_MESSAGE("unmaped");
         return;
     }
 
@@ -855,24 +861,28 @@ void VGA::reset_fb()
                                           (read_mem_proc_t)&VGA::vram_read,
                                           (write_mem_proc_t)&VGA::vram_write,
                                           this, *this);
+        VGA_D_MESSAGE("map @ 0x%x size %uK", 0xa0000, 128);
         break;
     case GRAPHICS_MISK_FB_ADDR_A0000_AFFFF:
         _mmio = memory_bus->register_mmio(0xa0000 / GUEST_PAGE_SIZE, 64 / 4,
                                           (read_mem_proc_t)&VGA::vram_read,
                                           (write_mem_proc_t)&VGA::vram_write,
                                           this, *this);
+        VGA_D_MESSAGE("map @ 0x%x size %uK", 0xa0000, 64);
         break;
     case GRAPHICS_MISK_FB_ADDR_B0000_B7FFF:
         _mmio = memory_bus->register_mmio(0xb0000 / GUEST_PAGE_SIZE, 32 / 4,
                                           (read_mem_proc_t)&VGA::vram_read,
                                           (write_mem_proc_t)&VGA::vram_write,
                                           this, *this);
+        VGA_D_MESSAGE("map @ 0x%x size %uK", 0xb0000, 32);
         break;
     case GRAPHICS_MISK_FB_ADDR_B8000_BFFFF:
         _mmio = memory_bus->register_mmio(0xb8000 / GUEST_PAGE_SIZE, 32 / 4,
                                           (read_mem_proc_t)&VGA::vram_read,
                                           (write_mem_proc_t)&VGA::vram_write,
                                           this, *this);
+        VGA_D_MESSAGE("map @ 0x%x size %uK", 0xb8000, 32);
         break;
     }
 }
@@ -883,6 +893,7 @@ void VGA::reset()
     _last_io_delta = ~0;
     _mmap_state = ~0;
     _vga_active = false;
+    _vga_draw_logic = false;
     memset(_fb->get(), 0,  _fb->size());
 
     _misc_output = 0;
@@ -1048,75 +1059,7 @@ void VGA::reset_sequencer()
 
 void VGA::blank_screen()
 {
-    D_MESSAGE("");
-}
-
-
-void VGA::enable_vga()
-{
-    uint overflow = _crt_regs[CRT_REG_OVERFLOW];
-
-    uint height = (((overflow & (1 << CRT_OVERFLAOW_H8_BIT)) << (8 - CRT_OVERFLAOW_H8_BIT)) |
-                      ((overflow & (1 << CRT_OVERFLAOW_H9_BIT)) << (9 - CRT_OVERFLAOW_H9_BIT))) +
-                        _crt_regs[CRT_REG_HEIGHT] + 1;
-
-    uint dot_clocks;
-
-    dot_clocks = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_DOTS_BIT) ? 8 : 9;
-
-    //maybe vga bios bug?
-    if ((_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
-        dot_clocks = 8;
-    }
-
-    uint width = (_crt_regs[CRT_REG_WIDTH] + 1) * dot_clocks;
-
-    if (width == _width && height == _height) {
-        return;
-    }
-
-    if (width > VGA_MAX_WIDTH || height > VGA_MAX_HIGHT) {
-        D_MESSAGE("invalid size");
-        return;
-    }
-
-    _width = width;
-    _height = height;
-    _caret_visable = false;
-    _dirty = true;
-
-    if (!(_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF) &&
-        !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
-        _caret_tick = get_monolitic_time();
-    } else {
-        _caret_tick = 0;
-    }
-
-    propagate_fb();
-
-    _update_timer->arm(1000 * 1000 * 1000 / 30, true); // add arm/disarm to start/stop
-}
-
-
-void VGA::on_crt_mode_cahnge()
-{
-    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
-        return;
-    }
-
-    bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
-
-    if (active == _vga_active) {
-        return;
-    }
-
-    _vga_active = active;
-
-    if (!_vga_active) {
-        return;
-    }
-
-    enable_vga();
+    memset(_fb->get(), 0, _fb->size());
 }
 
 
@@ -1132,7 +1075,13 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
     case IO_SEQUENCER_INDEX:
         _sequencer_index = val & SEQUENCER_INDEX_MASK;
         return;
-    case IO_SEQUENCER_DATA:
+    case IO_SEQUENCER_DATA: {
+         uint8_t blank_changed;
+
+         blank_changed = _sequencer_index == SEQUENCER_REG_CLOCKING &&
+                    (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_BLANK_MASK) !=
+                                                          (val & SEQUENCER_CLOCKING_BLANK_MASK);
+
         _sequencer_regs[_sequencer_index] = val;
 
         if (_sequencer_index == 0) {
@@ -1143,12 +1092,22 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             VGA_D_MESSAGE("sequencer[SEQUENCER_REG_MEM_MODE] = 0x%x (%u)", val, val);
         }
 
-        if (_sequencer_index == SEQUENCER_REG_CLOCKING && (val & SEQUENCER_CLOCKING_BLANK_BIT)) {
-            blank_screen();
+        if (_vga_active && blank_changed) {
+            if ((val & SEQUENCER_CLOCKING_BLANK_MASK)) {
+                _vga_draw_logic = false;
+                blank_screen();
+            } else {
+                _vga_draw_logic = true;
+                init_caret_tick();
+            }
         }
 
+        conditional_mode_change();
+
         VGA_D_MESSAGE("sequencer[%u] = 0x%x (%u)", _sequencer_index, val, val);
+
         return;
+    }
     case IO_COLOR_INDEX_MASK:
         VGA_D_MESSAGE("color index mask 0x%x", val);
         _color_index_mask = val;
@@ -1205,6 +1164,8 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
            Overscan register (AR11).
         */
 
+        conditional_mode_change();
+
         return;
     case IO_GRAPHICS_INDEX:
         _graphics_index = val & GRAPHICS_INDEX_MASK;
@@ -1241,7 +1202,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
             return;
         }
 
-        if (_crt_index == CRT_REG_CURSOR_START &&
+        if (_vga_draw_logic && _crt_index == CRT_REG_CURSOR_START &&
             !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT)) &&
             (val & CRT_CURSOR_START_OFF) !=
                                   (_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF)) {
@@ -1257,11 +1218,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
         _crt_regs[CRT_REG_TEST] = 1 << 7;
         _crt_regs[_crt_index] = val;
 
-        if (_crt_index == CRT_REG_MODE) {
-            on_crt_mode_cahnge();
-        }
-
-        if ((_crt_index == CRT_REG_CURSOR_LOCATION_HIGH ||
+        if (_vga_draw_logic && (_crt_index == CRT_REG_CURSOR_LOCATION_HIGH ||
             _crt_index == CRT_REG_CURSOR_LOCATION_LOW) &&
             !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT)) &&
             !(_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF)) {
@@ -1273,6 +1230,8 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
         if (_crt_index == CRT_REG_START_ADDRESS_HIGH || _crt_index == CRT_REG_START_ADDRESS_LOW) {
             _dirty = true;
         }
+
+        conditional_mode_change();
 
         VGA_D_MESSAGE("crt[0x%x] = 0x%x", _crt_index, val);
         break;
@@ -1323,6 +1282,91 @@ inline void VGA::vram_read_mode_1(uint32_t src, uint8_t& dest)
 
     dest = res;
 }
+
+
+inline bool VGA::is_vbe_active()
+{
+    return !!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE);
+}
+
+
+inline bool VGA::is_crt_active()
+{
+    return !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
+}
+
+
+bool VGA::is_valid_mode(uint height, uint width)
+{
+    return width <= VGA_MAX_WIDTH && width >= VGA_MIN_WIDTH &&
+           height <= VGA_MAX_HIGHT && height >= VGA_MIN_HIGHT;
+}
+
+
+void VGA::init_caret_tick()
+{
+    if (!(_crt_regs[CRT_REG_CURSOR_START] & CRT_CURSOR_START_OFF) &&
+        !(_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
+        _caret_tick = get_monolitic_time();
+    } else {
+        _caret_tick = 0;
+    }
+}
+
+void VGA::conditional_mode_change()
+{
+    if (is_vbe_active()) {
+        return;
+    }
+
+    if (!is_crt_active()) {
+        if (_vga_active) {
+            _vga_active = false;
+            _vga_draw_logic = false;
+            blank_screen();
+        }
+        return;
+    }
+
+    uint overflow = _crt_regs[CRT_REG_OVERFLOW];
+
+    uint height = (((overflow & (1 << CRT_OVERFLAOW_H8_BIT)) << (8 - CRT_OVERFLAOW_H8_BIT)) |
+                   ((overflow & (1 << CRT_OVERFLAOW_H9_BIT)) << (9 - CRT_OVERFLAOW_H9_BIT))) +
+                                                                 _crt_regs[CRT_REG_HEIGHT] + 1;
+
+    uint dot_clocks;
+
+    dot_clocks = (_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_DOTS_BIT) ? 8 : 9;
+
+    //maybe vga bios bug?
+    if ((_attributes_regs[ATTRIB_REG_MODE] & (1 << ATTRIB_MODE_GRAPHICS_BIT))) {
+        dot_clocks = 8;
+    }
+
+    uint width = (_crt_regs[CRT_REG_WIDTH] + 1) * dot_clocks;
+
+    if ((_vga_active && height == _height && width == _width) || !is_valid_mode(height, width)) {
+        return;
+    }
+
+    _height = height;
+    _width = width;
+    _caret_visable = false;
+    _dirty = true;
+    _vga_active = true;
+    _vga_draw_logic = !(_sequencer_regs[SEQUENCER_REG_CLOCKING] & SEQUENCER_CLOCKING_BLANK_MASK);
+
+    init_caret_tick();
+
+    if (!_vga_draw_logic) {
+        blank_screen();
+    }
+
+    propagate_fb();
+
+    _update_timer->arm(1000 * 1000 * 1000 / 30, true); // add arm/disarm to start/stop
+}
+
 
 inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 {
@@ -1611,9 +1655,10 @@ void VGA::propagate_fb()
 
 void VGA::enable_vbe()
 {
-    VGA_D_MESSAGE("----------------------------------------------------");
+    VGA_D_MESSAGE("");
     // need to remap fb?
     _vga_active = false;
+    _vga_draw_logic = false;
 
     if (!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAN_NOCLEARMEM)) {
         memset(_fb->get(), 0, _fb->size());
@@ -1639,16 +1684,15 @@ void VGA::enable_vbe()
 
 void VGA::disable_vbe()
 {
-    VGA_D_MESSAGE("----------------------------------------------------");
+    VGA_D_MESSAGE("");
     bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
 
     if (!active) {
         return;
     }
 
-    _vga_active = true;
     _palette_shift = 2;
-    enable_vga();
+    conditional_mode_change();
 }
 
 

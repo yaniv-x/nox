@@ -103,8 +103,11 @@ private:
     void reset_io();
     void reset_fb();
     void blank_screen();
-    void on_crt_mode_cahnge();
-    void enable_vga();
+    bool is_valid_mode(uint height, uint width);
+    bool is_vbe_active();
+    bool is_crt_active();
+    void init_caret_tick();
+    void conditional_mode_change();
     void enable_vbe();
     void disable_vbe();
     void propagate_fb();
@@ -147,6 +150,7 @@ private:
     uint8_t _last_io_delta;
     uint8_t _mmap_state;
     bool _vga_active;
+    bool _vga_draw_logic;
 
     uint8_t _attrib_control_index;
     bool _write_attrib;
