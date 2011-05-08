@@ -23,6 +23,7 @@ nox_SOURCES =					\
 	disk.cpp				\
 	vga.cpp					\
 	display.cpp				\
+	options_parser.cpp			\
 	run_loop.cpp
 
 INCLUDES =												\
