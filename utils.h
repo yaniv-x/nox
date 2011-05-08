@@ -167,5 +167,17 @@ static inline int find_msb(T val)
     return i;
 }
 
+inline char* copy_cstr(const char* str)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+
+    char* ret = new char[strlen(str) + 1];
+    strcpy(ret, str);
+
+    return ret;
+}
+
 #endif
 
