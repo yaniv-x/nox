@@ -39,7 +39,7 @@ public:
     static ErrorCode Main(int argc, const char** argv);
 
 private:
-    void init();
+    bool init(int argc, const char** argv);
 
 private:
     std::auto_ptr<NoxVM> _vm;

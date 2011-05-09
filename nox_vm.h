@@ -56,6 +56,11 @@ public:
     IOBus& get_io_bus() { return *_io_bus.get();}
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}
 
+    void set_ram_size(uint32_t ram_size);
+    void set_hard_disk(const char* file_name);
+    void set_cdrom(const char* file_name);
+    void set_boot_device(bool from_cd);
+
     virtual void reset();
     virtual void start();
     virtual void stop();
@@ -64,7 +69,7 @@ public:
     virtual void load(InStream& stream);
 
 private:
-    void init_ram();
+    void init_ram(uint32_t ram_size);
     void init_bios();
     void init_cpus();
 
