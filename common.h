@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
+#include <limits.h>
 #include <auto_ptr.h>
 #include <string.h>
 #include <string>
@@ -45,7 +46,7 @@
 #include "error_codes.h"
 #include "nox_types.h"
 
-#define KB (1024ULL)
+#define KB (1024UL)
 #define MB (KB * 1024)
 #define GB (MB * 1024)
 

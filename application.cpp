@@ -26,6 +26,32 @@
 
 #include "application.h"
 #include "nox_vm.h"
+#include "options_parser.h"
+
+#define MIN_MEM_SIZE (uint64_t(1) * MB)
+#define MAX_MEM_SIZE (uint64_t(8) * GB) // todo: calc dinamically according to system resources
+
+
+static uint64_t translate_ram_size(const char* arg)
+{
+    char* end_ptr;
+    uint64_t size = strtol(arg, &end_ptr, 10);
+
+    if (errno != 0 || end_ptr != arg + strlen(arg) - 1 || size > INT_MAX) {
+        return 0;
+    }
+
+    switch (*end_ptr) {
+    case 'g':
+    case 'G':
+        return size * GB;
+    case 'm':
+    case 'M':
+        return size * MB;
+    default:
+        return 0;
+    }
+}
 
 
 Application* application = NULL;
@@ -34,20 +60,107 @@ Application* application = NULL;
 Application::Application()
     : _vm (NULL)
 {
-
+    application = this;
 }
 
 
-void Application::init()
+bool Application::init(int argc, const char** argv)
 {
-    application = this;
+    OptionsParser parser(0, 0);
+
+    enum {
+        OPT_RAM_SIZE,
+        OPT_HARD_DISK,
+        OPT_CDROM,
+        OPT_BOOT_DEVICE,
+    };
+
+    parser.add_option_with_arg(OPT_RAM_SIZE, "ram-size", OptionsParser::ONE_ARGUMENT,
+                               "ram_size<unit>", "specifay ram size. unit can be M/m or G/g",
+                               OptionsParser::MANDATORY);
+    parser.add_option_with_arg(OPT_HARD_DISK, "hard-disk", OptionsParser::ONE_ARGUMENT,
+                               "file_name", "specifay hard disk file name",
+                               OptionsParser::MANDATORY);
+    parser.add_option_with_arg(OPT_CDROM, "cdrom", OptionsParser::ONE_ARGUMENT, "file_name",
+                               "specifay hard disk file name");
+    parser.add_option_with_arg(OPT_BOOT_DEVICE, "boot-device", OptionsParser::ONE_ARGUMENT,
+                               "device", "specifay boot device \"hd\" pr \"cd\"");
+
+    parser.set_short_name(OPT_RAM_SIZE, 'm');
+    parser.set_short_name(OPT_HARD_DISK, 'h');
+
+    if (!parser.parse(argc, argv)) {
+        set_exit_code(ERROR_INVALID_COMMAND_LINE);
+        return false;
+    }
+
+    uint64_t ram_size = 0;
+    const char* hard_disk = NULL;
+    const char* cdrom = NULL;
+    bool boot_from_cd = false;
+
+    int option;
+    const char* arg;
+
+    while ((option = parser.next(&arg)) != OptionsParser::OPT_ID_DONE) {
+        switch (option) {
+        case OPT_RAM_SIZE: {
+            ram_size = translate_ram_size(arg);
+
+            if (ram_size == 0) {
+                printf("invalid ram size %s\n", arg);
+                set_exit_code(ERROR_INVALID_COMMAND_LINE);
+                return false;
+            }
+
+            if ( ram_size < MIN_MEM_SIZE || ram_size > MAX_MEM_SIZE) {
+                printf("invalid ram size %s, valid size range is %lum to %lug\n",
+                       arg, MIN_MEM_SIZE / MB, MAX_MEM_SIZE / GB);
+                set_exit_code(ERROR_INVALID_COMMAND_LINE);
+                return false;
+            }
+            break;
+        }
+        case OPT_HARD_DISK:
+            hard_disk = arg;
+            break;
+        case OPT_CDROM:
+            cdrom = arg;
+            break;
+        case OPT_BOOT_DEVICE:
+            if (strcmp(arg, "hd") == 0) {
+                boot_from_cd = false;
+            } else if (strcmp(arg, "cd") == 0) {
+                boot_from_cd = true;
+            } else {
+                printf("invalid boot-device argumant %s. use \"hd\" or \"cd\"\n", arg);
+                set_exit_code(ERROR_INVALID_COMMAND_LINE);
+                return false;
+            }
+            break;
+        case OptionsParser::OPT_ID_HELP:
+            parser.help();
+            set_exit_code(ERROR_OK);
+            return false;
+        default:
+            THROW("invalid option %d", option);
+        }
+    }
 
     _vm.reset(new NoxVM());
+
+    _vm->set_ram_size(ram_size / MB);
+    _vm->set_hard_disk(hard_disk);
+    _vm->set_cdrom(cdrom);
+    _vm->set_boot_device(boot_from_cd);
 
     if (!_vm->init()) {
         E_MESSAGE("vm initialization failed");
         set_exit_code(ERROR_VM_INIT_FAILED);
+        return false;
     }
+
+    return true;
 }
 
 
@@ -76,9 +189,7 @@ ErrorCode Application::Main(int argc, const char** argv)
 
     std::auto_ptr<Application> app(new Application());
 
-    app->init();
-
-    if (!IS_ERROR(app->get_exit_code())) {
+    if (app->init(argc, argv)) {
         app->run();
     }
 

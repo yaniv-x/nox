@@ -108,6 +108,18 @@ NoxVM::NoxVM()
     add_io_region(_io_bus->register_region(*this, IO_PORT_MISC, 1, this,
                                            (io_read_byte_proc_t)&NoxVM::misc_port_read,
                                            (io_write_byte_proc_t)&NoxVM::misc_port_write));
+
+    _cmos->host_write(0x10, 0);      // no floppy
+
+    //equipment byte
+    _cmos->host_write(0x14, (1 << 1 /* math coproccssor*/) | (1 << 2) /* mouse port*/);
+
+    //num of cpus (is num of cpus - 1)
+    _cmos->host_write(0x5f, 0);
+
+    //century (BCD)
+    _cmos->host_write(0x32, 0x20); // IBM
+    _cmos->host_write(0x37, 0x20); // PS2
 }
 
 
@@ -202,10 +214,11 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 }
 
 
-void NoxVM::init_ram()
+void NoxVM::init_ram(uint32_t ram_size_mb)
 {
-    uint64_t ram_size = 512 * MB;
-
+    ASSERT(ram_size_mb);
+    uint64_t ram_size = ram_size_mb;
+    ram_size *= MB;
     _ram_size = ram_size;
 
     _low_ram = _mem_bus->alloc_physical_ram(*this, LOW_RAM_SIZE >> GUEST_PAGE_SHIFT, "low ram");
@@ -317,63 +330,16 @@ static uint64_t file_size(const char* file_name)
     return stat.st_size;
 }
 
-bool NoxVM::init()
+
+void NoxVM::set_ram_size(uint32_t ram_size_mb)
 {
-    new NoxDisplay(*_vga.get(), *_kbd.get());
+    /*if (_state != DOWN) {
+        return;
+    }*/
 
-    init_ram();
-    //todo: register local apic mmio
-//    init_pci_bus();
-//    init_usb_bus();
-    init_bios();
+    init_ram(ram_size_mb);
 
-    _cmos->host_write(0x10, 0);      // no floppy
-    _cmos->host_write(0x12, 0xf0);   // hard disk 0 in extended cmos
-    _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
-
-    const char* disk_file_name =
-        "/home/yaniv/images/winxp_no_acpi.raw";
-        //"/home/yaniv/images/f14_64.raw";
-        //"/home/yaniv/images/freedos.raw.base.T";
-        //"/home/yaniv/images/freebsd.raw";
-
-    const char* cdrom_file_name =
-        //"/home/yaniv/iso/WindowsXP-sp2-vlk.iso";
-        //"/home/yaniv/iso/FreeBSD-8.2-RELEASE-amd64-disc1.iso";
-        //"/home/yaniv/Downloads/Fedora-14-x86_64-Live-Desktop.iso";
-        //"/home/yaniv/Downloads/fdfullws.iso";
-        //"/tmp/dos_test.iso";
-        NULL;
-
-    uint64_t disk_size = file_size(disk_file_name);
-
-    uint cyl = MIN(MAX_CYL, disk_size / MAX_HEADS / MAX_SECTORS_PER_CYL / SECTOR_SIZE);
-
-    // hd 0 params as in AMI BIOS
-    _cmos->host_write(0x1b, cyl);
-    _cmos->host_write(0x1c, cyl >> 8);
-    _cmos->host_write(0x1d, MAX_HEADS);
-    _cmos->host_write(0x1e, 0xff); // precompensation
-    _cmos->host_write(0x1f, 0xff); // precompensation
-    _cmos->host_write(0x20, 0xc0 | ((MAX_SECTORS_PER_CYL > 8) << 3));
-    _cmos->host_write(0x21, cyl); // landing zone
-    _cmos->host_write(0x22, cyl >> 8); // landing zone
-    _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
-
-    //boot device
-    _cmos->host_write(0x3d, 0x02); //first boot device is first HD
-    //_cmos->host_write(0x3d, 0x03); //first boot device is CD
-
-    _ata_host->set_device_0(new Disk(disk_file_name));
-
-    if (cdrom_file_name){
-        _ata_host->set_device_1(new ATAPIDevice(cdrom_file_name));
-    }
-
-    //equipment byte
-    _cmos->host_write(0x14, (1 << 1 /* math coproccssor*/) | (1 << 2) /* mouse port*/);
-
-    //640k base memory
+     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
     _cmos->host_write(0x16, (LOW_RAM_SIZE / KB) >> 8);
 
@@ -412,18 +378,79 @@ bool NoxVM::init()
     _cmos->host_write(0x5b, above_4G >> 16);
     _cmos->host_write(0x5c, above_4G >> 24);
     _cmos->host_write(0x5d, above_4G >> 32);
-
-    //num of cpus (is num of cpus - 1)
-    _cmos->host_write(0x5f, 0);
+}
 
 
-    //century (BCD)
-    _cmos->host_write(0x32, 0x20); // IBM
-    _cmos->host_write(0x37, 0x20); // PS2
+void NoxVM::set_hard_disk(const char* file_name)
+{
+    /*if (_state != DOWN) {
+        return;
+    }*/
 
+    if (!file_name) {
+        return;
+    }
+
+    uint64_t disk_size = file_size(file_name);
+
+    _cmos->host_write(0x12, 0xf0);   // hard disk 0 in extended cmos
+    _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
+
+    uint cyl = MIN(MAX_CYL, disk_size / MAX_HEADS / MAX_SECTORS_PER_CYL / SECTOR_SIZE);
+
+    // hd 0 params as in AMI BIOS
+    _cmos->host_write(0x1b, cyl);
+    _cmos->host_write(0x1c, cyl >> 8);
+    _cmos->host_write(0x1d, MAX_HEADS);
+    _cmos->host_write(0x1e, 0xff); // precompensation
+    _cmos->host_write(0x1f, 0xff); // precompensation
+    _cmos->host_write(0x20, 0xc0 | ((MAX_SECTORS_PER_CYL > 8) << 3));
+    _cmos->host_write(0x21, cyl); // landing zone
+    _cmos->host_write(0x22, cyl >> 8); // landing zone
+    _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
+
+    _ata_host->set_device_0(new Disk(file_name));
 
     _cmos->host_write(0x39, 0x55); //use LBA translation
+}
 
+
+void NoxVM::set_cdrom(const char* file_name)
+{
+    /*if (_state != DOWN) {
+        return;
+    }*/
+
+    if (!file_name) {
+        return;
+    }
+
+    _ata_host->set_device_1(new ATAPIDevice(file_name));
+}
+
+
+void NoxVM::set_boot_device(bool from_cd)
+{
+    /*if (_state != DOWN) {
+        return;
+    }*/
+
+    if (from_cd) {
+        _cmos->host_write(0x3d, 0x03); //first boot device is CD
+    } else {
+        _cmos->host_write(0x3d, 0x02); //first boot device is first HD
+    }
+}
+
+
+bool NoxVM::init(/*const char* disk_file_name,
+                   const char* cdrom_file_name,
+                   uint boot_device
+                   uint64_t ram_size*/)
+{
+    new NoxDisplay(*_vga.get(), *_kbd.get());
+
+    init_bios();
     init_cpus();
 
     return true;
