@@ -68,6 +68,7 @@ private:
 
     Option* get_option(char* str);
     bool verify();
+    void print_help_description(const char* in_str, uint skip, uint width);
 
     Option* find(const char* name);
     Option* find(int id);
