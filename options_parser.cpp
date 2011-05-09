@@ -103,7 +103,7 @@ OptionsParser::OptionsParser(uint max_positional, uint min_positional)
 OptionsParser::~OptionsParser()
 {
     while (!_argv.empty()) {
-        delete *_argv.begin();
+        delete[] *_argv.begin();
         _argv.pop_front();
     }
 
@@ -449,6 +449,59 @@ OptionsParser::Option* OptionsParser::find(char short_name)
 }
 
 
+void OptionsParser::print_help_description(const char* in_str, uint skip, uint width)
+{
+    char* str_copy = copy_cstr(in_str);
+    char* start = str_copy;
+
+    while (strlen(start)) {
+
+        for (int i = 0; i < skip; i++) {
+            printf(" ");
+        }
+
+        char* end = start;
+        char* space = NULL;
+
+        for (; end - start < width; end++) {
+            if (*end == 0 || *end == '\n') {
+                break;
+            }
+
+            if (*end == ' ') {
+                space = end;
+            }
+        }
+
+        switch (*end) {
+        case 0:
+            printf("%s\n", start);
+            start = end;
+            break;
+        case '\n':
+            *end = 0;
+            printf("%s\n", start);
+            start = end + 1;
+            break;
+        default:
+            if (space) {
+                *space = 0;
+                printf("%s\n", start);
+                start = space + 1;
+            } else {
+                char ch = *end;
+                *end = 0;
+                printf("%s\n", start);
+                *end = ch;
+                start = end;
+            }
+        }
+    }
+
+    delete[] str_copy;
+}
+
+
 void OptionsParser::help()
 {
     printf("\n%s - short discription\n\n", _prog_name.c_str());
@@ -460,9 +513,9 @@ void OptionsParser::help()
         Option* option = *iter;
 
         if (option->get_short_name()) {
-            printf(" %c, ", option->get_short_name());
+            printf(" -%c, ", option->get_short_name());
         } else {
-            printf("    ");
+            printf("     ");
         }
 
 
@@ -475,7 +528,8 @@ void OptionsParser::help()
         }
 
         printf("\n");
-        printf("            %s\n\n", option->get_description().c_str());
+        print_help_description(option->get_description().c_str(), 12, 68);
+        printf("\n");
     }
 
 }
