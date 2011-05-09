@@ -59,7 +59,7 @@ enum {
 
     LOW_RAM_SIZE = 640 * KB,
     MID_RAM_START = 768 * KB,
-    MID_RAM_MAX_ADDRESS = 0xe0000000,
+    MID_RAM_MAX_ADDRESS = 0xc0000000, // is hardcoded in bios
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
 };
 
@@ -216,7 +216,6 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 
 void NoxVM::init_ram(uint32_t ram_size_mb)
 {
-    ASSERT(ram_size_mb);
     uint64_t ram_size = ram_size_mb;
     ram_size *= MB;
     _ram_size = ram_size;
@@ -224,13 +223,15 @@ void NoxVM::init_ram(uint32_t ram_size_mb)
     _low_ram = _mem_bus->alloc_physical_ram(*this, LOW_RAM_SIZE >> GUEST_PAGE_SHIFT, "low ram");
     _mem_bus->map_physical_ram(_low_ram, 0, false);
 
-    ram_size -= LOW_RAM_SIZE;
+    ram_size -= MB; // "lost" 128K (vga fb hole @ 0xa0000-0xc0000)
 
-    uint64_t ext_ram_size = MIN(ram_size, MID_RAM_MAX);
-    _mid_ram = _mem_bus->alloc_physical_ram(*this, ext_ram_size >> GUEST_PAGE_SHIFT, "mid ram");
+    uint64_t uma_ram_size = MB - MID_RAM_START;
+    uint64_t mid_range_size = MIN(ram_size, MID_RAM_MAX_ADDRESS - MB) + uma_ram_size;
+
+    _mid_ram = _mem_bus->alloc_physical_ram(*this, mid_range_size >> GUEST_PAGE_SHIFT, "mid ram");
     _mem_bus->map_physical_ram(_mid_ram, MID_RAM_START >> GUEST_PAGE_SHIFT, false);
 
-    ram_size -= ext_ram_size;
+    ram_size -= mid_range_size - uma_ram_size;
 
     if (ram_size) {
         _high_ram = _mem_bus->alloc_physical_ram(*this, ram_size >> GUEST_PAGE_SHIFT,
@@ -333,6 +334,8 @@ static uint64_t file_size(const char* file_name)
 
 void NoxVM::set_ram_size(uint32_t ram_size_mb)
 {
+    ASSERT(ram_size_mb);
+
     /*if (_state != DOWN) {
         return;
     }*/
@@ -354,9 +357,9 @@ void NoxVM::set_ram_size(uint32_t ram_size_mb)
 
     uint64_t below_4G;
     uint64_t above_4G;
-    if (_ram_size > 0xe0000000) {
-        below_4G = 0xe0000000;
-        above_4G = _ram_size - 0xe0000000;
+    if (_ram_size > MID_RAM_MAX_ADDRESS) {
+        below_4G = MID_RAM_MAX_ADDRESS;
+        above_4G = _ram_size - MID_RAM_MAX_ADDRESS;
     } else {
         below_4G = _ram_size;
         above_4G = 0;
@@ -366,7 +369,8 @@ void NoxVM::set_ram_size(uint32_t ram_size_mb)
     uint64_t above_16M;
 
     if (below_4G > 16 * MB) {
-        above_16M = (below_4G - 16 * MB) / (1 << 16);
+        // (64k blocks)
+        above_16M = (below_4G - 16 * MB) >> 16;
     } else {
         above_16M = 0;
     }
@@ -374,7 +378,7 @@ void NoxVM::set_ram_size(uint32_t ram_size_mb)
     _cmos->host_write(0x34, above_16M);
     _cmos->host_write(0x35, above_16M >> 8);
 
-    //abov 4g
+    //abov 4g (64k blocks)
     _cmos->host_write(0x5b, above_4G >> 16);
     _cmos->host_write(0x5c, above_4G >> 24);
     _cmos->host_write(0x5d, above_4G >> 32);
