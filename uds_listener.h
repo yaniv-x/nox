@@ -24,26 +24,29 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_NOX_TYPES
-#define _H_NOX_TYPES
+#ifndef _H_UDS_LISTENER
+#define _H_UDS_LISTENER
 
-typedef unsigned int uint;
-typedef uint64_t address_t;
-typedef uint64_t page_address_t;
+#include "common.h"
 
-typedef void (*read_mem_proc_t)(void* opaque, uint64_t src, uint64_t length, uint8_t* dest);
-typedef void (*write_mem_proc_t)(void* opaque, const uint8_t* src, uint64_t length, uint64_t dest);
+class RunLoop;
+class FDEvent;
 
-typedef uint8_t (*io_read_byte_proc_t)(void* opaque, uint16_t port);
-typedef uint16_t (*io_read_word_proc_t)(void* opaque, uint16_t port);
-typedef uint32_t (*io_read_dword_proc_t)(void* opaque, uint16_t port);
+class UDSListener: public NonCopyable {
+public:
+    UDSListener(RunLoop& loop, const std::string& uds_file,
+                int_callback_t callback, void* opaque);
+    ~UDSListener();
 
-typedef void (*io_write_byte_proc_t)(void* opaque, uint16_t port, uint8_t val);
-typedef void (*io_write_word_proc_t)(void* opaque, uint16_t port, uint16_t val);
-typedef void (*io_write_dword_proc_t)(void* opaque, uint16_t port, uint32_t val);
+    void accept();
+private:
+    std::string _name;
+    int _socket;
+    FDEvent* _acccept_event;
+    int_callback_t _callback;
+    void* _opaque;
+};
 
-typedef void (*void_callback_t)(void*);
-typedef void (*int_callback_t)(void*, int);
 
 #endif
 

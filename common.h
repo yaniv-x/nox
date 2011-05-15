@@ -28,6 +28,7 @@
 #define _H_COMMON
 
 #include <stdlib.h>
+#define __STDC_LIMIT_MACROS
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
@@ -36,6 +37,7 @@
 #include <string.h>
 #include <string>
 #include <list>
+#include <vector>
 #include <map>
 
 #include "exception.h"

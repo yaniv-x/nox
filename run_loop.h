@@ -74,6 +74,8 @@ public:
     Event* create_event(void_callback_t proc, void* opaque);
     FDEvent* create_fd_event(int fd, void_callback_t proc, void* opaque);
 
+    bool is_self_thread_equal() { return pthread_equal(pthread_self(), _run_loop_thread);}
+
     class InternalItem;
     class InternalEvent;
     class EpollEvent;

@@ -31,6 +31,7 @@
 #include "run_loop.h"
 
 class NoxVM;
+class AdminServer;
 
 class Application: public RunLoop {
 public:
@@ -43,7 +44,7 @@ private:
 
 private:
     std::auto_ptr<NoxVM> _vm;
-
+    std::auto_ptr<AdminServer> _admin_server;
 };
 
 extern Application* application;
