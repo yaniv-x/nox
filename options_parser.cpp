@@ -87,16 +87,20 @@ public:
 
 enum {
     INIT,
+    PARSE_FRONT_POSITIONAL,
     PARSE_OPTIONS,
-    PARSE_POSITIONAL,
+    PARSE_BACK_POSITIONAL,
     READY,
     ERROR,
 };
 
-OptionsParser::OptionsParser(uint max_positional, uint min_positional)
+OptionsParser::OptionsParser()
     : _state (INIT)
-    , _max_positional (max_positional)
-    , _min_positional (min_positional)
+    , _min_front_positional (0)
+    , _max_front_positional (0)
+    , _min_back_positional (0)
+    , _max_back_positional (0)
+    , _back_positional (false)
 {
 }
 
@@ -146,6 +150,20 @@ OptionsParser::Option* OptionsParser::get_option(char* str)
     return ret;
 }
 
+bool OptionsParser::verify_positional(uint min, uint max, uint count, const char* word)
+{
+    if (count < min) {
+        printf("%s: too few %s positional arguments\n", _prog_name.c_str(), word);
+        return false;
+    }
+
+    if (count > max) {
+        printf("%s: too many %s positional arguments\n", _prog_name.c_str(), word);
+        return false;
+    }
+
+    return true;
+}
 
 bool OptionsParser::verify()
 {
@@ -175,20 +193,27 @@ bool OptionsParser::verify()
     }
 
     BuildList::iterator build_iter = _build_list.begin();
-    uint positionals = 0;
+    uint front_positionals = 0;
+    uint back_positionals = 0;
     uint options = 0;
     Option* exclusive = NULL;
+    bool count_back = false;
 
     for (; build_iter != _build_list.end(); ++build_iter) {
         BuildItem* item = *build_iter;
         Option* option = item->option;
 
         if (!option) {
-            positionals++;
+            if (count_back) {
+                back_positionals++;
+            } else {
+                front_positionals++;
+            }
             continue;
         }
 
         options++;
+        count_back = true;
 
         if (option->is_exclusive()) {
             exclusive = option;
@@ -201,13 +226,10 @@ bool OptionsParser::verify()
         }
     }
 
-    if (positionals > _max_positional) {
-        printf("%s: too many positional arguments\n", _prog_name.c_str());
-        return false;
-    }
-
-    if (positionals < _min_positional) {
-        printf("%s: too few positional arguments\n", _prog_name.c_str());
+    if (!verify_positional(_min_front_positional, _max_front_positional,
+                          front_positionals, "front") ||
+        !verify_positional(_min_back_positional, _max_back_positional,
+                          back_positionals, "back")) {
         return false;
     }
 
@@ -257,14 +279,16 @@ bool OptionsParser::parse(int argc, const char** argv)
     _options.push_back(new Option(OPT_ID_HELP, "help", NO_VALUE,
                                   "show command help", EXCLUSIVE, ""));
 
-    _state = PARSE_OPTIONS;
+    _state = PARSE_FRONT_POSITIONAL;
     ArgsList::iterator iter = _argv.begin();
 
     for (; iter != _argv.end(); iter++) {
         char* now = *iter;
 
         if (now[0] == '-') {
-            if (_state != PARSE_OPTIONS) {
+            if ( _state == PARSE_FRONT_POSITIONAL) {
+                _state = PARSE_OPTIONS;
+            } else if (_state != PARSE_OPTIONS) {
                 _state = ERROR;
                 printf("%s: positional arguments are restricted to the end of the command line.\n",
                        _prog_name.c_str());
@@ -304,7 +328,9 @@ bool OptionsParser::parse(int argc, const char** argv)
             if (item && item->option && item->option->is_mandatory_val() &&  !item->val) {
                 item->val = now;
             } else {
-                _state = PARSE_POSITIONAL;
+                if (_state != PARSE_FRONT_POSITIONAL) {
+                    _state = PARSE_BACK_POSITIONAL;
+                }
                 _build_list.push_back(new BuildItem(NULL, now));
             }
         }
@@ -332,7 +358,15 @@ int OptionsParser::next(const char** arg)
     }
 
     BuildItem* item = *_get_iter;
-    int id = item->option ? item->option->get_id() : OPT_ID_POSITIONAL;
+    int id;
+
+    if (item->option) {
+        _back_positional = true;
+        id = item->option->get_id();
+    } else {
+        id = (_back_positional) ? OPT_ID_BACK_POSITIONAL : OPT_ID_FRONT_POSITIONAL;
+    }
+
     *arg = item->val;
     _get_iter++;
 
@@ -404,6 +438,20 @@ void OptionsParser::set_short_name(int id, char name)
     ASSERT(find(id) && !find(name));
     ASSERT(isalnum(name));
     find(id)->set_short_name(name);
+}
+
+void OptionsParser::set_front_positional_minmax(uint min, uint max)
+{
+    ASSERT(_state == INIT);
+    _min_front_positional = min;
+    _max_front_positional = max;
+}
+
+void OptionsParser::set_back_positional_minmax(uint min, uint max)
+{
+    ASSERT(_state == INIT);
+    _min_back_positional = min;
+    _max_back_positional = max;
 }
 
 
