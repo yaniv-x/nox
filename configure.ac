@@ -5,6 +5,11 @@ AM_INIT_AUTOMAKE([])
 
 AC_PROG_CXX
 
+AC_CHECK_PROG(NASM, nasm, yes,  no)
+if test "$NASM" = "no"; then
+    AC_MSG_ERROR([nasm not found!])
+fi
+
 AC_CHECK_HEADERS(linux/kvm.h)
 
 PKG_CHECK_MODULES(X11, x11)

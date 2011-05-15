@@ -29,8 +29,8 @@
 
 #include <stdint.h>
 
-void dynamic_sys_v_amd64_call(void* func, uint64_t n_reg_args, uint64_t* regs_args,
-                              uint64_t n_stack_args, uint64_t* stack_args);
+extern "C" void dynamic_sys_v_amd64_call(void* func, uint64_t n_reg_args, uint64_t* regs_args,
+                                       uint64_t n_stack_args, uint64_t* stack_args);
 
 #endif
 

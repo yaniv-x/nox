@@ -248,7 +248,13 @@ static void init_nox_dir()
 }
 
 
-ErrorCode Application::Main(int argc, const char** argv)
+const std::string& Application::get_nox_dir()
+{
+    return nox_dir;
+}
+
+
+ErrorCode Application::main(int argc, const char** argv)
 {
     init_sig_handlers();
     init_nox_dir();
