@@ -24,20 +24,25 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <sys/stat.h>
+
 #include "application.h"
 #include "nox_vm.h"
 #include "options_parser.h"
+#include "admin_server.h"
 
 #define MIN_MEM_SIZE (uint64_t(1) * MB)
 #define MAX_MEM_SIZE (uint64_t(8) * GB) // todo: calc dinamically according to system resources
+#define VM_NAME_MAX_LENGTH 64
 
+std::string nox_dir;
 
 static uint64_t translate_ram_size(const char* arg)
 {
     char* end_ptr;
-    uint64_t size = strtol(arg, &end_ptr, 10);
+    uint64_t size = strtoul(arg, &end_ptr, 10);
 
-    if (errno != 0 || end_ptr != arg + strlen(arg) - 1 || size > INT_MAX) {
+    if (size > INT_MAX || end_ptr != arg + strlen(arg) - 1) {
         return 0;
     }
 
@@ -54,6 +59,24 @@ static uint64_t translate_ram_size(const char* arg)
 }
 
 
+static bool is_valid_vm_name(const char* vm_name)
+{
+    size_t len = strlen(vm_name);
+
+    if (!len || strlen(vm_name) > VM_NAME_MAX_LENGTH) {
+        return false;
+    }
+
+    for (const char* end = vm_name + len; vm_name < end; vm_name++) {
+        if (!isalnum(*vm_name) && *vm_name != '_') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
 Application* application = NULL;
 
 
@@ -67,6 +90,8 @@ Application::Application()
 bool Application::init(int argc, const char** argv)
 {
     OptionsParser parser;
+
+    parser.set_front_positional_minmax(1, 1);
 
     enum {
         OPT_RAM_SIZE,
@@ -94,6 +119,7 @@ bool Application::init(int argc, const char** argv)
         return false;
     }
 
+    const char* vm_name = NULL;
     uint64_t ram_size = 0;
     const char* hard_disk = NULL;
     const char* cdrom = NULL;
@@ -104,6 +130,13 @@ bool Application::init(int argc, const char** argv)
 
     while ((option = parser.next(&arg)) != OptionsParser::OPT_ID_DONE) {
         switch (option) {
+        case OptionsParser::OPT_ID_FRONT_POSITIONAL:
+            vm_name = arg;
+            if (!is_valid_vm_name(vm_name)) {
+                printf("invalid vm name %s\n", vm_name);
+                return false;
+            }
+            break;
         case OPT_RAM_SIZE: {
             ram_size = translate_ram_size(arg);
 
@@ -147,6 +180,10 @@ bool Application::init(int argc, const char** argv)
         }
     }
 
+    std::string uds_name;
+    sprintf(uds_name, "%s/active/%s.uds", nox_dir.c_str(), vm_name);
+    _admin_server.reset(new AdminServer(uds_name));
+
     _vm.reset(new NoxVM());
 
     _vm->set_ram_size(ram_size / MB);
@@ -183,9 +220,38 @@ static void init_sig_handlers()
 }
 
 
+static void init_nox_dir()
+{
+    char* home_dir = getenv("HOME");
+
+    if (!home_dir || strlen(home_dir) < 2) {
+        THROW("no home dir");
+    }
+
+    nox_dir = home_dir;
+
+    if (nox_dir[nox_dir.length() - 1] != '/') {
+        nox_dir += "/";
+    }
+
+    nox_dir += "nox";
+
+    if (mkdir(nox_dir.c_str(), 0777) == -1 && errno != EEXIST) {
+        THROW("create dir %s failed %d %s", nox_dir.c_str(), errno, strerror(errno));
+    }
+
+    std::string sub_dir = nox_dir + "/active";
+
+    if (mkdir(sub_dir.c_str(), 0777) == -1 && errno != EEXIST) {
+        THROW("create dir %s failed %d %s", sub_dir.c_str(), errno, strerror(errno));
+    }
+}
+
+
 ErrorCode Application::Main(int argc, const char** argv)
 {
     init_sig_handlers();
+    init_nox_dir();
 
     std::auto_ptr<Application> app(new Application());
 

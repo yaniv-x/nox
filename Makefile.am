@@ -1,4 +1,12 @@
-bin_PROGRAMS = nox
+bin_PROGRAMS = nox nox-admin
+
+
+nox_admin_SOURCES =					\
+    options_parser.cpp			\
+    utils.cpp				\
+    admin_common.cpp        \
+    dynamic_call.cpp        \
+    admin_client.cpp
 
 nox_SOURCES =					\
 	main.cpp				\
@@ -24,6 +32,10 @@ nox_SOURCES =					\
 	vga.cpp					\
 	display.cpp				\
 	options_parser.cpp			\
+	uds_listener.cpp		\
+	admin_server.cpp		\
+    admin_common.cpp        \
+    dynamic_call.cpp        \
 	run_loop.cpp
 
 INCLUDES =												\
