@@ -46,14 +46,24 @@ private:
 
 #define THROW(format, ...)  {                                               \
     std::string exption_string;                                             \
-    sprintf(exption_string, "%s: "format, FUNC_NAME, ## __VA_ARGS__ );   \
+    sprintf(exption_string, "%s: "format, FUNC_NAME, ## __VA_ARGS__ );      \
     throw Exception(exption_string);                                        \
 }
 
 #define THROW_ERROR(error_code, format, ...)  {                             \
     std::string exption_string;                                             \
-    sprintf(exption_string, "%s: "format, FUNC_NAME, ## __VA_ARGS__ );   \
+    sprintf(exption_string, "%s: "format, FUNC_NAME, ## __VA_ARGS__ );      \
     throw Exception(error_code, exption_string);                            \
+}
+
+#define THROW_SYS_ERROR(format, ...)  {                                     \
+    std::string exption_string;                                             \
+    std::string tmp_string;                                                 \
+    int err = errno;                                                        \
+                                                                            \
+    sprintf(tmp_string, "%s: "format, FUNC_NAME, ## __VA_ARGS__ );          \
+    sprintf(exption_string, "%s. %d (%s)", tmp_string.c_str(), err, strerror(err)); \
+    throw Exception(ERROR_SYS_ERROR, exption_string);                       \
 }
 
 #endif
