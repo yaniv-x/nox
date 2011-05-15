@@ -1,3 +1,9 @@
+SUFIXES = nasm
+
+.nasm.o:
+	nasm -f elf64 -g -F dwarf -o $@ $<
+
+
 bin_PROGRAMS = nox nox-admin
 
 
@@ -5,7 +11,7 @@ nox_admin_SOURCES =					\
     options_parser.cpp			\
     utils.cpp				\
     admin_common.cpp        \
-    dynamic_call.cpp        \
+    dynamic_call.nasm        \
     admin_client.cpp
 
 nox_SOURCES =					\
@@ -35,7 +41,7 @@ nox_SOURCES =					\
 	uds_listener.cpp		\
 	admin_server.cpp		\
     admin_common.cpp        \
-    dynamic_call.cpp        \
+    dynamic_call.nasm        \
 	run_loop.cpp
 
 INCLUDES =												\

@@ -28,7 +28,7 @@
 #include <sys/stat.h>
 
 #include "cpu.h"
-
+#include "application.h"
 #include "nox_vm.h"
 #include "memory_bus.h"
 #include "io_bus.h"
@@ -267,7 +267,10 @@ void NoxVM::init_bios()
 
     ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
     ptr += MB - MID_RAM_START;
-    AutoFD _bios_fd(::open("/home/yaniv/bochs-2.4.5/bios/BIOS-bochs-latest", O_RDONLY));
+
+    std::string pc_bios_file = application->get_nox_dir() + "/firmware/pc-bios.bin";
+
+    AutoFD _bios_fd(::open(pc_bios_file.c_str(), O_RDONLY));
 
     if (!_bios_fd.is_valid()) {
         THROW("open failed");
@@ -284,7 +287,9 @@ void NoxVM::init_bios()
         THROW("read failed");
     }
 
-    AutoFD _vga_fd(::open("/home/yaniv/vgabios-0.6c/VGABIOS-lgpl-latest.bin", O_RDONLY));
+    std::string vga_bios_file = application->get_nox_dir() + "/firmware/vga-bios.bin";
+
+    AutoFD _vga_fd(::open(vga_bios_file.c_str(), O_RDONLY));
 
     if (fstat(_vga_fd.get(), &stat) == -1) {
         THROW("fstat failed");

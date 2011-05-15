@@ -1,4 +1,4 @@
-/*
+%if 0
     Copyright (c) 2013 Yaniv Kamay,
     All rights reserved.
 
@@ -22,25 +22,78 @@
     ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
     NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+%endif
 
-#include "common.h"
-#include "application.h"
+BITS 64
 
-int main(int argc, const char** argv)
-{
-    ErrorCode exit_code = ERROR_UNKNOWN;
 
-    try {
-        exit_code = Application::main(argc, argv);
-    } catch (Exception& e) {
-        E_MESSAGE("unhandled exception -> %s (%u)", e.what(), e.get_error_code());
-    } catch (std::exception& e) {
-        E_MESSAGE("unhandled exception -> %s", e.what());
-    } catch (...) {
-        E_MESSAGE("unhandled exception");
-    }
+; void dynamic_sys_v_amd64_call(void* func, uint64_t n_reg_args, uint64_t* regs_args,
+;                               uint64_t n_stack_args, uint64_t* stack_args)
 
-    return exit_code;
-}
+global dynamic_sys_v_amd64_call
+dynamic_sys_v_amd64_call:
+    push rbp
+    mov rbp, rsp
+
+    mov [rbp - 0x08], rdi
+    mov [rbp - 0x10], rsi
+    mov [rbp - 0x18], rdx
+    mov [rbp - 0x20], rcx
+    mov [rbp - 0x28], r8
+    sub rsp, 0x80
+
+    mov rax, [rbp - 0x20]
+    and rax, rax
+    jz  .no_stack_args
+    mov rdx, 0x08
+    mul rdx
+    sub rsp, rax
+    and rsp, 0xfffffffffffffff0
+    mov rax, [rbp - 0x20]
+    mov rcx, [rbp - 0x28]
+    mov r11, rsp
+.more_sregs:
+    mov r9, [rcx]
+    mov [r11], r9
+    add rcx, 8
+    add r11, 8
+    dec rax
+    jnz .more_sregs
+    jmp .set_regs 
+
+.no_stack_args:
+    and rsp, 0xfffffffffffffff0
+
+.set_regs:
+    mov rax, [rbp - 0x10]
+    and rax, rax
+    jz .call
+    mov r11, [rbp - 0x18]
+    mov rdi, [r11]
+    dec rax
+    jz .call
+    mov rsi, [r11 + 0x08]
+    dec rax
+    jz .call
+    mov rdx, [r11 + 0x10]
+    dec rax
+    jz .call
+    mov rcx, [r11 + 0x18]
+    dec rax
+    jz .call
+    mov r8, [r11 + 0x20]
+    dec rax
+    jz .call
+    mov r9, [r11 + 0x28]
+
+.call:
+    xor rax, rax
+    mov r11, [rbp - 0x08]
+    call r11
+    leave
+    ret
+
+
+
+
 

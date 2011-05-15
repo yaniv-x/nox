@@ -37,7 +37,9 @@ class Application: public RunLoop {
 public:
     Application();
 
-    static ErrorCode Main(int argc, const char** argv);
+    static ErrorCode main(int argc, const char** argv);
+
+    static const std::string& get_nox_dir();
 
 private:
     bool init(int argc, const char** argv);
