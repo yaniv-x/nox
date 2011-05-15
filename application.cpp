@@ -66,7 +66,7 @@ Application::Application()
 
 bool Application::init(int argc, const char** argv)
 {
-    OptionsParser parser(0, 0);
+    OptionsParser parser;
 
     enum {
         OPT_RAM_SIZE,

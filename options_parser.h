@@ -32,7 +32,7 @@
 
 class OptionsParser: public NonCopyable {
 public:
-    OptionsParser(uint max_positional = 0, uint min_positional = 0);
+    OptionsParser();
     ~OptionsParser();
 
     enum ArgType {
@@ -48,8 +48,9 @@ public:
 
     enum {
         OPT_ID_DONE = -1,
-        OPT_ID_POSITIONAL = -2,
-        OPT_ID_HELP = -3,
+        OPT_ID_FRONT_POSITIONAL = -2,
+        OPT_ID_BACK_POSITIONAL = -3,
+        OPT_ID_HELP = -4,
     };
 
     bool parse(int argc, const char** argv);
@@ -58,6 +59,8 @@ public:
     void add_option_with_arg(int id, const char* name, ArgType type, const char* arg_name,
                              const char* description, uint flags = 0);
     void set_short_name(int id, char name);
+    void set_front_positional_minmax(uint min, uint max);
+    void set_back_positional_minmax(uint min, uint max);
 
     int next(const char** arg);
     const char* get_option_name(int id);
@@ -67,6 +70,7 @@ private:
     class Option;
 
     Option* get_option(char* str);
+    bool verify_positional(uint min, uint max, uint count, const char* word);
     bool verify();
     void print_help_description(const char* in_str, uint skip, uint width);
 
@@ -76,8 +80,10 @@ private:
 
 private:
     uint _state;
-    uint _max_positional;
-    uint _min_positional;
+    uint _min_front_positional;
+    uint _max_front_positional;
+    uint _min_back_positional;
+    uint _max_back_positional;
     std::string _prog_name;
 
     typedef std::list<char*> ArgsList;
@@ -91,6 +97,7 @@ private:
     typedef std::list<BuildItem*> BuildList;
     BuildList _build_list;
     BuildList::iterator _get_iter;
+    bool _back_positional;
 };
 
 #endif
