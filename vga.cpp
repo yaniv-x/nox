@@ -442,6 +442,9 @@ static uint8_t fetch_pix_4(const uint8_t* fb_ptr, uint offset, uint w)
     case 7:
         ret = (byte[1] >> 0) & 0x03;
         break;
+    default:
+        PANIC("");
+        ret = 0;
     }
 
     return ret;
@@ -1262,7 +1265,8 @@ inline void VGA::vram_read_mode_1(uint32_t src, uint8_t& dest)
         return;
     }
 
-    *(uint32_t*)_latch = *(uint32_t*)quad;
+    uint32_t* ptr32 = (uint32_t*)_latch;
+    *ptr32 = *(uint32_t*)quad;
 
     uint8_t color_dont_care = _graphics_regs[GRAPHICS_REG_COLOR_DONT_CARE] & 0x0f;
     uint8_t color_comper = _graphics_regs[GRAPHICS_REG_COLOR_COMPER] & color_dont_care;
@@ -1377,7 +1381,8 @@ inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
     }
 
     uint32_t plan = offset & 0x03;
-    *(uint32_t*)_latch = *(uint32_t*)(_vram + offset - plan);
+    uint32_t* ptr32 = (uint32_t*)_latch;
+    *ptr32 = *(uint32_t*)(_vram + offset - plan);
     dest = _latch[plan];
 }
 

@@ -968,7 +968,8 @@ uint ATAController::get_host_count()
 
 void ATAController::standard_inquiry()
 {
-    uint length = revers_unit16(*(uint16_t*)&_sector[3]);
+    uint16_t* ptr16 = (uint16_t*)&_sector[3];
+    uint length = revers_unit16(*ptr16);
 
     uint host_count = get_host_count();
 
@@ -1174,7 +1175,8 @@ void ATAController::mode_sense()
             return;
         }
 
-        uint length = revers_unit16(*(uint16_t*)&_sector[7]);
+        uint16_t* ptr16 = (uint16_t*)&_sector[7];
+        uint length = revers_unit16(*ptr16);
 
         if (length == 0) {
             packet_cmd_sucess();
@@ -1214,7 +1216,8 @@ void ATAController::mode_sense()
         buf.put_uint16(0); // Current Write Speed Selected
         buf.put_uint16(0); // Number of Logical Unit Write Speed
 
-        *(uint16_t*)_buf = revers_unit16(buf.position() - 2);
+        ptr16 = (uint16_t*)_buf;
+        *ptr16 = revers_unit16(buf.position() - 2);
 
         length = MIN(length, buf.position());
         uint host_count = get_host_count();
@@ -1268,7 +1271,8 @@ void ATAController::get_event_status_notification()
         return;
     }
 
-    uint length = revers_unit16(*(uint16_t*)&_sector[7]);
+    uint16_t* ptr16 = (uint16_t*)&_sector[7];
+    uint length = revers_unit16(*ptr16);
 
     if (length == 0) {
         packet_cmd_sucess();
@@ -1299,8 +1303,8 @@ void ATAController::get_event_status_notification()
 
     memset(_sector, 0, sizeof(_sector));
 
-
-    *(uint16_t*)&_sector[0] = revers_unit16(0);
+    ptr16 = (uint16_t*)&_sector[0];
+    *ptr16 = revers_unit16(0);
     _sector[3] = (1 << 4) || (1 << 1); // support media and operational change notifiction
 
 
@@ -1348,7 +1352,8 @@ void ATAController::get_configuration()
         return;
     }
 
-    uint length = revers_unit16(*(uint16_t*)&_sector[7]);
+    uint16_t* ptr16 = (uint16_t*)&_sector[7];
+    uint length = revers_unit16(*ptr16);
 
     if (length == 0) {
         packet_cmd_sucess();
@@ -1373,7 +1378,8 @@ void ATAController::get_configuration()
     }
 #endif
 
-    uint start = revers_unit16(*(uint16_t*)&_sector[2]);
+    ptr16 = (uint16_t*)&_sector[2];
+    uint start = revers_unit16(*ptr16);
 
     if (start) {
         D_MESSAGE("start 0x%x", start);
@@ -1518,19 +1524,22 @@ void ATAController::read_row_toc()
 
     uint start_session = _sector[6];
 
-    uint length = revers_unit16(*(uint16_t*)&_sector[7]);
+    uint16_t* ptr16 = (uint16_t*)&_sector[7];
+    uint length = revers_unit16(*ptr16);
 
     if (length == 0) {
         packet_cmd_sucess();
         return;
     }
 
-    *(uint16_t*)&_sector[0] = 0;    // row toc length
+    ptr16 = (uint16_t*)&_sector[0];
+    *ptr16 = 0;    // row toc length
     _sector[2] = 1;                 // first session
     _sector[3] = 1;                 // last session
 
     if (start_session > 1) {
-        *(uint16_t*)&_sector[0] = revers_unit16(2);    // row toc length
+        ptr16 = (uint16_t*)&_sector[0];
+        *ptr16 = revers_unit16(2);    // row toc length
 
         length = MIN(length, 4);
 
@@ -1603,7 +1612,8 @@ void ATAController::read_row_toc()
     frames_to_time(_ata_device->get_size() / MMC_CD_SECTOR_SIZE,
                    _sector[45], _sector[46], _sector[47]); // lead out start time
 
-    *(uint16_t*)&_sector[0] = revers_unit16(46);    // row toc length
+    ptr16 = (uint16_t*)&_sector[0];
+    *ptr16 = revers_unit16(46);    // row toc length
 
     length = MIN(length, 48);
 
@@ -1656,7 +1666,8 @@ void ATAController::read_toc()
             return;
         }
 
-        uint length = revers_unit16(*(uint16_t*)&_sector[7]);
+        uint16_t* ptr16 = (uint16_t*)&_sector[7];
+        uint length = revers_unit16(*ptr16);
 
         if (length == 0) {
             packet_cmd_sucess();
@@ -1675,7 +1686,8 @@ void ATAController::read_toc()
 
         bool time = !!(_sector[1] && (1 << 1));
 
-        *(uint16_t*)&_sector[0] = revers_unit16(18); // toc length
+        ptr16 = (uint16_t*)&_sector[0];
+        *ptr16 = revers_unit16(18); // toc length
         _sector[2] = 1;                             // first track
         _sector[3] = 1;                             // last track
 
@@ -1685,12 +1697,15 @@ void ATAController::read_toc()
         _sector[6] = 1;     // track number
         _sector[7] = 0;     // reservd
 
+        uint32_t* ptr32;
+
         if (time) {
             D_MESSAGE("time");
             packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
             return;
         } else {
-            *(uint32_t*)&_sector[8] = 0;
+            ptr32 = (uint32_t*)&_sector[8];
+            *ptr32 = 0;
         }
 
         _sector[12] = 0;                    // reservd
@@ -1698,7 +1713,8 @@ void ATAController::read_toc()
                                             // Q Sub-channel encodes current position data
         _sector[14] = MMC_LEADOUT_TRACK_ID; // track number
         _sector[15] = 0;     // reservd
-        *(uint32_t*)&_sector[16] = revers_unit32(_ata_device->get_size() / MMC_CD_SECTOR_SIZE);
+        ptr32 = (uint32_t*)&_sector[16];
+        *ptr32 = revers_unit32(_ata_device->get_size() / MMC_CD_SECTOR_SIZE);
 
         _lba_mid = length & 0xff;
         _lba_high = length >> 8;
@@ -1737,13 +1753,17 @@ void ATAController::read_capacity()
         return;
     }
 
-    if ((_sector[1] & 1) || (_sector[8] & 1) || *(uint32_t*)&_sector[2]) {
+    uint32_t* ptr32 = (uint32_t*)&_sector[2];
+
+    if ((_sector[1] & 1) || (_sector[8] & 1) || *ptr32) {
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
     }
 
-    *(uint32_t*)&_sector[0] = revers_unit32(_ata_device->get_size() / MMC_CD_SECTOR_SIZE - 1);
-    *(uint32_t*)&_sector[4] = revers_unit32(MMC_CD_SECTOR_SIZE);
+    ptr32 = (uint32_t*)&_sector[0];
+    *ptr32 = revers_unit32(_ata_device->get_size() / MMC_CD_SECTOR_SIZE - 1);
+    ptr32 = (uint32_t*)&_sector[4];
+    *ptr32 = revers_unit32(MMC_CD_SECTOR_SIZE);
 
     _lba_mid = 8;
     _lba_high = 0;
@@ -1778,9 +1798,10 @@ void ATAController::mmc_read()
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
     }
-
-    _next_sector = revers_unit32(*(uint32_t*)&_sector[2]);
-    _end_sector = _next_sector + revers_unit16(*(uint16_t*)&_sector[7]);
+    uint32_t* ptr32 = (uint32_t*)&_sector[2];
+    _next_sector = revers_unit32(*ptr32);
+    uint16_t* ptr16 = (uint16_t*)&_sector[7];
+    _end_sector = _next_sector + revers_unit16(*ptr16);
 
     if (_end_sector > _ata_device->get_size() / 2048)  {
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST,
