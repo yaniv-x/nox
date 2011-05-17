@@ -455,5 +455,6 @@ void IOBus::unregister_region(IORegion* region)
     }
 
     _regions.erase(region_iter);
+    delete region;
 }
 
