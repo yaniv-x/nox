@@ -36,13 +36,13 @@ class DMA;
 class PlaceHolder;
 class PIC;
 class PIT;
-class IORegion;
 class PCIBus;
 class CMOS;
 class ATAHost;
 class KbdController;
 class IOBus;
 class VGA;
+class AdminReplyContext;
 
 
 class NoxVM: public VMPart {
@@ -50,7 +50,7 @@ public:
     NoxVM();
     ~NoxVM();
 
-    bool init();
+    void init();
 
     KVM& get_kvm() { return *_kvm.get();}
     IOBus& get_io_bus() { return *_io_bus.get();}
@@ -59,7 +59,7 @@ public:
     void set_ram_size(uint32_t ram_size);
     void set_hard_disk(const char* file_name);
     void set_cdrom(const char* file_name);
-    void set_boot_device(bool from_cd);
+    void set_boot_device(bool from_cdrom);
 
     virtual void reset();
     virtual void start();
@@ -69,9 +69,12 @@ public:
     virtual void load(InStream& stream);
 
 private:
-    void init_ram(uint32_t ram_size);
-    void init_bios();
+    void init_ram();
+    void init_hard_disk();
+    void init_cdrom();
+    void load_bios();
     void init_cpus();
+    void reset_bios_stuff();
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
@@ -80,6 +83,10 @@ private:
     void vgabios_port_write(uint16_t port, uint8_t val);
     void bochs_port_write(uint16_t port, uint8_t val);
     void post_diagnostic(uint16_t port, uint8_t val);
+
+    void register_admin_commands();
+    void suspend_command(AdminReplyContext* context);
+    void resume_command(AdminReplyContext* context);
 
 private:
     std::auto_ptr<KVM> _kvm;
@@ -93,16 +100,18 @@ private:
     PhysicalRam* _mid_ram;
     PhysicalRam* _high_bios;
     PhysicalRam* _high_ram;
-    IORegion* _a20_io_region;
     uint8_t _a20_port_val;
     std::auto_ptr<DMA> _dma;
-    IORegion* _bochs_io_region;
     std::auto_ptr<PIT> _pit;
-    IORegion* _post_diagnostic;
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
     uint64_t _ram_size;
+    uint _num_cpus;
+    bool _boot_from_cdrom;
+    std::string _hard_disk_file_name;
+    uint64_t _hard_disk_size;
+    std::string _cdrom_file_name;
 
     bool _nmi_mask;
     uint8_t _misc_port;

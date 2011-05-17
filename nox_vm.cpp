@@ -44,6 +44,7 @@
 #include "keyboard.h"
 #include "vga.h"
 #include "display.h"
+#include "admin_server.h"
 
 enum {
     IO_PORT_MISC = 0x61,
@@ -77,28 +78,27 @@ NoxVM::NoxVM()
     , _mid_ram (NULL)
     , _high_bios (NULL)
     , _high_ram (NULL)
-    , _a20_io_region (NULL)
-    , _a20_port_val (0)
     , _dma (new DMA(*this))
-    , _bochs_io_region (NULL)
     , _pit (new PIT(*this))
     , _kbd (new KbdController(*this))
     , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
-    , _nmi_mask (false)
-    , _misc_port (0x01)
+    , _ram_size (MB)
+    , _num_cpus (1)
+    , _boot_from_cdrom (false)
+    , _hard_disk_size (0)
 {
-    _a20_io_region = _io_bus->register_region(*this, IO_PORT_A20, 1, this,
-                                             (io_read_byte_proc_t)&NoxVM::a20_port_read,
-                                             (io_write_byte_proc_t)&NoxVM::a20_port_write);
+    add_io_region(_io_bus->register_region(*this, IO_PORT_A20, 1, this,
+                                           (io_read_byte_proc_t)&NoxVM::a20_port_read,
+                                           (io_write_byte_proc_t)&NoxVM::a20_port_write));
 
-    _bochs_io_region = _io_bus->register_region(*this, IO_PORT_BOCHS_PANIC_1, 5, this,
-                                               NULL,
-                                               (io_write_byte_proc_t)&NoxVM::bochs_port_write);
+    add_io_region(_io_bus->register_region(*this, IO_PORT_BOCHS_PANIC_1, 5, this,
+                                           NULL,
+                                           (io_write_byte_proc_t)&NoxVM::bochs_port_write));
 
-    _post_diagnostic = _io_bus->register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
-                                               NULL,
-                                               (io_write_byte_proc_t)&NoxVM::post_diagnostic);
+    add_io_region(_io_bus->register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
+                                           NULL,
+                                           (io_write_byte_proc_t)&NoxVM::post_diagnostic));
 
 
     add_io_region(_io_bus->register_region(*this, IO_PORT_VGA_BIOS_MESSAGE, 1, this,
@@ -109,26 +109,12 @@ NoxVM::NoxVM()
                                            (io_read_byte_proc_t)&NoxVM::misc_port_read,
                                            (io_write_byte_proc_t)&NoxVM::misc_port_write));
 
-    _cmos->host_write(0x10, 0);      // no floppy
-
-    //equipment byte
-    _cmos->host_write(0x14, (1 << 1 /* math coproccssor*/) | (1 << 2) /* mouse port*/);
-
-    //num of cpus (is num of cpus - 1)
-    _cmos->host_write(0x5f, 0);
-
-    //century (BCD)
-    _cmos->host_write(0x32, 0x20); // IBM
-    _cmos->host_write(0x37, 0x20); // PS2
+    register_admin_commands();
 }
 
 
 NoxVM::~NoxVM()
 {
-    _io_bus->unregister_region(_a20_io_region);
-    _io_bus->unregister_region(_bochs_io_region);
-    _io_bus->unregister_region(_post_diagnostic);
-
     _mem_bus->unmap_physical_ram(_low_ram);
     _mem_bus->release_physical_ram(_low_ram);
     _mem_bus->unmap_physical_ram(_mid_ram);
@@ -138,6 +124,176 @@ NoxVM::~NoxVM()
     _mem_bus->unmap_physical_ram(_high_ram);
     _mem_bus->release_physical_ram(_high_ram);
 }
+
+
+void NoxVM::register_admin_commands()
+{
+    AdminServer* admin = application->get_admin();
+
+    admin->register_command("suspend", "suspend virtual machin execution", "???",
+                            empty_va_type_list, empty_va_type_list,
+                            (admin_command_handler_t)&NoxVM::suspend_command, this);
+
+    admin->register_command("resume", "resume virtual machin execution", "???",
+                            empty_va_type_list, empty_va_type_list,
+                            (admin_command_handler_t)&NoxVM::resume_command, this);
+}
+
+
+void NoxVM::reset_bios_stuff()
+{
+    // todo: let the bios handle all the following stuff
+
+    _cmos->host_write(0x10, 0);      // no floppy
+
+    //equipment byte
+    _cmos->host_write(0x14, (1 << 1 /* math coproccssor*/) | (1 << 2) /* mouse port*/);
+
+    //num of cpus
+    _cmos->host_write(0x5f, _num_cpus - 1);
+
+    //century (BCD)
+    _cmos->host_write(0x32, 0x20); // IBM
+    _cmos->host_write(0x37, 0x20); // PS2
+
+    /****************************************** mem ***********************************************/
+    //640k base memory
+    _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
+    _cmos->host_write(0x16, (LOW_RAM_SIZE / KB) >> 8);
+
+    //extended memory
+    uint64_t ram_size_kb = _ram_size / 1024;
+    ram_size_kb -= 1024;
+    ram_size_kb = (ram_size_kb > ((1 << 16) - 1)) ? ((1 << 16) - 1) : ram_size_kb;
+    _cmos->host_write(0x17, ram_size_kb);
+    _cmos->host_write(0x18, ram_size_kb >> 8);
+    _cmos->host_write(0x30, ram_size_kb);
+    _cmos->host_write(0x31, ram_size_kb >> 8);
+
+    uint64_t below_4G;
+    uint64_t above_4G;
+    if (_ram_size > MID_RAM_MAX_ADDRESS) {
+        below_4G = MID_RAM_MAX_ADDRESS;
+        above_4G = _ram_size - MID_RAM_MAX_ADDRESS;
+    } else {
+        below_4G = _ram_size;
+        above_4G = 0;
+    }
+
+    //above 16MB
+    uint64_t above_16M;
+
+    if (below_4G > 16 * MB) {
+        // (64k blocks)
+        above_16M = (below_4G - 16 * MB) >> 16;
+    } else {
+        above_16M = 0;
+    }
+
+    _cmos->host_write(0x34, above_16M);
+    _cmos->host_write(0x35, above_16M >> 8);
+
+    //abov 4g (64k blocks)
+    _cmos->host_write(0x5b, above_4G >> 16);
+    _cmos->host_write(0x5c, above_4G >> 24);
+    _cmos->host_write(0x5d, above_4G >> 32);
+
+    /****************************************** mem end *******************************************/
+
+    if (_boot_from_cdrom) {
+        _cmos->host_write(0x3d, 0x03); //first boot device is CD
+    } else {
+        _cmos->host_write(0x3d, 0x02); //first boot device is first HD
+    }
+
+
+    /**************************************** hard disk *******************************************/
+
+    enum {
+        MAX_HEADS = 16,
+        MAX_SECTORS_PER_CYL = 63,
+        MAX_CYL = 16383,
+        SECTOR_SIZE = 512,
+    };
+
+    if (_hard_disk_size) {
+        _cmos->host_write(0x12, 0xf0);   // hard disk 0 in extended cmos
+        _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
+
+        uint cyl = MIN(MAX_CYL, _hard_disk_size / MAX_HEADS / MAX_SECTORS_PER_CYL / SECTOR_SIZE);
+
+        // hd 0 params as in AMI BIOS
+        _cmos->host_write(0x1b, cyl);
+        _cmos->host_write(0x1c, cyl >> 8);
+        _cmos->host_write(0x1d, MAX_HEADS);
+        _cmos->host_write(0x1e, 0xff); // precompensation
+        _cmos->host_write(0x1f, 0xff); // precompensation
+        _cmos->host_write(0x20, 0xc0 | ((MAX_SECTORS_PER_CYL > 8) << 3));
+        _cmos->host_write(0x21, cyl); // landing zone
+        _cmos->host_write(0x22, cyl >> 8); // landing zone
+        _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
+    } else {
+        _cmos->host_write(0x12, 0);
+        _cmos->host_write(0x19, 0);
+        _cmos->host_write(0x1b, 0);
+        _cmos->host_write(0x1c, 0);
+        _cmos->host_write(0x1d, 0);
+        _cmos->host_write(0x1e, 0);
+        _cmos->host_write(0x1f, 0);
+        _cmos->host_write(0x20, 0);
+        _cmos->host_write(0x21, 0);
+        _cmos->host_write(0x22, 0);
+        _cmos->host_write(0x23, 0);
+    }
+
+    _cmos->host_write(0x39, 0x55); //use LBA translation
+
+    /************************************** hard disk done ****************************************/
+}
+
+
+void NoxVM::reset()
+{
+    ASSERT(_state == INIT_DONE || _state == READY || _state == STOPPED);
+
+    _state = RESETING;
+
+    reset_childrens();
+
+    remup_regions();
+
+    _a20_port_val = 0;
+    _misc_port  = 0x01;
+    _nmi_mask = false;
+
+    _mem_bus->map_physical_ram(_low_ram, 0, false);
+    _mem_bus->map_physical_ram(_mid_ram, MID_RAM_START >> GUEST_PAGE_SHIFT, false);
+    _mem_bus->map_physical_ram(_high_bios, ((4ULL * GB) - MB) >> GUEST_PAGE_SHIFT, false);
+
+    if (_high_ram) {
+        _mem_bus->map_physical_ram(_high_ram, (4ULL * GB) >> GUEST_PAGE_SHIFT, false);
+    }
+
+    load_bios();
+    reset_bios_stuff();
+}
+
+
+void NoxVM::suspend_command(AdminReplyContext* context)
+{
+    D_MESSAGE("");
+
+    context->command_reply();
+}
+
+
+void NoxVM::resume_command(AdminReplyContext* context)
+{
+    D_MESSAGE("");
+
+    context->command_reply();
+}
+
 
 void NoxVM::a20_port_write(uint16_t port, uint8_t val)
 {
@@ -214,37 +370,28 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 }
 
 
-void NoxVM::init_ram(uint32_t ram_size_mb)
+void NoxVM::init_ram()
 {
-    uint64_t ram_size = ram_size_mb;
-    ram_size *= MB;
-    _ram_size = ram_size;
-
     _low_ram = _mem_bus->alloc_physical_ram(*this, LOW_RAM_SIZE >> GUEST_PAGE_SHIFT, "low ram");
-    _mem_bus->map_physical_ram(_low_ram, 0, false);
 
-    ram_size -= MB; // "lost" 128K (vga fb hole @ 0xa0000-0xc0000)
+    uint64_t ram_size = _ram_size -MB; // "lost" 128K (vga fb hole @ 0xa0000-0xc0000)
 
     uint64_t uma_ram_size = MB - MID_RAM_START;
     uint64_t mid_range_size = MIN(ram_size, MID_RAM_MAX_ADDRESS - MB) + uma_ram_size;
 
     _mid_ram = _mem_bus->alloc_physical_ram(*this, mid_range_size >> GUEST_PAGE_SHIFT, "mid ram");
-    _mem_bus->map_physical_ram(_mid_ram, MID_RAM_START >> GUEST_PAGE_SHIFT, false);
-
     ram_size -= mid_range_size - uma_ram_size;
 
     if (ram_size) {
         _high_ram = _mem_bus->alloc_physical_ram(*this, ram_size >> GUEST_PAGE_SHIFT,
                                                  "high ram");
-        _mem_bus->map_physical_ram(_high_ram, (4ULL * GB) >> GUEST_PAGE_SHIFT, false);
     }
 
     _high_bios = _mem_bus->alloc_physical_ram(*this, MB >> GUEST_PAGE_SHIFT, "high bios");
-    _mem_bus->map_physical_ram(_high_bios, ((4ULL * GB) - MB) >> GUEST_PAGE_SHIFT, false);
 }
 
 
-void NoxVM::init_bios()
+void NoxVM::load_bios()
 {
     // BIOS scan for existence of valid expansion ROMS.
     //   Video ROM:   from 0xC0000..0xC7FFF in 2k increments
@@ -302,185 +449,103 @@ void NoxVM::init_bios()
     }
 }
 
+
 void NoxVM::init_cpus()
 {
-    CPU* cpu = new CPU(*this, 0);
-    cpu->start();
-}
-
-enum {
-    MAX_HEADS = 16,
-    MAX_SECTORS_PER_CYL = 63,
-    MAX_CYL = 16383,
-    SECTOR_SIZE = 512,
-};
-
-
-static uint64_t file_size(const char* file_name)
-{
-    int fd  = open(file_name, O_RDWR);
-    if (fd == -1) {
-        THROW("open %s failed", file_name);
+    for (int i = 0; i < _num_cpus; i++) {
+        new CPU(*this, i);
     }
-
-    struct stat stat;
-
-    if (fstat(fd, &stat) == -1) {
-        THROW("fstat failed");
-    }
-
-    if (stat.st_size % SECTOR_SIZE) {
-        THROW("invalid file size ", stat.st_size);
-    }
-
-    return stat.st_size;
 }
 
 
 void NoxVM::set_ram_size(uint32_t ram_size_mb)
 {
     ASSERT(ram_size_mb);
+    ASSERT(_state == INIT);
 
-    /*if (_state != DOWN) {
-        return;
-    }*/
-
-    init_ram(ram_size_mb);
-
-     //640k base memory
-    _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
-    _cmos->host_write(0x16, (LOW_RAM_SIZE / KB) >> 8);
-
-    //extended memory
-    uint64_t ram_size_kb = _ram_size / 1024;
-    ram_size_kb -= 1024;
-    ram_size_kb = (ram_size_kb > ((1 << 16) - 1)) ? ((1 << 16) - 1) : ram_size_kb;
-    _cmos->host_write(0x17, ram_size_kb);
-    _cmos->host_write(0x18, ram_size_kb >> 8);
-    _cmos->host_write(0x30, ram_size_kb);
-    _cmos->host_write(0x31, ram_size_kb >> 8);
-
-    uint64_t below_4G;
-    uint64_t above_4G;
-    if (_ram_size > MID_RAM_MAX_ADDRESS) {
-        below_4G = MID_RAM_MAX_ADDRESS;
-        above_4G = _ram_size - MID_RAM_MAX_ADDRESS;
-    } else {
-        below_4G = _ram_size;
-        above_4G = 0;
-    }
-
-    //above 16MB
-    uint64_t above_16M;
-
-    if (below_4G > 16 * MB) {
-        // (64k blocks)
-        above_16M = (below_4G - 16 * MB) >> 16;
-    } else {
-        above_16M = 0;
-    }
-
-    _cmos->host_write(0x34, above_16M);
-    _cmos->host_write(0x35, above_16M >> 8);
-
-    //abov 4g (64k blocks)
-    _cmos->host_write(0x5b, above_4G >> 16);
-    _cmos->host_write(0x5c, above_4G >> 24);
-    _cmos->host_write(0x5d, above_4G >> 32);
+    uint64_t ram_size = ram_size_mb;
+    ram_size *= MB;
+    _ram_size = ram_size;
 }
 
 
 void NoxVM::set_hard_disk(const char* file_name)
 {
-    /*if (_state != DOWN) {
-        return;
-    }*/
+    ASSERT(_state == INIT);
+    _hard_disk_file_name = file_name ? file_name : "";
+}
 
-    if (!file_name) {
+
+void NoxVM::init_hard_disk()
+{
+    if (!_hard_disk_file_name.length()) {
         return;
     }
 
-    uint64_t disk_size = file_size(file_name);
-
-    _cmos->host_write(0x12, 0xf0);   // hard disk 0 in extended cmos
-    _cmos->host_write(0x19, 47);     // user define hd (params start in 0x1b)
-
-    uint cyl = MIN(MAX_CYL, disk_size / MAX_HEADS / MAX_SECTORS_PER_CYL / SECTOR_SIZE);
-
-    // hd 0 params as in AMI BIOS
-    _cmos->host_write(0x1b, cyl);
-    _cmos->host_write(0x1c, cyl >> 8);
-    _cmos->host_write(0x1d, MAX_HEADS);
-    _cmos->host_write(0x1e, 0xff); // precompensation
-    _cmos->host_write(0x1f, 0xff); // precompensation
-    _cmos->host_write(0x20, 0xc0 | ((MAX_SECTORS_PER_CYL > 8) << 3));
-    _cmos->host_write(0x21, cyl); // landing zone
-    _cmos->host_write(0x22, cyl >> 8); // landing zone
-    _cmos->host_write(0x23, MAX_SECTORS_PER_CYL);
-
-    _ata_host->set_device_0(new Disk(file_name));
-
-    _cmos->host_write(0x39, 0x55); //use LBA translation
+    Disk* hd = new Disk(_hard_disk_file_name.c_str());
+    _hard_disk_size = hd->get_size();
+    _ata_host->set_device_0(hd);
 }
 
 
 void NoxVM::set_cdrom(const char* file_name)
 {
-    /*if (_state != DOWN) {
-        return;
-    }*/
+    ASSERT(_state == INIT);
 
-    if (!file_name) {
-        return;
-    }
-
-    _ata_host->set_device_1(new ATAPIDevice(file_name));
+    _cdrom_file_name = file_name ? file_name : "";
 }
 
 
-void NoxVM::set_boot_device(bool from_cd)
+void NoxVM::init_cdrom()
 {
-    /*if (_state != DOWN) {
+    if (!_cdrom_file_name.length()) {
         return;
-    }*/
-
-    if (from_cd) {
-        _cmos->host_write(0x3d, 0x03); //first boot device is CD
-    } else {
-        _cmos->host_write(0x3d, 0x02); //first boot device is first HD
     }
+
+    _ata_host->set_device_1(new ATAPIDevice(_cdrom_file_name.c_str()));
 }
 
 
-bool NoxVM::init(/*const char* disk_file_name,
-                   const char* cdrom_file_name,
-                   uint boot_device
-                   uint64_t ram_size*/)
+void NoxVM::set_boot_device(bool from_cdrom)
 {
+    ASSERT(_state == INIT);
+    _boot_from_cdrom = from_cdrom;
+}
+
+
+void NoxVM::init()
+{
+    ASSERT(_state == INIT);
+
     new NoxDisplay(*_vga.get(), *_kbd.get());
 
-    init_bios();
+    init_ram();
+    init_hard_disk();
+    init_cdrom();
     init_cpus();
 
-    return true;
+    _state = INIT_DONE;
 }
 
-
-void NoxVM::reset()
-{
-
-}
 
 
 void NoxVM::start()
 {
+    _state = STARTING;
 
+    start_childrens();
+
+    _state = RUNNING;
 }
 
 
 void NoxVM::stop()
 {
+    _state = STOPPING;
 
+    stop_childrens();
+
+    _state = STOPPED;
 }
 
 
