@@ -74,6 +74,7 @@ private:
     friend class Connection;
 };
 
+extern const va_type_list_t empty_va_type_list;
 
 #endif
 

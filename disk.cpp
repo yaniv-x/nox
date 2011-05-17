@@ -51,7 +51,7 @@ Disk::Disk(const char* file_name, uint read_cache, uint write_cache)
         THROW("fstat failed");
     }
 
-    if (stat.st_size & SECTOR_MASK) {
+    if ((stat.st_size & SECTOR_MASK) || stat.st_size < MB) {
         THROW("invalid file size ", stat.st_size);
     }
 
@@ -108,7 +108,7 @@ bool Disk::write(uint64_t sector, const uint8_t* buf)
         return true;
     }
 
-#if 0
+#if 1
     uint8_t* sec_buf = new uint8_t[SECTOR_SIZE];
     memcpy(sec_buf, buf, SECTOR_SIZE);
 

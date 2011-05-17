@@ -184,18 +184,23 @@ bool Application::init(int argc, const char** argv)
     sprintf(uds_name, "%s/active/%s.uds", nox_dir.c_str(), vm_name);
     _admin_server.reset(new AdminServer(uds_name));
 
-    _vm.reset(new NoxVM());
+    try {
+        _vm.reset(new NoxVM());
 
-    _vm->set_ram_size(ram_size / MB);
-    _vm->set_hard_disk(hard_disk);
-    _vm->set_cdrom(cdrom);
-    _vm->set_boot_device(boot_from_cd);
+        _vm->set_ram_size(ram_size / MB);
+        _vm->set_hard_disk(hard_disk);
+        _vm->set_cdrom(cdrom);
+        _vm->set_boot_device(boot_from_cd);
 
-    if (!_vm->init()) {
+        _vm->init();
+    } catch (...) {
         E_MESSAGE("vm initialization failed");
         set_exit_code(ERROR_VM_INIT_FAILED);
         return false;
     }
+
+    _vm->reset();
+    _vm->start();
 
     return true;
 }

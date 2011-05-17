@@ -32,6 +32,7 @@
 VMPart::VMPart(const char* name, VMPart& container)
     : _name (name)
     , _container (&container)
+    , _state (INIT)
 {
     if (_container) {
         _container->add_part(this);
@@ -41,6 +42,7 @@ VMPart::VMPart(const char* name, VMPart& container)
 VMPart::VMPart(const char* name)
     : _name (name)
     , _container (NULL)
+    , _state (INIT)
 {
 }
 
@@ -99,6 +101,72 @@ void VMPart::unregister_regions()
     while (!_regions.empty()) {
         get_nox().get_io_bus().unregister_region(*_regions.begin());
         _regions.pop_front();
+    }
+}
+
+
+void VMPart::reset_all()
+{
+    _state = RESETING;
+
+    reset();
+
+    _state = READY;
+
+    reset_childrens();
+}
+
+
+void VMPart::reset_childrens()
+{
+    VMParts::iterator iter = _parts.begin();
+
+    for (; iter != _parts.end(); iter++) {
+        (*iter)->reset_all();
+    }
+}
+
+
+void VMPart::start_all()
+{
+    _state = STARTING;
+
+    start();
+
+    _state = RUNNING;
+
+    start_childrens();
+}
+
+
+void VMPart::start_childrens()
+{
+    VMParts::iterator iter = _parts.begin();
+
+    for (; iter != _parts.end(); iter++) {
+        (*iter)->start_all();
+    }
+}
+
+
+void VMPart::stop_all()
+{
+    stop_childrens();
+
+    _state = STOPPING;
+
+    stop();
+
+    _state = STOPPED;
+}
+
+
+void VMPart::stop_childrens()
+{
+    VMParts::reverse_iterator iter = _parts.rbegin();
+
+    for (; iter != _parts.rend(); iter++) {
+        (*iter)->stop_all();
     }
 }
 

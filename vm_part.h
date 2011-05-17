@@ -54,6 +54,13 @@ public:
     virtual void save(OutStream& stream) = 0;
     virtual void load(InStream& stream) = 0;
 
+    void stop_childrens();
+    void stop_all();
+    void start_childrens();
+    void start_all();
+    void reset_childrens();
+    void reset_all();
+
     void add_io_region(IORegion* region);
     void remup_regions();
 
@@ -63,15 +70,28 @@ public:
         + get state
     };*/
 
+    enum State {
+        INIT,
+        INIT_DONE,
+        RESETING,
+        READY,
+        STARTING,
+        RUNNING,
+        STOPPING,
+        STOPPED,
+        SHUTING_DOWN,
+        DOWN,
+    };
+
 private:
     VMPart(const char* name);
     void unregister_regions();
 
 private:
-    typedef std::list<VMPart*> VMParts;
-
     std::string _name;
     VMPart* _container;
+    State _state;
+    typedef std::list<VMPart*> VMParts;
     VMParts _parts;
     std::list<IORegion*> _regions;
 
