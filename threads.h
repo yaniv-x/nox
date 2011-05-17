@@ -40,15 +40,9 @@ public:
     {
     }
 
-    uint32_t inc()
-    {
-        return __sync_add_and_fetch(&_val, 1);
-    }
-
-    uint32_t dec()
-    {
-        return __sync_sub_and_fetch(&_val, 1);
-    }
+    uint32_t inc() { return __sync_add_and_fetch(&_val, 1);}
+    uint32_t dec() { return __sync_sub_and_fetch(&_val, 1);}
+    uint32_t val() { return _val;}
 
 private:
     uint32_t _val;

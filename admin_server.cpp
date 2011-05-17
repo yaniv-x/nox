@@ -32,9 +32,12 @@
 #include "application.h"
 #include "admin_common.h"
 
+#define MAX_ADMIN_CONNECTIONS 10
+
 const va_type_list_t empty_va_type_list;
 
 static AdminServer* server = NULL;
+static Atomic connection_count;
 
 class AdminServer::Connection : public NonCopyable, public AdminReplyContext,
                                 public AdminTransmitContext {
@@ -55,6 +58,7 @@ public:
         _recive_start = _recive_buf;
         _recive_end = _recive_buf + sizeof(LinkMessage);
         _recive_done = &Connection::handle_link;
+        connection_count.inc();
     }
 
     Connection* ref() {_refs.inc(); return this;}
@@ -140,6 +144,7 @@ public:
 private:
     ~Connection()
     {
+        connection_count.dec();
         close(_socket);
         delete[] _recive_buf;
 
@@ -467,6 +472,13 @@ void AdminServer::enum_commands(AdminReplyContext* context, uint32_t index)
 void AdminServer::on_new_connection(int socket)
 {
     Lock lock(_connections_mutex);
+
+    if (connection_count.val() >= MAX_ADMIN_CONNECTIONS) {
+        D_MESSAGE("drop");
+        close(socket);
+        return;
+    }
+
     _connections.push_back(new Connection(socket));
 }
 
