@@ -33,6 +33,8 @@
 #include "admin.h"
 #include "admin_common.h"
 
+//todo: interactiv with ncurses
+
 
 class AdminClient: public NonCopyable, public AdminTransmitContext {
 public:
