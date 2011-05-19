@@ -37,6 +37,8 @@ class ATAHost: public PCIDevice {
 public:
     ATAHost();
 
+    virtual void reset();
+
     void set_device_0(ATADevice* device);
     void set_device_1(ATADevice* device);
 

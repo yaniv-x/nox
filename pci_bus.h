@@ -39,7 +39,7 @@ public:
 
     virtual void load(InStream &stream) {}
     virtual void power() {}
-    virtual void reset() { _config_address = 0;}
+    virtual void reset();
     virtual void save(OutStream &stream) {}
     virtual void start() {}
     virtual void stop() {}

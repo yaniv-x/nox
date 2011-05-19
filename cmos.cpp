@@ -122,7 +122,6 @@ static uint32_t rates_table[] = {
 
 CMOS::CMOS(NoxVM& vm)
     : VMPart ("cmos", vm)
-    , _io_region (NULL)
     , _irq_wire (*this)
     , _period_timer (application->create_timer((void_callback_t)&CMOS::period_timer_proc, this))
     , _alarm_timer (application->create_timer((void_callback_t)&CMOS::alarm_timer_proc, this))
@@ -130,9 +129,9 @@ CMOS::CMOS(NoxVM& vm)
     , _index (0)
 {
     memset(_user_ares, 0, sizeof(_user_ares));
-    _io_region = vm.get_io_bus().register_region(*this, 0x70, 2, this,
-                                                 (io_read_byte_proc_t)&CMOS::read_byte,
-                                                 (io_write_byte_proc_t)&CMOS::write_byte);
+    add_io_region(io_bus->register_region(*this, 0x70, 2, this,
+                                          (io_read_byte_proc_t)&CMOS::read_byte,
+                                          (io_write_byte_proc_t)&CMOS::write_byte));
 
 
     time_t t = time(NULL);
@@ -151,7 +150,6 @@ CMOS::~CMOS()
     _period_timer->destroy();
     _alarm_timer->destroy();
     _update_timer->destroy();
-    nox().get_io_bus().unregister_region(_io_region);
 }
 
 
@@ -160,9 +158,10 @@ void CMOS::reset()
     _period_timer->disarm();
     _alarm_timer->disarm();
     _update_timer->disarm();
-    _irq_wire.drop();
+    _irq_wire.reset();
     _reg_b &= ~REG_B_CLEAR_ON_RESET_MASK;
     _reg_c = 0;
+    remap_io_regions();
 }
 
 

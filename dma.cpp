@@ -91,77 +91,58 @@ enum {
     IO_REGION_G_END,
 };
 
+
 DMA::DMA(NoxVM& nox)
     : VMPart("dma", nox)
 {
     memset(_chips, 0, sizeof(_chips));
-    memset(_io_regions, 0, sizeof(_io_regions));
 
-    try {
-        IOBus& bus = nox.get_io_bus();
-        int i = 0;
+    add_io_region(io_bus->register_region(*this, IO_ADDRESS_0,
+                                          IO_REGION_A_END - IO_ADDRESS_0, this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 
-        _io_regions[i++] = bus.register_region(*this, IO_ADDRESS_0,
-                                              IO_REGION_A_END - IO_ADDRESS_0, this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
+    add_io_region(io_bus->register_region(*this, IO_ADDRESS_4,
+                                          IO_REGION_B_END - IO_ADDRESS_4, this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 
-        _io_regions[i++] = bus.register_region(*this, IO_ADDRESS_4,
-                                              IO_REGION_B_END - IO_ADDRESS_4, this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
+    add_io_region(io_bus->register_region(*this, IO_DMA2_STATUS,
+                                          IO_REGION_C_END - IO_DMA2_STATUS, this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 
-        _io_regions[i++] = bus.register_region(*this, IO_DMA2_STATUS,
-                                              IO_REGION_C_END - IO_DMA2_STATUS, this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
+    add_io_region(io_bus->register_region(*this, IO_PAGE_REGISTER_2,
+                                          IO_REGION_D_END - IO_PAGE_REGISTER_2, this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 
-        _io_regions[i++] = bus.register_region(*this, IO_PAGE_REGISTER_2,
-                                              IO_REGION_D_END - IO_PAGE_REGISTER_2, this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
+    add_io_region(io_bus->register_region(*this, IO_PAGE_REGISTER_0,
+                                          IO_REGION_E_END - IO_PAGE_REGISTER_0, this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 
-        _io_regions[i++] = bus.register_region(*this, IO_PAGE_REGISTER_0,
-                                              IO_REGION_E_END - IO_PAGE_REGISTER_0, this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
+    add_io_region(io_bus->register_region(*this, IO_PAGE_REGISTER_6,
+                                          IO_REGION_F_END - IO_PAGE_REGISTER_6, this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 
-        _io_regions[i++] = bus.register_region(*this, IO_PAGE_REGISTER_6,
-                                              IO_REGION_F_END - IO_PAGE_REGISTER_6, this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
-
-        _io_regions[i++] = bus.register_region(*this, IO_PAGE_REGISTER_4,
-                                              IO_REGION_G_END - IO_PAGE_REGISTER_4,
-                                              this,
-                                              (io_read_byte_proc_t)&DMA::read_byte,
-                                              (io_write_byte_proc_t)&DMA::write_byte);
-
-        ASSERT(sizeof(_io_regions) / sizeof(*_io_regions) >= i);
-    } catch (...) {
-        region_cleanup();
-        throw;
-    }
+    add_io_region(io_bus->register_region(*this, IO_PAGE_REGISTER_4,
+                                          IO_REGION_G_END - IO_PAGE_REGISTER_4,
+                                          this,
+                                          (io_read_byte_proc_t)&DMA::read_byte,
+                                          (io_write_byte_proc_t)&DMA::write_byte));
 }
-
 
 
 DMA::~DMA()
 {
-    region_cleanup();
-}
-
-void DMA::region_cleanup()
-{
-    for (int i = 0; i < sizeof(_io_regions) / sizeof(*_io_regions); i++) {
-        nox().get_io_bus().unregister_region(_io_regions[i]);
-    }
 }
 
 
 uint8_t DMA::read_byte(uint16_t port)
 {
-
+    D_MESSAGE("");
     return 0xff;
 }
 
@@ -171,10 +152,12 @@ void DMA::disable_dma1()
 
 }
 
+
 void DMA::disable_dma2()
 {
 
 }
+
 
 enum {
     DMA1,
@@ -184,9 +167,10 @@ enum {
 };
 
 
-
 void DMA::write_byte(uint16_t port, uint8_t val)
 {
+    D_MESSAGE("");
+
     switch (port) {
     case IO_DMA1_DISABLE:
         disable_dma1();
@@ -201,5 +185,11 @@ void DMA::write_byte(uint16_t port, uint8_t val)
         _chips[DMA2].chanels[val & CHANNEL_MASK].mask = (val >> MASK_SHIFT) & 1;
         break;
     }
+}
+
+void DMA::reset()
+{
+    memset(_chips, 0, sizeof(_chips));
+    remap_io_regions();
 }
 

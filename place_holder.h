@@ -30,7 +30,6 @@
 #include "vm_part.h"
 
 class NoxVM;
-class IORegion;
 class IOBus;
 class Timer;
 class Event;
@@ -40,7 +39,7 @@ public:
     PlaceHolder(NoxVM& nox);
     virtual ~PlaceHolder();
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
@@ -52,23 +51,6 @@ private:
     void write_byte(uint16_t port, uint8_t val);
     uint16_t read_word(uint16_t port);
     void write_word(uint16_t port, uint16_t val);
-    void timer_call();
-    void timer_call_2222222222();
-    void trigger_call();
-
-private:
-    IOBus& _io;
-    IORegion* _parallel_region_a;
-    IORegion* _parallel_region_b;
-
-    IORegion* _serial_region_a;
-    IORegion* _serial_region_b;
-    IORegion* _serial_region_c;
-    IORegion* _serial_region_d;
-
-    Timer* t;
-    Timer* t2;
-    Event* event;
 };
 
 

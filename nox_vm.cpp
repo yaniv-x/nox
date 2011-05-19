@@ -74,15 +74,15 @@ NoxVM::NoxVM()
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
     , _cmos (new CMOS(*this))
-    , _low_ram (NULL)
-    , _mid_ram (NULL)
-    , _high_bios (NULL)
-    , _high_ram (NULL)
     , _dma (new DMA(*this))
     , _pit (new PIT(*this))
     , _kbd (new KbdController(*this))
     , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
+    , _low_ram (NULL)
+    , _mid_ram (NULL)
+    , _high_bios (NULL)
+    , _high_ram (NULL)
     , _ram_size (MB)
     , _num_cpus (1)
     , _boot_from_cdrom (false)
@@ -260,7 +260,7 @@ void NoxVM::reset()
 
     reset_childrens();
 
-    remup_regions();
+    remap_io_regions();
 
     _a20_port_val = 0;
     _misc_port  = 0x01;

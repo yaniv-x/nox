@@ -97,10 +97,10 @@ PIC* pic = NULL;
 
 PIC::PIC(NoxVM& nox)
     : VMPart("pic", nox)
-    , _output_pin (true)
     , _notify_proc (NULL)
     , _notify_opaque (NULL)
 {
+    ASSERT(pic == NULL);
 
     IOBus& bus = nox.get_io_bus();
 
@@ -123,10 +123,8 @@ PIC::PIC(NoxVM& nox)
     add_io_region(bus.register_region(*this, IO_PIC1_TRIGGER_TYPE, 2, this,
                                       (io_read_byte_proc_t)&PIC::io_read_trigger_type,
                                       (io_write_byte_proc_t)&PIC::io_write_trigger_type));
-    ASSERT(pic == NULL);
 
-    memset(_chips, 0, sizeof(_chips));
-
+    reset();
     pic = this;
 }
 
@@ -621,5 +619,13 @@ void PIC::drop(uint8_t pin)
          clear_IRR(chip, pin);
          update_output_pin(lock);
     }
+}
+
+
+void PIC::reset()
+{
+    _output_pin = false;
+    memset(_chips, 0, sizeof(_chips));
+    remap_io_regions();
 }
 

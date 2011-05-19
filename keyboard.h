@@ -33,7 +33,6 @@
 #include "wire.h"
 
 class NoxVM;
-class IORegion;
 
 class CyclicBuffer {
 public:
@@ -95,9 +94,10 @@ private:
     void put_mouse_data(uint8_t data);
     void put_data(uint8_t data);
     void restore_keyboard_defaults();
-    void reset_keyboard();
+    void reset_keyboard(bool cold);
     void restore_mouse_defaults();
-    void reset_mouse();
+    void reset_mouse(bool cold);
+    void reset(bool cold);
     void set_command_byte(uint8_t command_byte);
     void write_output_port(uint8_t val);
     void write_to_mouse(uint8_t val);
@@ -110,8 +110,6 @@ private:
 
 private:
     Mutex _mutex;
-    IORegion *_io_region_a;
-    IORegion *_io_region_b;
 
     struct KBCOutput {
         KBCOutput(KbdController& controller)

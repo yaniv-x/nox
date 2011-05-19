@@ -30,7 +30,6 @@
 #include "vm_part.h"
 
 class NoxVM;
-class IORegion;
 
 class DMA: public VMPart {
 public:
@@ -39,7 +38,7 @@ public:
 
     NoxVM& nox() { return *(NoxVM*)get_container();}
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
@@ -73,12 +72,10 @@ private:
 
     uint8_t read_byte(uint16_t port);
     void write_byte(uint16_t port, uint8_t val);
-    void region_cleanup();
     void disable_dma1();
     void disable_dma2();
 
 private:
-    IORegion* _io_regions[NUM_IO_REGIONS];
     Chip _chips[NUM_CHIPS];
 };
 

@@ -115,7 +115,7 @@ public:
         , read_back (false)
 #endif
         , base_address (0)
-        , _fixed (false)
+        , _fix_address (0)
     {}
 
     virtual ~Region() {}
@@ -130,8 +130,10 @@ public:
     uint64_t get_mask() { return ~(size - 1);}
     bool is_mem() { return !is_io();}
     address_t get_address() { return base_address;}
-    bool is_fixed() { return _fixed;}
-    void set_fixed() { _fixed = true;}
+    bool is_fixed() { return _fix_address != 0;}
+    void set_fix_address(address_t address) { _fix_address = address;}
+    address_t get_fix_address() { return _fix_address;}
+    void reset();
 
 public:
     uint64_t size;
@@ -143,9 +145,16 @@ protected:
     address_t base_address;
 
 private:
-    bool _fixed;
+    address_t _fix_address;
 };
 
+void PCIDevice::Region::reset()
+{
+    unmap();
+#ifdef PCI_STRICT
+    read_back = false;
+#endif
+}
 
 class IOMap: public PCIDevice::Region {
 public:
@@ -557,7 +566,7 @@ PCIDevice::~PCIDevice()
             continue;
         }
 
-        if (_regions[i]->is_64bit()) {
+        if (region->is_64bit()) {
             i++;
         }
 
@@ -880,7 +889,7 @@ void PCIDevice::set_io_address(uint bar, uint16_t address, bool fix)
 {
     ASSERT(_regions[bar]);
     ASSERT(_regions[bar]->is_io());
-    ASSERT((address & ~_regions[bar]->get_mask()) == 0);
+    ASSERT(address && (address & ~_regions[bar]->get_mask()) == 0);
 
     uint reg_index = (PCI_CONF_BAR_0 >> 2) + bar;
 
@@ -888,7 +897,7 @@ void PCIDevice::set_io_address(uint bar, uint16_t address, bool fix)
     _config_space[reg_index] |= address;
 
     if (fix) {
-        _regions[bar]->set_fixed();
+        _regions[bar]->set_fix_address(address);
     }
 }
 
@@ -949,7 +958,7 @@ void PCIDevice::write_bar(uint reg_index, uint32_t val)
 
     if (_regions[bar]->is_fixed()) {
         D_MESSAGE("fixed 0x%x", val);
-        return;
+        val = _regions[bar]->get_fix_address();
     }
 
     if (_regions[bar]->is_io()) {
@@ -1004,5 +1013,63 @@ void PCIDevice::write_config_dword(uint index, uint32_t val)
         write_config_word(index, 0, val);
         write_config_word(index, 2, val >> 16);
     }
+}
+
+void PCIDevice::reset_config_space()
+{
+    uint16_t vendor = *reg16(PCI_CONF_VENDOR);
+    uint16_t device = *reg16(PCI_CONF_DEVICE);
+    uint8_t revision = *reg8(PCI_CONF_REVISION);
+    uint8_t class_code1 = *reg8(PCI_CONF_CLASS);
+    uint16_t class_code2 = *reg16(PCI_CONF_CLASS + 1);
+    uint16_t sub_vendor = *reg16(PCI_CONF_SUBSYS_VENDOR);
+    uint16_t sub_device = *reg16(PCI_CONF_SUBSYS_ID);
+    uint8_t interrupt_pin = *reg8(PCI_CONF_INTERRUPT_PIN);
+
+    memset(_config_space, 0, sizeof(_config_space));
+
+    *reg16(PCI_CONF_VENDOR) = vendor;
+    *reg16(PCI_CONF_DEVICE) = device;
+    *reg8(PCI_CONF_REVISION) = revision;
+    *reg8(PCI_CONF_CLASS) = class_code1;
+    *reg16(PCI_CONF_CLASS + 1) = class_code2;
+    *reg16(PCI_CONF_SUBSYS_VENDOR) = sub_vendor;
+    *reg16(PCI_CONF_SUBSYS_ID) = sub_device;
+    *reg16(PCI_CONF_STATUS) = PCI_STATUS_66MHZ_MASK;
+    *reg8(PCI_CONF_INTERRUPT_PIN) = interrupt_pin;
+}
+
+void PCIDevice::reset()
+{
+    reset_config_space();
+
+    for (uint i = 0; i < NUM_BARS; i++) {
+        PCIDevice::Region* region = _regions[i];
+
+        if (!region) {
+            continue;
+        }
+
+        uint reg_index = (PCI_CONF_BAR_0 >> 2) + i;
+
+        if (region->is_io()) {
+             _config_space[reg_index] = PCI_BAR_IO_MASK;
+        } else {
+            _config_space[reg_index] = PCI_BAR_PREFATCH_MASK;
+
+            if (region->is_64bit()) {
+                i++;
+                _config_space[reg_index] |= PCI_BAR_MEM_TYPE_64BITS << PCI_BAR_MEM_TYPE_SHIFT;
+            }
+        }
+
+        if (region->is_fixed()) {
+            _config_space[reg_index] |= region->get_fix_address();
+        }
+
+        region->reset();
+    }
+
+    _interrupt_line.reset();
 }
 

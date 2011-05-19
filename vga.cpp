@@ -302,20 +302,18 @@ VGA::VGA(NoxVM& nox)
     , _width (640)
     , _height (480)
     , _caret_tick (0)
-    , _caret_visable (0)
+    , _caret_visable (false)
 {
     ASSERT(int(VBE_NUM_REGS) == int(NUM_VBE_REGS));
 
-    IOBus& io_bus = nox.get_io_bus();
-
-    add_io_region(io_bus.register_region(*this, IO_VGA_BASE, IO_VGA_END - IO_VGA_BASE, this,
+    add_io_region(io_bus->register_region(*this, IO_VGA_BASE, IO_VGA_END - IO_VGA_BASE, this,
                                          (io_read_byte_proc_t)&VGA::io_read_byte,
                                          (io_write_byte_proc_t)&VGA::io_write_byte));
 
-    add_io_region(io_bus.register_region(*this, IO_VBE_REG_SELECT, 3, this,
-                                         NULL, NULL,
-                                         (io_read_word_proc_t)&VGA::io_vbe_read,
-                                         (io_write_word_proc_t)&VGA::io_vbe_write));
+    add_io_region(io_bus->register_region(*this, IO_VBE_REG_SELECT, 3, this,
+                                          NULL, NULL,
+                                          (io_read_word_proc_t)&VGA::io_vbe_read,
+                                          (io_write_word_proc_t)&VGA::io_vbe_write));
 
 
     _update_timer = application->create_timer((void_callback_t)&VGA::update, this);
@@ -926,7 +924,7 @@ void VGA::reset()
     memset(_crt_regs, 0, sizeof(_crt_regs));
 
     _caret_tick = 0;
-    _caret_visable = 0;
+    _caret_visable = false;
 
     reset_io();
     reset_fb();
@@ -941,6 +939,10 @@ void VGA::reset()
     _vba_palette_expect_red = false;
 
     memset(_latch, 0, sizeof(_latch));
+
+    _dirty = true;
+
+    remap_io_regions();
 }
 
 static uint8_t v_retrace = 0;

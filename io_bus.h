@@ -53,7 +53,7 @@ public:
     void remap_region(IORegion* region);
     void unregister_region(IORegion* region);
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
