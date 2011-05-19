@@ -56,12 +56,13 @@ public:
         TERMINATE,
     };
 
-    enum State {
+    enum CPUState {
         INITIALIZING,
         WAITING,
         RUNNING,
         TERMINATING,
         TERMINATED,
+        ERROR,
     };
 
     enum {
@@ -73,8 +74,9 @@ private:
     void run();
     void reset_regs();
     void reset_sys_regs();
+    void reset_fpu();
     void handle_io();
-    void set_state(State state);
+    void set_cpu_state(CPUState state);
     void setup_cpuid();
     void create();
     void output_trigger();
@@ -111,12 +113,12 @@ private:
 
 private:
     uint _id;
-    State _state;
+    CPUState _cpu_state;
     Command _command;
     Mutex _command_mutex;
     Condition _command_condition;
-    Mutex _state_mutex;
-    Condition _state_condition;
+    Mutex _cpu_state_mutex;
+    Condition _cpu_state_condition;
     AutoFD _vcpu_fd;
     struct kvm_run* _kvm_run;
     int _vcpu_mmap_size;
@@ -133,7 +135,6 @@ private:
     Condition _halt_condition;
     uint32_t _version_information;
     address_t _apic_address;
-    address_t _cr8;
     address_t _apic_start;
     address_t _apic_end;
     uint32_t _apic_regs[GUEST_PAGE_SIZE / 16];

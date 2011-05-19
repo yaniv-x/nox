@@ -91,11 +91,10 @@ enum {
 
 PIT::PIT(NoxVM& nox)
     : VMPart("pit", nox)
-    , _io_region ( NULL)
 {
-    _io_region = nox.get_io_bus().register_region(*this, IO_TIMER_0, IO_NUM_PORTS, this,
-                                                    (io_read_byte_proc_t)&PIT::io_read_byte,
-                                                    (io_write_byte_proc_t)&PIT::io_write_byte);
+    add_io_region(io_bus->register_region(*this, IO_TIMER_0, IO_NUM_PORTS, this,
+                                          (io_read_byte_proc_t)&PIT::io_read_byte,
+                                          (io_write_byte_proc_t)&PIT::io_write_byte));
 
     memset(_timers, 0, sizeof(_timers));
     _timers[0].timer = application->create_timer((void_callback_t)&PIT::timer_proc, this);
@@ -108,14 +107,15 @@ PIT::~PIT()
 {
     delete _timers[0].irq_wire;
     _timers[0].timer->destroy();
-    get_nox().get_io_bus().unregister_region(_io_region);
 }
+
 
 void PIT::timer_proc()
 {
     Lock lock(_mutex);
     update_timer(_timers[0]);
 }
+
 
 inline void PIT::latch_counter(PICTimer& timer)
 {
@@ -480,5 +480,34 @@ bool PIT::get_output_level(uint timer)
 
     update_timer(_timers[timer]);
     return !!_timers[timer].output;
+}
+
+
+void PIT::reset(PICTimer& pic_timer)
+{
+    Timer* timer = pic_timer.timer;
+    Wire* wire = pic_timer.irq_wire;
+
+    memset(&pic_timer, 0, sizeof(pic_timer));
+
+    if (timer) {
+        timer->disarm();
+        pic_timer.timer = timer;
+    }
+
+    if (wire) {
+        wire->reset();
+        pic_timer.irq_wire = wire;
+    }
+}
+
+
+void PIT::reset()
+{
+    for (int i = 0; i < NUM_TIMERS; i++) {
+        reset(_timers[i]);
+    }
+
+    remap_io_regions();
 }
 

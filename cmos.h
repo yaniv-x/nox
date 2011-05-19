@@ -33,7 +33,6 @@
 #include "wire.h"
 
 class NoxVM;
-class IORegion;
 class Timer;
 
 class CMOS: private VMPart {
@@ -91,7 +90,6 @@ private:
 
 private:
     Mutex _mutex;
-    IORegion* _io_region;
     Wire _irq_wire;
     Timer* _period_timer;
     Timer* _alarm_timer;

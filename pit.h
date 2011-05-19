@@ -43,7 +43,7 @@ public:
     void set_gate_level(uint timer, bool high); // use Wire object
     bool get_output_level(uint timer); // use Wire object
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
@@ -94,9 +94,10 @@ private:
     void set_interval_counter(PICTimer& timer, uint shift);
     void set_counter(PICTimer& timer, uint val);
 
+    void reset(PICTimer& timer);
+
 private:
     Mutex _mutex;
-    IORegion* _io_region;
     PICTimer _timers[NUM_TIMERS];
 };
 

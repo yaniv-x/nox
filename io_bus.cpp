@@ -418,15 +418,9 @@ void IOBus::remap_region(IORegion* region)
         PANIC("not found");
     }
 
-    IOMap::iterator now = _io_map.begin();
-
-    for (; now != _io_map.end(); ++now) {
-        if ((*now).second.region == region) {
-            unmap_range((*now).second.start, (*now).second.size);
-            _io_map.insert(IOMapPair(region->start + region->size - 1, *region));
-            break;
-        }
-    }
+    unmap_range(region->start, region->size);
+    _io_map.insert(IOMapPair(region->start + region->size - 1, *region));
+    fill_gaps();
 }
 
 
@@ -456,5 +450,12 @@ void IOBus::unregister_region(IORegion* region)
 
     _regions.erase(region_iter);
     delete region;
+}
+
+
+void IOBus::reset()
+{
+    unmap_range(0, num_ports);
+    fill_gap(0, num_ports);
 }
 

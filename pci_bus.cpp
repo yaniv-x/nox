@@ -273,3 +273,10 @@ void PCIBus::remove_device(PCIDevice& device)
     }
 }
 
+
+void PCIBus::reset()
+{
+    remap_io_regions();
+    _config_address = 0;
+}
+

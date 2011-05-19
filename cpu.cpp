@@ -152,7 +152,7 @@ static inline int find_high_interrupt(uint32_t* reg)
 CPU::CPU(NoxVM& vm, uint id)
     : VMPart ("cpu", vm)
     , _id (id)
-    , _state (INITIALIZING)
+    , _cpu_state (INITIALIZING)
     , _command (WAIT)
     , _kvm_run (NULL)
     , _execution_break (false)
@@ -166,8 +166,21 @@ CPU::CPU(NoxVM& vm, uint id)
     , _version_information (0)
 {
     pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
-
     _apic_timer = application->create_timer((void_callback_t)&CPU::apic_timer_cb, this);
+
+    Lock lock(_cpu_state_mutex);
+
+    for (;;) {
+        switch (_cpu_state) {
+        case WAITING:
+            return;
+        case INITIALIZING:
+            _cpu_state_condition.wait(_cpu_state_mutex);
+            break;
+        default:
+            THROW("cpu init failed");
+        }
+    }
 }
 
 
@@ -327,7 +340,7 @@ void CPU::apic_reset()
     // AMD local apic
 
     memset(_apic_regs, 0, sizeof(_apic_regs));
-    _apic_start = 0xfee00000;
+    _apic_start = APIC_DEFAULT_ADDRESS;
     _apic_end = _apic_start + GUEST_PAGE_SIZE;
 
     _apic_regs[APIC_OFFSET_ID] = _id << APIC_ID_SHIFT;
@@ -351,13 +364,37 @@ void CPU::apic_reset()
 }
 
 
+void CPU::reset_fpu()
+{
+    kvm_fpu fpu_state;
+
+    memset(&fpu_state, 0, sizeof(fpu_state));
+
+    fpu_state.fcw = 0x0040;
+    fpu_state.ftwx = 0xff; // equivalnet to 0x5555
+    fpu_state.mxcsr = 0x1F80;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_FPU, &fpu_state) == -1) {
+        THROW("failed %d", errno);
+    }
+}
+
+
 void CPU::reset()
 {
+    Lock lock(_cpu_state_mutex);
+
+    if (_cpu_state != WAITING) {
+        THROW("invalid cpu state");
+    }
+
     apic_reset();
     reset_regs();
     reset_sys_regs();
-    //KVM_SET_MSRS
-    //KVM_SET_FPU
+    reset_fpu();
+    D_MESSAGE_ONCE("todo: reset MSRs");
+
+    _halt = false;
 }
 
 
@@ -922,15 +959,15 @@ void CPU::run_loop()
 }
 
 
-void CPU::set_state(State state)
+void CPU::set_cpu_state(CPUState state)
 {
-    if (state == _state) {
+    if (state == _cpu_state) {
         return;
     }
 
-    Lock lock(_state_mutex);
-    _state = state;
-    _state_condition.broadcast();
+    Lock lock(_cpu_state_mutex);
+    _cpu_state = state;
+    _cpu_state_condition.broadcast();
 }
 
 
@@ -938,14 +975,13 @@ void CPU::run()
 {
     _thread.enable_signal(SIGUSR1);
     create();
-    reset();
 
     for (;;) {
 
         Lock lock(_command_mutex);
 
         while (_command == WAIT) {
-            set_state(WAITING);
+            set_cpu_state(WAITING);
             _command_condition.wait(_command_mutex);
         }
 
@@ -957,13 +993,13 @@ void CPU::run()
         case WAIT:
             break;
         case RUN:
-            set_state(RUNNING);
+            set_cpu_state(RUNNING);
             run_loop();
             break;
         case TERMINATE:
-            set_state(TERMINATING);
+            set_cpu_state(TERMINATING);
             //terminate();
-            set_state(TERMINATED);
+            set_cpu_state(TERMINATED);
             return;
         }
     }
@@ -987,12 +1023,15 @@ void* CPU::thread_main()
     } catch (Exception& e) {
         E_MESSAGE("unhndled exception -> %s", e.what());
        // therminate();
+        set_cpu_state(ERROR);
     } catch (std::exception& e) {
          E_MESSAGE("unhndled exception -> %s", e.what());
         //therminate();
+         set_cpu_state(ERROR);
     } catch (...) {
          E_MESSAGE("unhndled exception");
         //therminate();
+         set_cpu_state(ERROR);
     }
 
     vcpu = NULL;

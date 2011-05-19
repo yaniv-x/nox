@@ -86,7 +86,7 @@ void VMPart::add_io_region(IORegion* region)
 }
 
 
-void VMPart::remup_regions()
+void VMPart::remap_io_regions()
 {
     std::list<IORegion*>::iterator iter =  _regions.begin();
 

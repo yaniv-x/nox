@@ -77,7 +77,7 @@ public:
 
     NoxVM& get_nox() { return *(NoxVM*)get_container();}
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}

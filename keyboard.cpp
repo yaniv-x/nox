@@ -152,14 +152,12 @@ KbdController::KbdController(NoxVM& nox)
     , _keyboard_output(*this)
     , _mouse_output(*this)
 {
-    IOBus& _bus = nox.get_io_bus();
-
-    _io_region_a = _bus.register_region(*this, IO_PORT_KBD_DATA, 1, this,
-                                        (io_read_byte_proc_t)&KbdController::io_read_port_a,
-                                        (io_write_byte_proc_t)&KbdController::io_write_port_a);
-    _io_region_b = _bus.register_region(*this, IO_PORT_KBD_COMMAND, 1, this,
-                                        (io_read_byte_proc_t)&KbdController::io_read_status,
-                                        (io_write_byte_proc_t)&KbdController::io_write_command);
+    add_io_region(io_bus->register_region(*this, IO_PORT_KBD_DATA, 1, this,
+                                          (io_read_byte_proc_t)&KbdController::io_read_port_a,
+                                          (io_write_byte_proc_t)&KbdController::io_write_port_a));
+    add_io_region(io_bus->register_region(*this, IO_PORT_KBD_COMMAND, 1, this,
+                                          (io_read_byte_proc_t)&KbdController::io_read_status,
+                                          (io_write_byte_proc_t)&KbdController::io_write_command));
 
     pic->wire(_keyboard_output.irq_wire, KBD_IRQ);
     pic->wire(_mouse_output.irq_wire, MOUSE_IRQ);
@@ -167,8 +165,6 @@ KbdController::KbdController(NoxVM& nox)
 
 KbdController::~KbdController()
 {
-    get_nox().get_io_bus().unregister_region(_io_region_a);
-    get_nox().get_io_bus().unregister_region(_io_region_b);
 }
 
 void KbdController::refill_outgoing()
@@ -229,11 +225,16 @@ void KbdController::restore_keyboard_defaults()
 }
 
 
-void KbdController::reset_keyboard()
+void KbdController::reset_keyboard(bool cold)
 {
     restore_keyboard_defaults();
     _keyboard_output.buf.reset();
-    _keyboard_output.irq_wire.drop();
+
+    if (cold) {
+        _keyboard_output.irq_wire.reset();
+    } else {
+        _keyboard_output.irq_wire.drop();
+    }
 }
 
 
@@ -244,10 +245,11 @@ void KbdController::restore_mouse_defaults()
     _mouse_sample_rate = 30;
     _mouse_reporting = false;
     _mouse_reomte_mode = false;
+    _mouse_warp_mode = false;
 }
 
 
-void KbdController::reset_mouse()
+void KbdController::reset_mouse(bool cold)
 {
     _mouse_packet_pending = false;
     _mouse_dx = 0;
@@ -256,7 +258,12 @@ void KbdController::reset_mouse()
     _mouse_write_state = MOUSE_WRITE_STATE_CMD,
     restore_mouse_defaults();
     _mouse_output.buf.reset();
-    _mouse_output.irq_wire.drop();
+
+    if (cold) {
+        _mouse_output.irq_wire.reset();
+    } else {
+        _mouse_output.irq_wire.drop();
+    }
 }
 
 
@@ -358,7 +365,7 @@ void KbdController::write_to_mouse(uint8_t val)
             _mouse_reporting = true;
             break;
         case MOUSE_CMD_RESET:
-            reset_mouse();
+            reset_mouse(false);
             put_mouse_data(KBD_ACK);
             put_mouse_data(KBD_SELF_TEST_REPLAY);
             put_mouse_data(0); // id
@@ -441,7 +448,7 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
             put_data(KBD_ACK);
             break;
         case KBD_CMD_RESET:
-            reset_keyboard();
+            reset_keyboard(false);
             put_data(KBD_ACK);
             put_data(KBD_SELF_TEST_REPLAY);
             break;
@@ -504,16 +511,20 @@ uint8_t KbdController::io_read_status(uint16_t port)
 }
 
 
-void KbdController::reset()
+void KbdController::reset(bool cold)
 {
-    get_nox().get_io_bus().remap_region(_io_region_a);
-    get_nox().get_io_bus().remap_region(_io_region_b);
-
-    reset_mouse();
-    reset_keyboard();
+    reset_mouse(cold);
+    reset_keyboard(cold);
     _state = 0;
     _command_byte = 0;
     _write_state = WRITE_STATE_KBD_CMD;
+    remap_io_regions();
+}
+
+
+void KbdController::reset()
+{
+    reset(true);
 }
 
 
@@ -561,7 +572,7 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         put_data(_command_byte);
         break;
     case CTRL_CMD_SELF_TEST:
-        reset();
+        reset(false);
         _state |= CTRL_STATUS_SELF_TEST_MASK;
         put_data(CTRL_SELF_TEST_REPLAY);
         break;

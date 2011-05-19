@@ -150,6 +150,10 @@ enum {
 
 enum {
     SECTOR_SIZE = 512,
+
+    ATA3_MAX_CYL = 16383,
+    ATA3_MAX_HEAD = 16,
+    ATA3_MAX_SEC = 63,
 };
 
 enum PowerState {
@@ -215,6 +219,7 @@ public:
     void set_device(ATADevice* device) { _ata_device = device;}
 
 private:
+    void reset(bool cold);
     void soft_reset();
     uint8_t io_alt_status(uint16_t port);
     void io_control(uint16_t port, uint8_t val);
@@ -287,8 +292,8 @@ private:
     Mutex _mutex;
     ATADevice* _ata_device;
     Wire& _irq_wire;
-    uint _io_base;
-    uint _control_base;
+    uint _io_base;      // <---------------------------------------- io base logic to atat_host base
+    uint _control_base; // <---------------------------------------- io base logic to atat_host base
 
     union {
         uint16_t _identity[256];
@@ -331,25 +336,40 @@ ATAController::ATAController(VMPart& host, uint id, Wire& irq_wire, uint io_base
 {
 }
 
-void ATAController::reset()
+void ATAController::reset(bool cold)
 {
-    _irq_wire.drop();
+    if (cold) {
+        _irq_wire.reset();
+    } else {
+        _irq_wire.drop();
+    }
 
     _status = 0;
     _control = 0;
     _feature = 0;
-    _data_in = _data_in_end = 0;
+    _data_in = _data_in_end = NULL;
+    _next_sector = _end_sector = 0;
     _error = _ata_device ? DIAGNOSTIC_D0_OK_D1_NOT_PRESENT : DIAGNOSTIC_D0_FAILED_D1_NOT_PRESENT;
     _irq_level = 0;
     set_signature();
 
     _sense = SCSI_SENSE_NO_SENSE;
     _sense_add = SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION;
+
+    _heads_per_cylinder = ATA3_MAX_HEAD;
+    _sectors_per_track = ATA3_MAX_SEC;
 }
+
+
+void ATAController::reset()
+{
+    reset(true);
+}
+
 
 void ATAController::soft_reset()
 {
-    reset();
+    reset(false);
     _status = STATUS_BUSY_MASK | INTERNAL_STATUS_RESET_MASK;
 }
 
@@ -558,9 +578,6 @@ void ATAController::set_signature()
 }
 
 enum {
-    ATA3_MAX_CYL = 16383,
-    ATA3_MAX_HEAD = 16,
-    ATA3_MAX_SEC = 63,
 
     ID_OFFSET_GENERAL_CONF = 0,
     COMPAT_ID_GENERAL_CONF_NOT_REMOVABLE_MASK = (1 << 6),
@@ -2541,6 +2558,12 @@ void ATAController::do_command(uint8_t command)
             //The Sector Count register specifies the number of logical sectors per logical track,
             // and the Device/Head
             // register specifies the maximum head number.
+
+            if (_sectors_per_track != (_count & 0xff) ||
+                _heads_per_cylinder != (_device_reg & DEVICE_ADDRESS_MASK) + 1) {
+                PANIC("implement me");
+            }
+
             D_MESSAGE("sectors per track %u new %u, heads %u new %u",
                       _sectors_per_track,
                       _count & 0xff,
@@ -2919,5 +2942,12 @@ uint8_t ATAHost::io_bus_master_read(uint16_t port)
 void ATAHost::io_bus_master_write(uint16_t port, uint8_t val)
 {
     D_MESSAGE("");
+}
+
+
+void ATAHost::reset()
+{
+    PCIDevice::reset();
+    remap_io_regions();
 }
 

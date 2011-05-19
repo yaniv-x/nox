@@ -251,11 +251,9 @@ void PhysicalRam::unmap_section(KvmMapRef map_ref)
 
 MemoryBus::MemoryBus(NoxVM& nox)
     : VMPart ("Memory bus", nox)
-    , _address_mask (~(1ULL << 20))
 {
-    _address_mask = (1ULL << ADDRESS_BITS) - 1; // for now no A20 support (solve conflict with kvm)
     fill_gap(0, max_pages);
-
+    reset();
     memory_bus = this;
 }
 
@@ -762,5 +760,13 @@ void MemoryBus::release_section(MapSection* section)
     _sections_list.erase(iter);
 
     delete section;
+}
+
+void MemoryBus::reset()
+{
+    _address_mask = ~(1ULL << 20);
+    _address_mask = (1ULL << ADDRESS_BITS) - 1; // for now no A20 support (solve conflict with kvm)
+    clear_area(0, max_pages);
+    fill_gap(0, max_pages);
 }
 

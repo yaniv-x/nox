@@ -46,7 +46,7 @@ public:
               uint8_t revision, uint32_t class_code, bool with_interrupt);
     virtual ~PCIDevice();
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
@@ -87,6 +87,7 @@ private:
     void write_config_dword(uint index, uint32_t val);
     void write_bar(uint reg_index, uint32_t val);
 
+    void reset_config_space();
     void map_io();
     void unmap_io();
     void map_mem();

@@ -106,6 +106,7 @@ public:
         }
     }
 
+    void reset() { _output = 0;}
     uint output() { return _output;}
 
 private:

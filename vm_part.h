@@ -62,7 +62,7 @@ public:
     void reset_all();
 
     void add_io_region(IORegion* region);
-    void remup_regions();
+    void remap_io_regions();
 
     /*enum State {
         todo add states values

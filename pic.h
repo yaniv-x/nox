@@ -43,7 +43,7 @@ public:
         INVALID_IRQ = ~0,
     };
 
-    virtual void reset() {}
+    virtual void reset();
     virtual void start() {}
     virtual void stop() {}
     virtual void power() {}
