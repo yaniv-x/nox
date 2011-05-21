@@ -39,14 +39,12 @@ public:
     CPU(NoxVM& vm, uint id);
     ~CPU();
 
-    NoxVM& get_vm() { return *(NoxVM*)get_container();}
-
     virtual void load(InStream &stream) {}
     virtual void power() {}
     virtual void reset();
     virtual void save(OutStream &stream) {}
-    virtual void start();
-    virtual void stop() {}
+    virtual bool start();
+    virtual bool stop();
 
     void backtrace_64();
 
@@ -57,6 +55,7 @@ public:
     };
 
     enum CPUState {
+        INVALID,
         INITIALIZING,
         WAITING,
         RUNNING,
@@ -91,6 +90,7 @@ private:
     void apic_command(uint32_t val);
     void apic_set_timer(uint32_t val);
     void apic_update_timer();
+    void apic_rearm_timer();
     void apic_reset();
     bool is_apic_enabled();
     bool is_apic_soft_enabled();
@@ -114,6 +114,7 @@ private:
 private:
     uint _id;
     CPUState _cpu_state;
+    CPUState _state_change_target;
     Command _command;
     Mutex _command_mutex;
     Condition _command_condition;
@@ -131,6 +132,7 @@ private:
     uint _interrupt_mark_set;
     uint _interrupt_mark_get;
     bool _halt;
+    bool _halt_on_resume;
     Mutex _halt_mutex;
     Condition _halt_condition;
     uint32_t _version_information;

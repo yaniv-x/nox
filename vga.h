@@ -77,8 +77,8 @@ public:
     virtual ~VGA();
 
     virtual void reset();
-    virtual void start() {}
-    virtual void stop() {}
+    virtual bool start();
+    virtual bool stop();
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}

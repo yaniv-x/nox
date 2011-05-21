@@ -65,6 +65,54 @@ enum {
 };
 
 
+class NoxVM::StateChangeRequest: public NonCopyable {
+public:
+    StateChangeRequest(NoxVM::compleation_routin_t cb, void* opaque)
+        : _cb (cb)
+        , _opaque (opaque)
+        , _started (false)
+    {
+    }
+
+    void notify(bool ok)
+    {
+        if (_cb) {
+            _cb(_opaque, ok);
+        }
+    }
+
+    bool execute(NoxVM& vm)
+    {
+        if (_started) {
+            return cont(vm);
+        }
+
+        _started = true;
+        return start(vm);
+    }
+
+    bool verify_start_condition(NoxVM& vm)
+    {
+        if (_started) {
+            return true;
+        }
+
+        return test(vm);
+    }
+
+protected:
+    virtual bool test(NoxVM& vm) = 0;
+    virtual bool start(NoxVM& vm) = 0;
+    virtual bool cont(NoxVM& vm) = 0;
+
+private:
+    NoxVM::compleation_routin_t _cb;
+    void* _opaque;
+    bool _started;
+};
+
+
+
 NoxVM::NoxVM()
     : VMPart ("Nox")
     , _kvm (new KVM())
@@ -115,6 +163,11 @@ NoxVM::NoxVM()
 
 NoxVM::~NoxVM()
 {
+    while (_stat_change_req_list.empty()) {
+        delete _stat_change_req_list.front();
+        _stat_change_req_list.pop_front();
+    }
+
     _mem_bus->unmap_physical_ram(_low_ram);
     _mem_bus->release_physical_ram(_low_ram);
     _mem_bus->unmap_physical_ram(_mid_ram);
@@ -130,13 +183,22 @@ void NoxVM::register_admin_commands()
 {
     AdminServer* admin = application->get_admin();
 
+    va_type_list_t output_args(2);
+
+    output_args[0] = VA_UINT32_T;     // result
+    output_args[1] = VA_UTF8_T;       // error string
+
     admin->register_command("suspend", "suspend virtual machin execution", "???",
-                            empty_va_type_list, empty_va_type_list,
+                            empty_va_type_list, output_args,
                             (admin_command_handler_t)&NoxVM::suspend_command, this);
 
     admin->register_command("resume", "resume virtual machin execution", "???",
-                            empty_va_type_list, empty_va_type_list,
+                            empty_va_type_list, output_args,
                             (admin_command_handler_t)&NoxVM::resume_command, this);
+
+    admin->register_command("restart", "restart the virtual machin", "???",
+                            empty_va_type_list, output_args,
+                            (admin_command_handler_t)&NoxVM::restart_command, this);
 }
 
 
@@ -276,14 +338,37 @@ void NoxVM::reset()
 
     load_bios();
     reset_bios_stuff();
+
+    _state = READY;
 }
+
+
+class CommandReply {
+public:
+    CommandReply(AdminReplyContext* context)
+        : _context (context)
+    {
+
+    }
+
+    void reply(bool ok)
+    {
+        _context->command_reply(ok ? 0 : 1, ok ? "": "failed");
+        delete this;
+    }
+
+private:
+    AdminReplyContext* _context;
+};
 
 
 void NoxVM::suspend_command(AdminReplyContext* context)
 {
     D_MESSAGE("");
 
-    context->command_reply();
+    CommandReply* r = new CommandReply(context);
+
+    vm_stop((compleation_routin_t)&CommandReply::reply, r);
 }
 
 
@@ -291,7 +376,19 @@ void NoxVM::resume_command(AdminReplyContext* context)
 {
     D_MESSAGE("");
 
-    context->command_reply();
+    CommandReply* r = new CommandReply(context);
+
+    vm_start((compleation_routin_t)&CommandReply::reply, r);
+}
+
+
+void NoxVM::restart_command(AdminReplyContext* context)
+{
+    D_MESSAGE("");
+
+    CommandReply* r = new CommandReply(context);
+
+    vm_restart((compleation_routin_t)&CommandReply::reply, r);
 }
 
 
@@ -528,24 +625,29 @@ void NoxVM::init()
 }
 
 
-
-void NoxVM::start()
+bool NoxVM::start()
 {
     _state = STARTING;
 
-    start_childrens();
+    if (!start_childrens()) {
+        return false;
+    }
 
     _state = RUNNING;
+    return true;
 }
 
 
-void NoxVM::stop()
+bool NoxVM::stop()
 {
     _state = STOPPING;
 
-    stop_childrens();
+    if (!stop_childrens()) {
+        return false;
+    }
 
     _state = STOPPED;
+    return true;
 }
 
 
@@ -564,5 +666,233 @@ void NoxVM::save(OutStream& stream)
 void NoxVM::load(InStream& stream)
 {
 
+}
+
+
+class StateChngeTask: public Task {
+public:
+    StateChngeTask(NoxVM& vm) : Task(), _vm (vm) {}
+
+    virtual void execute()
+    {
+        _vm.handle_state_request();
+    }
+
+private:
+    NoxVM& _vm;
+};
+
+
+class StartRequest: public NoxVM::StateChangeRequest {
+public:
+    StartRequest(NoxVM::compleation_routin_t cb, void* opaque);
+
+    virtual bool test(NoxVM& vm);
+    virtual bool start(NoxVM& vm);
+    virtual bool cont(NoxVM& vm);
+};
+
+
+StartRequest::StartRequest(NoxVM::compleation_routin_t cb, void* opaque)
+    : NoxVM::StateChangeRequest(cb, opaque)
+{
+}
+
+bool StartRequest::test(NoxVM& vm)
+{
+    switch (vm.get_state()) {
+    case VMPart::READY:
+    case VMPart::STOPPED:
+    case VMPart::RUNNING:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool StartRequest::start(NoxVM& vm)
+{
+    switch (vm.get_state()) {
+    case VMPart::READY:
+    case VMPart::STOPPED:
+        return vm.start();
+    case VMPart::SHUTING_DOWN:
+    case VMPart::DOWN:
+    case VMPart::RUNNING:
+        return true;
+    default:
+        PANIC("unexpected state");
+        return false;
+    }
+}
+
+
+bool StartRequest::cont(NoxVM& vm)
+{
+    return vm.start();
+}
+
+
+void NoxVM::vm_start(NoxVM::compleation_routin_t cb, void* opaque)
+{
+    Lock lock(_vm_state_mutex);
+
+    _stat_change_req_list.push_back(new StartRequest(cb, opaque));
+
+    if (_stat_change_req_list.size() == 1) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
+class StopRequest: public NoxVM::StateChangeRequest {
+public:
+    StopRequest(NoxVM::compleation_routin_t cb, void* opaque);
+
+    virtual bool test(NoxVM& vm);
+    virtual bool start(NoxVM& vm);
+    virtual bool cont(NoxVM& vm);
+};
+
+
+StopRequest::StopRequest(NoxVM::compleation_routin_t cb, void* opaque)
+    : NoxVM::StateChangeRequest(cb, opaque)
+{
+}
+
+bool StopRequest::test(NoxVM& vm)
+{
+    switch (vm.get_state()) {
+    case VMPart::READY:
+    case VMPart::STOPPED:
+    case VMPart::SHUTING_DOWN:
+    case VMPart::DOWN:
+    case VMPart::RUNNING:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool StopRequest::start(NoxVM& vm)
+{
+    switch (vm.get_state()) {
+    case VMPart::READY:
+    case VMPart::STOPPED:
+    case VMPart::SHUTING_DOWN:
+    case VMPart::DOWN:
+        return true;
+    case VMPart::RUNNING:
+        return vm.stop();
+    default:
+        PANIC("unexpected state");
+        return false;
+    }
+}
+
+
+bool StopRequest::cont(NoxVM& vm)
+{
+    return vm.stop();
+}
+
+
+void NoxVM::vm_stop(NoxVM::compleation_routin_t cb, void* opaque)
+{
+    Lock lock(_vm_state_mutex);
+
+    _stat_change_req_list.push_back(new StopRequest(cb, opaque));
+
+    if (_stat_change_req_list.size() == 1) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
+void NoxVM::resume_mode_change()
+{
+    AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+    application->add_task(task.get());
+}
+
+
+void NoxVM::handle_state_request()
+{
+    Lock lock(_vm_state_mutex);
+
+    if (_stat_change_req_list.empty()) {
+        D_MESSAGE("empty");
+        return;
+    }
+
+    StateChangeRequest* request = _stat_change_req_list.front();
+
+    if (!request->verify_start_condition(*this)) {
+        request->notify(false);
+    } else {
+        if (!request->execute(*this)) {
+            return;
+        }
+
+        request->notify(true);
+    }
+
+    _stat_change_req_list.pop_front();
+    delete request;
+
+    if (!_stat_change_req_list.empty()) {
+         AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+         application->add_task(task.get());
+    }
+}
+
+
+void NoxVM::vm_reset()
+{
+    Lock lock(_vm_state_mutex);
+    reset();
+}
+
+
+class ResetRequest: public NoxVM::StateChangeRequest {
+public:
+    ResetRequest()
+        : NoxVM::StateChangeRequest(NULL, NULL)
+    {
+    }
+
+    virtual bool test(NoxVM& vm);
+    virtual bool start(NoxVM& vm) { vm.reset(); return true;}
+    virtual bool cont(NoxVM& vm) { PANIC("unexpected") return false;}
+};
+
+
+
+bool ResetRequest::test(NoxVM& vm)
+{
+    switch (vm.get_state()) {
+    case VMPart::INIT_DONE:
+    case VMPart::READY:
+    case VMPart::STOPPED:
+        return true;
+    default:
+        return false;
+    }
+}
+
+
+void NoxVM::vm_restart(compleation_routin_t cb, void* opaque)
+{
+    Lock lock(_vm_state_mutex);
+    _stat_change_req_list.push_back(new StopRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new ResetRequest());
+    _stat_change_req_list.push_back(new StartRequest(cb, opaque));
+
+    if (_stat_change_req_list.size() == 3) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
 }
 

@@ -229,6 +229,8 @@ static inline bool is_reserved_slot(uint id)
 
 void PCIBus::add_device(PCIDevice& device)
 {
+    ASSERT(get_state() == VMPart::INIT);
+
     uint index = device.get_hard_id();
 
     if (index < PCI_MAX_DEVICES) {
@@ -265,6 +267,8 @@ void PCIBus::add_device(PCIDevice& device)
 
 void PCIBus::remove_device(PCIDevice& device)
 {
+    ASSERT(get_state() == VMPart::DOWN);
+
     for (uint i = 0; i < PCI_MAX_DEVICES; i++) {
         if (_devices[i] == &device) {
             _devices[i] = NULL;

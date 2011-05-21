@@ -126,6 +126,11 @@ RunLoop::~RunLoop()
         delete *_dead_list.begin();
         _dead_list.pop_front();
     }
+
+    while(!_tasks_list.empty()) {
+        _tasks_list.front()->unref();
+        _tasks_list.pop_front();
+    }
 }
 
 
@@ -145,6 +150,7 @@ public:
         , _opaque (opaque)
         , _next_time (0)
         , _interval (0)
+        , _resume_delta (0)
     {
     }
 
@@ -163,6 +169,7 @@ public:
     {
         _next_time = 0;
         _interval = 0;
+        _resume_delta = 0;
 
         if (sync) {
             _loop.sync();
@@ -183,6 +190,9 @@ public:
     }
 
     void rearm();
+
+    virtual void suspend();
+    virtual void resume();
 
     inline void execute()
     {
@@ -236,6 +246,7 @@ private:
     RingItem _link;
     nox_time_t _next_time;
     nox_time_t _interval;
+    nox_time_t _resume_delta;
 };
 
 
@@ -281,6 +292,42 @@ void IntervalTimer::arm(nox_time_t delte, bool auto_arm)
     push();
 
     if (_loop._timers.head() == &_link && !pthread_equal(pthread_self(), _loop._run_loop_thread)) {
+        _loop.wakeup();
+    }
+}
+
+void IntervalTimer::suspend()
+{
+    Lock lock(_loop._timers_mutex);
+
+    if (!_loop._timers.is_linked(_link)) {
+        _resume_delta = 0;
+        return;
+    }
+
+    _loop._timers.remove(_link);
+
+    nox_time_t now = get_monolitic_time();
+
+    _resume_delta = (_next_time > now) ? _next_time - now : 1;
+}
+
+
+void IntervalTimer::resume()
+{
+    Lock lock(_loop._timers_mutex);
+
+    ASSERT(!_loop._timers.is_linked(_link));
+
+    if (!_resume_delta) {
+        return;
+    }
+
+    _next_time = get_monolitic_time() + _resume_delta;
+    _resume_delta = 0;
+    push();
+
+    if (_loop._timers.head() == &_link && !_loop.is_self_thread_equal()) {
         _loop.wakeup();
     }
 }
@@ -439,9 +486,38 @@ void RunLoop::run_timers()
     }
 }
 
+
+void RunLoop::add_task(Task* task)
+{
+    Lock lock(_tasks_mutex);
+
+    _tasks_list.push_back(task->ref());
+
+    if (_tasks_list.size() == 1) {
+        wakeup();
+    }
+}
+
+
 void RunLoop::run_tasks()
 {
+    Lock lock(_tasks_mutex);
+    if (_tasks_list.empty()) {
+        return;
+    }
+
+    TasksList current_tasks;
+    current_tasks.swap(_tasks_list);
+    lock.unlock();
+
+    while (!current_tasks.empty()) {
+        Task* task = current_tasks.front();
+        current_tasks.pop_front();
+        task->execute();
+        task->unref();
+    }
 }
+
 
 int RunLoop::get_timeout_val()
 {

@@ -28,6 +28,7 @@
 #define _H_NOX_VM
 
 #include "vm_part.h"
+#include "threads.h"
 
 class KVM;
 class MemoryBus;
@@ -61,9 +62,21 @@ public:
     void set_cdrom(const char* file_name);
     void set_boot_device(bool from_cdrom);
 
+    typedef void (*compleation_routin_t)(void *, bool ok);
+    void vm_reset();
+    void vm_start(compleation_routin_t cb, void* opaque);
+    void vm_stop(compleation_routin_t cb, void* opaque);
+    void vm_restart(compleation_routin_t cb, void* opaque);
+
+    void resume_mode_change();
+    void handle_state_request();
+
+    class StateChangeRequest;
+
+protected:
     virtual void reset();
-    virtual void start();
-    virtual void stop();
+    virtual bool start();
+    virtual bool stop();
     virtual void power();
     virtual void save(OutStream& stream);
     virtual void load(InStream& stream);
@@ -87,8 +100,10 @@ private:
     void register_admin_commands();
     void suspend_command(AdminReplyContext* context);
     void resume_command(AdminReplyContext* context);
+    void restart_command(AdminReplyContext* context);
 
 private:
+    Mutex _vm_state_mutex;
     std::auto_ptr<KVM> _kvm;
     std::auto_ptr<IOBus> _io_bus;
     std::auto_ptr<MemoryBus> _mem_bus;
@@ -115,6 +130,12 @@ private:
 
     bool _nmi_mask;
     uint8_t _misc_port;
+
+    std::list<StateChangeRequest*> _stat_change_req_list;
+
+    friend class StopRequest;
+    friend class StartRequest;
+    friend class ResetRequest;
 };
 
 

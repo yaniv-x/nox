@@ -56,6 +56,7 @@ static inline std::string strip_pretty_function(const std::string& pretty_functi
     std::string log_message;                                                        \
     sprintf(log_message, #type": %s: " format"\n", FUNC_NAME, ## __VA_ARGS__);      \
     printf(log_message.c_str());                                                    \
+    fflush(stdout);                                                                 \
 }
 
 #define E_MESSAGE(format, ...) OUTPUT_MESSAGE(ERROR, format, ## __VA_ARGS__)

@@ -859,7 +859,10 @@ void KbdController::key_common(NoxKey code, uint scan_index)
 
 void KbdController::key_down(NoxKey code)
 {
-    // todo: test running state
+    if (get_state() != VMPart::RUNNING) {
+        return;
+    }
+
     key_common(code, MAKE);
 }
 
@@ -867,7 +870,9 @@ static int flipflop = 0;
 
 void KbdController::key_up(NoxKey code)
 {
-    // todo: test running state
+    if (get_state() != VMPart::RUNNING) {
+        return;
+    }
 
     // temporary: sticky alt
     if (code == NOX_KEY_LEFT_ALT) {
@@ -911,9 +916,7 @@ void KbdController::mouse_motion(int dx, int dy)
 {
     Lock lock(_mutex);
 
-    // todo: test running state
-
-    if (_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) {
+    if ((_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK)  || get_state() != VMPart::RUNNING) {
         return;
     }
 
@@ -933,9 +936,7 @@ void KbdController::mouse_button_press(MouseButton button)
 {
     Lock lock(_mutex);
 
-    // todo: test running state
-
-    if (_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) {
+    if ((_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) || get_state() != VMPart::RUNNING) {
         return;
     }
 
@@ -954,9 +955,7 @@ void KbdController::mouse_button_release(MouseButton button)
 {
     Lock lock(_mutex);
 
-    // todo: test running state
-
-    if (_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) {
+    if ((_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) || get_state() != VMPart::RUNNING) {
         return;
     }
 

@@ -40,36 +40,6 @@ public:
     VMPart(const char* name, VMPart& container);
     virtual ~VMPart();
 
-    void add_part(VMPart* chaild);
-    void remove_part(VMPart* chaild);
-
-    const char* get_name() { return _name.c_str();}
-    VMPart* get_container() { return _container;}
-    NoxVM& get_nox();
-
-    virtual void reset() = 0;
-    virtual void start() = 0;
-    virtual void stop() = 0;
-    virtual void power() = 0;
-    virtual void save(OutStream& stream) = 0;
-    virtual void load(InStream& stream) = 0;
-
-    void stop_childrens();
-    void stop_all();
-    void start_childrens();
-    void start_all();
-    void reset_childrens();
-    void reset_all();
-
-    void add_io_region(IORegion* region);
-    void remap_io_regions();
-
-    /*enum State {
-        todo add states values
-        + set state
-        + get state
-    };*/
-
     enum State {
         INIT,
         INIT_DONE,
@@ -83,7 +53,36 @@ public:
         DOWN,
     };
 
+    State get_state() { return _state;}
+    const std::string& get_name() { return _name;}
+
+protected:
+    NoxVM& get_nox();
+    VMPart* get_container() { return _container;}
+
+    virtual void reset() = 0;
+    virtual bool start() = 0;
+    virtual bool stop() = 0;
+    virtual void power() = 0;
+    virtual void save(OutStream& stream) = 0;
+    virtual void load(InStream& stream) = 0;
+
+    void add_io_region(IORegion* region);
+    void remap_io_regions();
+
+    void transition_done();
+
 private:
+    void add_part(VMPart* chaild);
+    void remove_part(VMPart* chaild);
+
+    bool stop_childrens();
+    bool stop_all();
+    bool start_childrens();
+    bool start_all();
+    void reset_childrens();
+    void reset_all();
+
     VMPart(const char* name);
     void unregister_regions();
 
@@ -105,7 +104,7 @@ inline NoxVM& VMPart::get_nox()
         return *(NoxVM*)this;
     }
 
-    return get_container()->get_nox();
+    return _container->get_nox();
 }
 
 #endif

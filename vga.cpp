@@ -44,6 +44,7 @@ enum {
     VRAM_START = 0xa0000,
     VGA_VRAM_SIZE = 256 * KB,
 
+    UPDATE_INTERVAL = 1000 * 1000 * 1000 / 30,
     CARET_RATE = 1000 * 1000 * 1000 / 2,
 
     IO_ATTRIB_CONTROL_INDEX = 0x3c0,
@@ -895,6 +896,7 @@ void VGA::reset()
     _mmap_state = ~0;
     _vga_active = false;
     _vga_draw_logic = false;
+    memset(_vram, 0,  VBE_VRAM_SIZE);
     memset(_fb->get(), 0,  _fb->size());
 
     _misc_output = 0;
@@ -1330,6 +1332,7 @@ void VGA::conditional_mode_change()
             _vga_active = false;
             _vga_draw_logic = false;
             blank_screen();
+            _update_timer->disarm();
         }
         return;
     }
@@ -1370,7 +1373,7 @@ void VGA::conditional_mode_change()
 
     propagate_fb();
 
-    _update_timer->arm(1000 * 1000 * 1000 / 30, true); // add arm/disarm to start/stop
+    _update_timer->arm(UPDATE_INTERVAL, true);
 }
 
 
@@ -1680,6 +1683,8 @@ void VGA::enable_vbe()
 
     if (_vbe_regs[VBE_REG_DEPTH] == 32) {
         _update_timer->disarm();
+    } else {
+        _update_timer->arm(UPDATE_INTERVAL, true);
     }
 
     _width = _vbe_regs[VBE_REG_X_RES];
@@ -1855,5 +1860,23 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
     } else {
         W_MESSAGE("bad port 0x%x", port);
     }
+}
+
+
+bool VGA::start()
+{
+    if (_vga_active || (is_vbe_active() && _vbe_regs[VBE_REG_DEPTH] != 32)) {
+        _update_timer->arm(UPDATE_INTERVAL, true);
+    }
+
+    return true;
+}
+
+
+bool VGA::stop()
+{
+    _update_timer->disarm();
+
+    return true;
 }
 

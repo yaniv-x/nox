@@ -27,7 +27,6 @@
 #ifndef _H_RUN_LOOP
 #define _H_RUN_LOOP
 
-#include "utils.h"
 #include "threads.h"
 #include "ring.h"
 
@@ -37,6 +36,8 @@ public:
     virtual void arm(nox_time_t delte, bool auto_arm) = 0;
     virtual void disarm(bool sync = false) = 0;
     virtual void modifay(nox_time_t delte) = 0;
+    virtual void suspend() = 0;
+    virtual void resume() = 0;
 
 protected:
     Timer() {}
@@ -62,6 +63,27 @@ protected:
     virtual ~FDEvent() {}
 };
 
+
+class Task: public NonCopyable {
+public:
+    Task()
+        : _refs(1)
+    {
+    }
+
+    Task* ref() {_refs.inc(); return this;}
+    void unref() { if (!_refs.dec()) delete this;}
+
+    virtual void execute() = 0;
+
+protected:
+    virtual ~Task() {}
+
+private:
+    Atomic _refs;
+};
+
+
 class RunLoop: public NonCopyable {
 public:
     RunLoop();
@@ -73,6 +95,7 @@ public:
     Timer* create_timer(void_callback_t proc, void* opaque);
     Event* create_event(void_callback_t proc, void* opaque);
     FDEvent* create_fd_event(int fd, void_callback_t proc, void* opaque);
+    void add_task(Task* task);
 
     bool is_self_thread_equal() { return pthread_equal(pthread_self(), _run_loop_thread);}
 
@@ -103,6 +126,10 @@ private:
     Mutex _timers_mutex;
     Ring _timers;
     EpollEvent* _timer_event;
+
+    Mutex _tasks_mutex;
+    typedef std::list<Task*> TasksList;
+    TasksList _tasks_list;
 
     Mutex _sync_lock;
     Condition _sync_condition;

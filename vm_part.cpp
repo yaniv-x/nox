@@ -126,47 +126,97 @@ void VMPart::reset_childrens()
     }
 }
 
-
-void VMPart::start_all()
+void VMPart::transition_done()
 {
-    _state = STARTING;
+    switch (_state) {
+    case STARTING:
+        _state = RUNNING;
+        break;
+    case STOPPING:
+        _state = STOPPED;
+        break;
+    default:
+        PANIC("unexpected state");
+    }
 
-    start();
-
-    _state = RUNNING;
-
-    start_childrens();
+    get_nox().resume_mode_change();
 }
 
 
-void VMPart::start_childrens()
+bool VMPart::start_all()
+{
+    switch (_state) {
+    case RUNNING:
+        break;
+    case STOPPED:
+    case READY:
+        _state = STARTING;
+        if (start()) {
+            _state = RUNNING;
+            break;
+        }
+    case STARTING:
+        return false;
+    default:
+        D_MESSAGE("unexpected %u", get_state());
+        return false;
+    }
+
+    return start_childrens();
+}
+
+
+bool VMPart::start_childrens()
 {
     VMParts::iterator iter = _parts.begin();
 
     for (; iter != _parts.end(); iter++) {
-        (*iter)->start_all();
+        if (!(*iter)->start_all()) {
+            return false;
+        }
     }
+
+    return true;
 }
 
 
-void VMPart::stop_all()
+bool VMPart::stop_all()
 {
-    stop_childrens();
+    if (!stop_childrens()) {
+        return false;
+    }
 
-    _state = STOPPING;
+    switch (_state) {
+    case RUNNING:
+        _state = STOPPING;
 
-    stop();
+        if (!stop()) {
+            break;
+        }
 
-    _state = STOPPED;
+        _state = STOPPED;
+    case STOPPED:
+        return true;
+    case STOPPING:
+        break;
+    default:
+        D_MESSAGE("unexpected %u", get_state());
+    }
+
+    return false;
 }
 
 
-void VMPart::stop_childrens()
+bool VMPart::stop_childrens()
 {
     VMParts::reverse_iterator iter = _parts.rbegin();
 
     for (; iter != _parts.rend(); iter++) {
-        (*iter)->stop_all();
+        if (!(*iter)->stop_all()) {
+            return false;
+        }
     }
+
+    return true;
 }
 

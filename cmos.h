@@ -40,11 +40,9 @@ public:
     CMOS(NoxVM& vm);
     virtual ~CMOS();
 
-    NoxVM& nox() { return *(NoxVM*)get_container();}
-
     virtual void reset();
-    virtual void start() {}
-    virtual void stop() {}
+    virtual bool start();
+    virtual bool stop();
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
@@ -104,6 +102,7 @@ private:
     uint8_t _seconds_alarm;
     uint8_t _minutes_alarm;
     uint8_t _hours_alarm;
+    bool _alarm_on_resume;
 };
 
 #endif

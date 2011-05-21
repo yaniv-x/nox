@@ -162,11 +162,14 @@ void CMOS::reset()
     _reg_b &= ~REG_B_CLEAR_ON_RESET_MASK;
     _reg_c = 0;
     remap_io_regions();
+    _alarm_on_resume = false;
 }
 
 
 void CMOS::period_timer_proc()
 {
+    ASSERT(get_state() == VMPart::RUNNING);
+
     Lock lock(_mutex);
 
     if ((_reg_b & REG_A_RATE_MASK) && (_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
@@ -178,6 +181,13 @@ void CMOS::period_timer_proc()
 
 void CMOS::alarm_timer_proc()
 {
+    if (get_state() == VMPart::STOPPING || get_state() == VMPart::STOPPED) {
+        _alarm_on_resume = true;
+        return;
+    }
+
+    ASSERT(get_state() == VMPart::RUNNING);
+
     Lock lock(_mutex);
 
     if ((_reg_b & REG_B_HALT_CLOCK_MASK) || !(_reg_b & REG_B_ENABLE_ALARM_INTERRUPT_MASK)) {
@@ -191,6 +201,8 @@ void CMOS::alarm_timer_proc()
 
 void CMOS::update_timer_proc()
 {
+    ASSERT(get_state() == VMPart::RUNNING);
+
     Lock lock(_mutex);
 
     if ((_reg_b & REG_B_HALT_CLOCK_MASK) || !(_reg_b & REG_B_ENABLE_UPDATE_INTERRUPT_MASK)) {
@@ -307,7 +319,7 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
     Lock lock(_mutex);
 
     if (port == 0x70) {
-        nox().set_nmi_mask(!!(val & NMI_MASK));
+        get_nox().set_nmi_mask(!!(val & NMI_MASK));
         _index = val & INDEX_MASK;
     } else if (port == 0x71) {
         switch (_index) {
@@ -535,8 +547,37 @@ uint8_t CMOS::read_byte(uint16_t port)
 
 void CMOS::host_write(uint index, uint value)
 {
+    ASSERT(get_nox().get_state() == VMPart::RESETING);
     ASSERT(index >= USER_0 && index < (1 << 8));
 
     _user_ares[index - USER_0] = value;
+}
+
+
+bool CMOS::start()
+{
+    if ((_reg_a & REG_A_RATE_MASK) && (_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
+        _period_timer->arm(rates_table[_reg_a & REG_A_RATE_MASK], true);
+    }
+
+    if (!(_reg_b & REG_B_HALT_CLOCK_MASK) && (_reg_b & REG_B_ENABLE_UPDATE_INTERRUPT_MASK)) {
+        _update_timer->arm(1000 * 1000 * 1000, true);
+    }
+
+    if (_alarm_on_resume) {
+        _alarm_timer->arm(0, false);
+        _alarm_on_resume = false;
+    }
+
+    return true;
+}
+
+
+bool CMOS::stop()
+{
+    _period_timer->disarm();
+    _update_timer->disarm();
+
+    return true;
 }
 
