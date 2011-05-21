@@ -70,13 +70,13 @@ enum VAType {
 };
 
 
-struct __attribute__ ((__packed__)) LinkMessage {
+struct __attribute__ ((__packed__)) VALinkMessage {
     uint32_t magic;
     uint32_t version;
 };
 
 
-struct __attribute__ ((__packed__)) LinkReply {
+struct __attribute__ ((__packed__)) VALinkReply {
     uint32_t magic;
     uint32_t version;
     uint16_t size;
@@ -85,25 +85,25 @@ struct __attribute__ ((__packed__)) LinkReply {
 };
 
 
-struct __attribute__ ((__packed__)) MessageHeader {
+struct __attribute__ ((__packed__)) VAMessageHeader {
     uint32_t type; //VA_MESSAGE_TYPE_?
     uint16_t size;
     uint16_t reserved_mbz;
 };
 
 
-struct __attribute__ ((__packed__)) Command {
+struct __attribute__ ((__packed__)) VACommand {
     uint32_t command_code;
     uint32_t command_serial;
 };
 
 
-struct __attribute__ ((__packed__)) CommandReply {
+struct __attribute__ ((__packed__)) VACommandReply {
     uint32_t command_serial;
 };
 
 
-struct __attribute__ ((__packed__)) CommandError {
+struct __attribute__ ((__packed__)) VACommandError {
     uint32_t command_serial;
     uint32_t error_code;
     uint16_t message_string;

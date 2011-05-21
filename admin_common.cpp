@@ -375,20 +375,20 @@ bool AdminLocalCommand::process_command(AdminReplyContext* context, uint8_t* dat
 void AdminLocalCommand::replyv(uint32_t serial, AdminTransmitContext* context, va_list ap)
 {
     uint fixed_output_size = get_fixed_output_size();
-    uint buf_size = sizeof(MessageHeader) + sizeof(CommandReply) + fixed_output_size;
+    uint buf_size = sizeof(VAMessageHeader) + sizeof(VACommandReply) + fixed_output_size;
     std::auto_ptr<AdminBuf> buf(new AdminBuf(buf_size));
 
-    MessageHeader* header = (MessageHeader*)buf->data();
+    VAMessageHeader* header = (VAMessageHeader*)buf->data();
     header->type = VA_MESSAGE_TYPE_REPLY;
-    header->size = buf_size - sizeof(MessageHeader);
-    CommandReply* reply = (CommandReply*)(header + 1);
+    header->size = buf_size - sizeof(VAMessageHeader);
+    VACommandReply* reply = (VACommandReply*)(header + 1);
     reply->command_serial = serial;
 
     AdminBuf* var_buf;
     StdargSource arg_source(ap);
 
     build(arg_source, get_output_list(), num_output_variable_args(), (uint8_t*)(reply + 1),
-          buf->size() - sizeof(MessageHeader) - sizeof(CommandReply), &var_buf);
+          buf->size() - sizeof(VAMessageHeader) - sizeof(VACommandReply), &var_buf);
 
     if (var_buf) {
         std::auto_ptr<AdminBuf> tmp(var_buf);
@@ -417,20 +417,20 @@ void AdminRemoteCommand::call_common(uint32_t serial, AdminTransmitContext* cont
                                      ArgSource& args)
 {
     uint fixed_input_size = get_fixed_input_size();
-    uint buf_size = sizeof(MessageHeader) + sizeof(Command) + fixed_input_size;
+    uint buf_size = sizeof(VAMessageHeader) + sizeof(VACommand) + fixed_input_size;
     std::auto_ptr<AdminBuf> buf(new AdminBuf(buf_size));
 
-    MessageHeader* header = (MessageHeader*)buf->data();
+    VAMessageHeader* header = (VAMessageHeader*)buf->data();
     header->type = VA_MESSAGE_TYPE_COMMAND;
-    header->size = buf_size - sizeof(MessageHeader);
-    Command* command = (Command*)(header + 1);
+    header->size = buf_size - sizeof(VAMessageHeader);
+    VACommand* command = (VACommand*)(header + 1);
     command->command_code = get_command_code();
     command->command_serial = serial;
 
     AdminBuf* var_buf = NULL;
 
     build(args, get_input_list(), num_input_variable_args(), (uint8_t*)(command + 1),
-          buf->size() - sizeof(MessageHeader) - sizeof(Command), &var_buf);
+          buf->size() - sizeof(VAMessageHeader) - sizeof(VACommand), &var_buf);
 
     if (var_buf) {
         std::auto_ptr<AdminBuf> tmp(var_buf);

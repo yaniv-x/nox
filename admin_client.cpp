@@ -271,22 +271,22 @@ void AdminClient::write(const void* source, uint size)
 
 void AdminClient::link()
 {
-    LinkMessage link_messsage;
+    VALinkMessage link_messsage;
     link_messsage.magic = NOX_ADMIN_MAGIC;
     link_messsage.version = NOX_ADMIN_VERSION;
 
     write(&link_messsage, sizeof(link_messsage));
 
-    LinkReply reply;
+    VALinkReply reply;
 
     read(&reply, sizeof(reply));
 
     if (reply.magic != NOX_ADMIN_MAGIC || reply.version != NOX_ADMIN_VERSION ||
-        reply.error != VA_ERROR_OK || reply.size < sizeof(LinkReply)) {
+        reply.error != VA_ERROR_OK || reply.size < sizeof(VALinkReply)) {
         THROW("failed");
     }
 
-    uint more = reply.size - sizeof(LinkReply);
+    uint more = reply.size - sizeof(VALinkReply);
 
     if (more) {
         AutoArray<uint8_t> buf(new uint8_t[more]);
@@ -352,7 +352,7 @@ void AdminClient::wait_reply()
             write(buf->data(), buf->size());
         }
 
-        MessageHeader header;
+        VAMessageHeader header;
 
         read(&header, sizeof(header));
 
@@ -366,11 +366,11 @@ void AdminClient::wait_reply()
                 THROW("MESSAGE_TYPE_COMMAND: command in progess");
             }
 
-            if (header.size < sizeof(Command)) {
+            if (header.size < sizeof(VACommand)) {
                 THROW("bad command");
             }
 
-            Command* command = (Command*)body.get();
+            VACommand* command = (VACommand*)body.get();
 
             _active_command.reset(get_local_command(command->command_code));
 
@@ -382,7 +382,7 @@ void AdminClient::wait_reply()
 
 
             _active_command->process_command(NULL, (uint8_t*)(command + 1),
-                                             header.size - sizeof(Command));
+                                             header.size - sizeof(VACommand));
 
             break;
         }
@@ -391,17 +391,18 @@ void AdminClient::wait_reply()
                 THROW("MESSAGE_TYPE_REPLY: no active call");
             }
 
-            if (header.size < sizeof(CommandReply)) {
+            if (header.size < sizeof(VACommandReply)) {
                 THROW("bad reply");
             }
 
-            CommandReply* reply = (CommandReply*)body.get();
+            VACommandReply* reply = (VACommandReply*)body.get();
 
             if (reply->command_serial != _call_serial) {
                 THROW("incorrect serial");
             }
 
-            _active_call->process_reply((uint8_t*)(reply + 1), header.size - sizeof(CommandReply));
+            _active_call->process_reply((uint8_t*)(reply + 1),
+                                        header.size - sizeof(VACommandReply));
             _active_call.reset(NULL);
             return;
         }
@@ -410,11 +411,11 @@ void AdminClient::wait_reply()
                 THROW("VA_MESSAGE_TYPE_ERROR: no active call");
             }
 
-            if (header.size < sizeof(CommandError)) {
+            if (header.size < sizeof(VACommandError)) {
                 THROW("bad error message");
             }
 
-            CommandError* err = (CommandError*)body.get();
+            VACommandError* err = (VACommandError*)body.get();
 
             if (err->command_serial != _call_serial) {
                 THROW("incorrect serial");
