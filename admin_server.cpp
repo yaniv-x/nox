@@ -48,7 +48,7 @@ public:
         , _event (application->create_fd_event(_socket,
                                                (void_callback_t)&Connection::on_event,
                                                this))
-        , _recive_buf (new uint8_t[sizeof(LinkMessage)])
+        , _recive_buf (new uint8_t[sizeof(VALinkMessage)])
         , _recive_start (NULL)
         , _recive_end (NULL)
         , _transmit_start (NULL)
@@ -56,7 +56,7 @@ public:
         , _active (false)
     {
         _recive_start = _recive_buf;
-        _recive_end = _recive_buf + sizeof(LinkMessage);
+        _recive_end = _recive_buf + sizeof(VALinkMessage);
         _recive_done = &Connection::handle_link;
         connection_count.inc();
     }
@@ -111,21 +111,21 @@ public:
             E_MESSAGE("reply while no active command");
             shut_connection();
         } else {
-            uint size = sizeof(MessageHeader) + sizeof(CommandError) +
+            uint size = sizeof(VAMessageHeader) + sizeof(VACommandError) +
                         (error_str.length() ? error_str.length() + 1 : 0);
             AdminBuf* buf = new AdminBuf(size);
 
-            MessageHeader* header = (MessageHeader*)buf->data();
+            VAMessageHeader* header = (VAMessageHeader*)buf->data();
             header->type = VA_MESSAGE_TYPE_ERROR;
-            header->size = size - sizeof(MessageHeader);
-            CommandError* err = (CommandError*)(header + 1);
+            header->size = size - sizeof(VAMessageHeader);
+            VACommandError* err = (VACommandError*)(header + 1);
             err->command_serial = _command_serial;
             err->error_code = error_code;
 
             if (!error_str.length()) {
                 err->message_string = 0;
             } else {
-                err->message_string = sizeof(CommandError);
+                err->message_string = sizeof(VACommandError);
                 strcpy((char *)err + err->message_string, error_str.c_str());
             }
 
@@ -177,7 +177,7 @@ private:
 
     void handle_link()
     {
-        LinkMessage link = *(LinkMessage*)_recive_buf;
+        VALinkMessage link = *(VALinkMessage*)_recive_buf;
         delete[] _recive_buf;
         _recive_buf = NULL;
 
@@ -186,16 +186,16 @@ private:
             return;
         }
 
-        AdminBuf* buf = new AdminBuf(sizeof(LinkReply));
+        AdminBuf* buf = new AdminBuf(sizeof(VALinkReply));
         _transmit_list.push_back(buf);
 
-        LinkReply* link_reply = (LinkReply*)buf->data();
+        VALinkReply* link_reply = (VALinkReply*)buf->data();
 
         _transmit_start = buf->data();
-        _transmit_end = _transmit_start + sizeof(LinkReply);
+        _transmit_end = _transmit_start + sizeof(VALinkReply);
 
         link_reply->magic = NOX_ADMIN_MAGIC;
-        link_reply->size = sizeof(LinkReply);
+        link_reply->size = sizeof(VALinkReply);
         link_reply->version = NOX_ADMIN_VERSION;
         link_reply->message_string = 0;
 
@@ -262,13 +262,13 @@ private:
                 break;
             }
 
-            if (_message_header.size < sizeof(Command)) {
+            if (_message_header.size < sizeof(VACommand)) {
                 E_MESSAGE("invalid command message size %u", _message_header.size);
                 shut_connection();
                 break;
             }
 
-            Command* cmd = (Command*)data;
+            VACommand* cmd = (VACommand*)data;
 
             _current_handler.reset(server->get_handler(cmd->command_code));
 
@@ -279,8 +279,8 @@ private:
             }
 
             _command_serial = cmd->command_serial;
-            if (!_current_handler->process_command(ref(), data + sizeof(Command),
-                                                   _message_header.size - sizeof(Command))) {
+            if (!_current_handler->process_command(ref(), data + sizeof(VACommand),
+                                                   _message_header.size - sizeof(VACommand))) {
                 W_MESSAGE("command abort");
                 unref();
                 // todo: keep connection and send error
@@ -389,7 +389,7 @@ private:
     FDEvent* _event;
     Mutex _detach_mutex;
 
-    MessageHeader _message_header;
+    VAMessageHeader _message_header;
     uint8_t* _recive_buf;
 
     uint8_t* _recive_start;
