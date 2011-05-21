@@ -54,8 +54,8 @@ public:
     void unregister_region(IORegion* region);
 
     virtual void reset();
-    virtual void start() {}
-    virtual void stop() {}
+    virtual bool start() { return true;}
+    virtual bool stop() { return true;}
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}

@@ -153,6 +153,7 @@ CPU::CPU(NoxVM& vm, uint id)
     : VMPart ("cpu", vm)
     , _id (id)
     , _cpu_state (INITIALIZING)
+    , _state_change_target (INVALID)
     , _command (WAIT)
     , _kvm_run (NULL)
     , _execution_break (false)
@@ -163,6 +164,7 @@ CPU::CPU(NoxVM& vm, uint id)
     , _interrupt_mark_set(0)
     , _interrupt_mark_get (0)
     , _halt (false)
+    , _halt_on_resume (false)
     , _version_information (0)
 {
     pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
@@ -211,7 +213,7 @@ void CPU::setup_cpuid()
 
     cpuid_info.cpuid2.nent = NUM_CPUID_ENTS;
 
-    if (ioctl(get_vm().get_kvm().get_dev_fd(), KVM_GET_SUPPORTED_CPUID, &cpuid_info) == -1) {
+    if (ioctl(get_nox().get_kvm().get_dev_fd(), KVM_GET_SUPPORTED_CPUID, &cpuid_info) == -1) {
         THROW("get supported cpuid failed");
     }
 
@@ -244,7 +246,7 @@ void CPU::setup_cpuid()
 
 void CPU::create()
 {
-    KVM& kvm = get_vm().get_kvm();
+    KVM& kvm = get_nox().get_kvm();
 
     _vcpu_fd.reset(ioctl(kvm.get_vm_fd(), KVM_CREATE_VCPU, _id));
 
@@ -395,6 +397,7 @@ void CPU::reset()
     D_MESSAGE_ONCE("todo: reset MSRs");
 
     _halt = false;
+    _halt_on_resume = false;
 }
 
 
@@ -438,6 +441,11 @@ void CPU::halt()
     for (;;) {
 
         if (_kvm_run->if_flag && pic->interrupt_test()) {
+            break;
+        }
+
+        if (_execution_break) {
+            _halt_on_resume = true;
             break;
         }
 
@@ -883,9 +891,28 @@ inline void CPU::sync_tpr()
     apic_update_priority();
 }
 
+void CPU::apic_rearm_timer()
+{
+    if (!is_apic_enabled()) {
+        return;
+    }
+
+    if (_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] &&
+                                  !(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
+        _apic_timer->arm(_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] * _apic_timer_div, true);
+    }
+}
+
 
 void CPU::run_loop()
 {
+    apic_rearm_timer();
+
+    if (_halt_on_resume) {
+        _halt_on_resume = false;
+        halt();
+    }
+
     while (!_execution_break) {
 
         //block SIGUSR1
@@ -956,6 +983,8 @@ void CPU::run_loop()
             THROW("unhandle kvm exit reason %d", _kvm_run->exit_reason);
         }
     }
+
+    _apic_timer->disarm();
 }
 
 
@@ -968,6 +997,11 @@ void CPU::set_cpu_state(CPUState state)
     Lock lock(_cpu_state_mutex);
     _cpu_state = state;
     _cpu_state_condition.broadcast();
+
+    if (_cpu_state == _state_change_target) {
+        _state_change_target = INVALID;
+        transition_done();
+    }
 }
 
 
@@ -994,7 +1028,11 @@ void CPU::run()
             break;
         case RUN:
             set_cpu_state(RUNNING);
-            run_loop();
+            try {
+                run_loop();
+            } catch (ResetException& e) {
+                get_nox().vm_restart(NULL, NULL);
+            }
             break;
         case TERMINATE:
             set_cpu_state(TERMINATING);
@@ -1006,11 +1044,57 @@ void CPU::run()
 }
 
 
-void CPU::start()
+bool CPU::start()
 {
+    ASSERT(_cpu_state == WAITING);
+
+    _execution_break = false;
+
     Lock lock(_command_mutex);
     _command = RUN;
     _command_condition.signal();
+    lock.unlock();
+
+    Lock state_lock(_cpu_state_mutex);
+
+    switch (_cpu_state) {
+    case RUNNING:
+        return true;
+    case WAITING:
+        _state_change_target = RUNNING;
+        break;
+    default:
+        THROW("cpu start failed");
+    }
+
+    return false;
+}
+
+
+bool CPU::stop()
+{
+    ASSERT(_cpu_state == RUNNING || _cpu_state == WAITING);
+
+    Lock lock(_halt_mutex);
+    _execution_break = true;
+    _halt_condition.signal();
+    lock.unlock();
+
+    _thread.signal(SIGUSR1);
+
+    Lock state_lock(_cpu_state_mutex);
+
+    switch (_cpu_state) {
+    case RUNNING:
+        _state_change_target = WAITING;
+        break;
+    case WAITING:
+        return true;
+    default:
+        THROW("cpu start failed");
+    }
+
+    return false;
 }
 
 

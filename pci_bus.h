@@ -41,8 +41,8 @@ public:
     virtual void power() {}
     virtual void reset();
     virtual void save(OutStream &stream) {}
-    virtual void start() {}
-    virtual void stop() {}
+    virtual bool start() { return true;}
+    virtual bool stop() { return true;}
 
     void add_device(PCIDevice& device);
     void remove_device(PCIDevice& device);

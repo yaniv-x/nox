@@ -234,6 +234,8 @@ void IOBus::read_byte(uint16_t port, uint8_t* dest, uint32_t n)
     port -= map.start;
     uint8_t* end = dest + n;
 
+    ASSERT(get_state() == VMPart::RUNNING);
+
     for (; dest < end; dest++) {
         *dest = map.read_byte(map.opaque, port + map.start);
     }
@@ -244,6 +246,8 @@ void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
 {
     MapItem& map = find_mapping(port);
     port -= map.start;
+
+    ASSERT(get_state() == VMPart::RUNNING);
 
     if ((map.size - port) < 2) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
@@ -267,6 +271,8 @@ void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
 {
     MapItem& map = find_mapping(port);
     port -= map.start;
+
+    ASSERT(get_state() == VMPart::RUNNING);
 
     if ((map.size - port) < 4) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
@@ -292,6 +298,8 @@ void IOBus::write_byte(uint16_t port, uint8_t* src, uint32_t n)
     port -= map.start;
     uint8_t* end = src + n;
 
+    ASSERT(get_state() == VMPart::RUNNING);
+
     for (; src < end; src++) {
          map.write_byte(map.opaque, port + map.start, *src);
     }
@@ -302,6 +310,8 @@ void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
 {
     MapItem& map = find_mapping(port);
     port -= map.start;
+
+    ASSERT(get_state() == VMPart::RUNNING);
 
     if ((map.size - port) < 2) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
@@ -325,6 +335,8 @@ void IOBus::write_dword(uint16_t port, uint32_t* src, uint32_t n)
 {
     MapItem& map = find_mapping(port);
     port -= map.start;
+
+    ASSERT(get_state() == VMPart::RUNNING);
 
     if ((map.size - port) < 4) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",

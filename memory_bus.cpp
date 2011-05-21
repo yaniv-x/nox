@@ -134,12 +134,12 @@ public:
     bool is_mapped() { return _mapped;}
     uint64_t get_num_pages() { return _num_pages;}
 
-    void reset() { E_MESSAGE("implemant me");}
-    void start() { E_MESSAGE("implemant me");}
-    void stop() { E_MESSAGE("implemant me");} //todo: swap handler on stop/start
-    void power() { E_MESSAGE("implemant me");}
-    void save(OutStream& stream) { E_MESSAGE("implemant me");}
-    void load(InStream& stream) { E_MESSAGE("implemant me");}
+    void reset() {}
+    bool start() { return true;}
+    bool stop() { return true;}
+    void power() {}
+    void save(OutStream& stream) {}
+    void load(InStream& stream) {}
 
     virtual void map(page_address_t address);
     virtual void on_unmapped();
@@ -294,6 +294,8 @@ void MemoryBus::read_from_pages(uint64_t src, uint64_t length, uint8_t* dest)
 
 void MemoryBus::read(uint64_t src, uint64_t length, void* dest)
 {
+    ASSERT(get_state() == VMPart::RUNNING);
+
     if ((src & ~((1ULL << ADDRESS_BITS) - 1)) || src + length < src ||
         ((src + length)  & ~((1ULL << ADDRESS_BITS) - 1))) {
         throw MachinErrorException();
@@ -345,6 +347,8 @@ void MemoryBus::write_to_pages(const uint8_t* src, uint64_t length, uint64_t des
 
 void MemoryBus::write(const void* src, uint64_t length, uint64_t dest)
 {
+    ASSERT(get_state() == VMPart::RUNNING);
+
     if ((dest & ~((1ULL << ADDRESS_BITS) - 1)) || dest + length < dest ||
         ((dest + length)  & ~((1ULL << ADDRESS_BITS) - 1))) {
         throw MachinErrorException();

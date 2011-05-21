@@ -112,6 +112,7 @@ PIT::~PIT()
 
 void PIT::timer_proc()
 {
+    ASSERT(get_state() == VMPart::RUNNING);
     Lock lock(_mutex);
     update_timer(_timers[0]);
 }
@@ -509,5 +510,44 @@ void PIT::reset()
     }
 
     remap_io_regions();
+}
+
+
+void PIT::stop(PICTimer& pic_timer)
+{
+    if (!pic_timer.timer) {
+        return;
+    }
+
+    pic_timer.timer->suspend();
+}
+
+
+bool PIT::stop()
+{
+    for (int i = 0; i < NUM_TIMERS; i++) {
+        stop(_timers[i]);
+    }
+
+    return true;
+}
+
+
+void PIT::start(PICTimer& pic_timer)
+{
+    if (!pic_timer.timer) {
+        return;
+    }
+
+    pic_timer.timer->resume();
+}
+
+bool PIT::start()
+{
+    for (int i = 0; i < NUM_TIMERS; i++) {
+        start(_timers[i]);
+    }
+
+    return true;
 }
 

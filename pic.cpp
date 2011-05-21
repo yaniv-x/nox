@@ -453,6 +453,8 @@ void PIC::update_output_pin(Lock& lock)
 
 uint PIC::get_interrupt()
 {
+    ASSERT(get_state() == VMPart::RUNNING);
+
     Lock lock(_mutex);
     uint intterupt = _get_interrupt(_chips[0], false);
 
@@ -609,6 +611,7 @@ void PIC::raise(uint8_t pin)
 void PIC::drop(uint8_t pin)
 {
     ASSERT(pin != 2 && pin < 16);
+    ASSERT(get_state() == VMPart::RUNNING);
 
     Chip& chip = _chips[pin >> 3];
     pin = pin & 0x7;

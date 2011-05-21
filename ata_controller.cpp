@@ -210,8 +210,8 @@ public:
     ATAController(VMPart& host, uint id, Wire& irq_wire, uint io_base, uint control_base);
 
     virtual void reset();
-    virtual void start() {}
-    virtual void stop() {}
+    virtual bool start() { return true;} // <-------------------------------- todo: start ata device
+    virtual bool stop() { return true;}  // <--------------------------------- todo: stop ata device
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
@@ -2942,12 +2942,5 @@ uint8_t ATAHost::io_bus_master_read(uint16_t port)
 void ATAHost::io_bus_master_write(uint16_t port, uint8_t val)
 {
     D_MESSAGE("");
-}
-
-
-void ATAHost::reset()
-{
-    PCIDevice::reset();
-    remap_io_regions();
 }
 

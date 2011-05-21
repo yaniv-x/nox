@@ -44,8 +44,8 @@ public:
     bool get_output_level(uint timer); // use Wire object
 
     virtual void reset();
-    virtual void start() {}
-    virtual void stop() {}
+    virtual bool start();
+    virtual bool stop();
     virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
@@ -95,6 +95,8 @@ private:
     void set_counter(PICTimer& timer, uint val);
 
     void reset(PICTimer& timer);
+    void start(PICTimer& timer);
+    void stop(PICTimer& timer);
 
 private:
     Mutex _mutex;

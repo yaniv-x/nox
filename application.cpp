@@ -199,8 +199,8 @@ bool Application::init(int argc, const char** argv)
         return false;
     }
 
-    _vm->reset();
-    _vm->start();
+    _vm->vm_reset();
+    _vm->vm_start(NULL, NULL);
 
     return true;
 }
