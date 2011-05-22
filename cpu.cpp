@@ -398,6 +398,8 @@ void CPU::reset()
 
     _halt = false;
     _halt_on_resume = false;
+
+    ASSERT(_cpu_state == WAITING);
 }
 
 
@@ -565,11 +567,14 @@ void CPU::apic_set_timer(uint32_t val)
     _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = val;
     _apic_regs[APIC_OFFSET_TIMER_INIT_COUNT] = val;
 
-    if (val) {
-        _apic_timer_start_tsc = get_monolitic_time();
+    if (!val) {
+        _apic_timer_start_tsc = 0;
+        return;
     }
 
-    if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & APIC_LVT_MASK_BIT)) {
+    _apic_timer_start_tsc = get_monolitic_time();
+
+    if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
         _apic_timer->arm(val * _apic_timer_div, true);
     }
 }
@@ -601,15 +606,16 @@ void CPU::apic_update_timer()
         return;
     }
 
-    if (_apic_regs[APIC_OFFSET_LVT_TIMER] & APIC_LVT_TIMER_MODE_BIT) {
+    if (_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_TIMER_MODE_BIT)) {
         // maybe compensate, sub (delta - _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT])
         // from _apic_timer_start_tsc
         _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = _apic_regs[APIC_OFFSET_TIMER_INIT_COUNT];
     } else {
         _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = 0;
+        _apic_timer->disarm();
     }
 
-    if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & APIC_LVT_MASK_BIT)) {
+    if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
         apic_put_irr(_apic_regs[APIC_OFFSET_LVT_TIMER] & 0xff);
     }
 }
@@ -639,10 +645,10 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
         break;
     case APIC_OFFSET_LVT_TIMER:
         if (!is_apic_soft_enabled()) {
-            val |= APIC_LVT_VECTOR_MASK;
+            val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[APIC_OFFSET_LVT_TIMER] = val & APIC_LVT_TIMER_MASK;
-        D_MESSAGE("may need to arm timer");
+        apic_rearm_timer();
         break;
     case APIC_OFFSET_DIV_CONF: {
         _apic_regs[APIC_OFFSET_DIV_CONF] = val & APIC_LVT_TYPE_MASK;
@@ -658,25 +664,25 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
     case APIC_OFFSET_LVT_INT_0:
     case APIC_OFFSET_LVT_INT_1:
         if (!is_apic_soft_enabled()) {
-            val |= APIC_LVT_VECTOR_MASK;
+            val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[offset] = val & APIC_LVT_LINT_MASK;
         break;
     case APIC_OFFSET_LVT_PERFORMANCE:
         if (!is_apic_soft_enabled()) {
-            val |= APIC_LVT_VECTOR_MASK;
+            val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[APIC_OFFSET_LVT_PERFORMANCE] = val & APIC_LVT_PERFORMANCE_MASK;
         break;
     case APIC_OFFSET_LVT_THERMAL:
         if (!is_apic_soft_enabled()) {
-            val |= APIC_LVT_VECTOR_MASK;
+            val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[APIC_OFFSET_LVT_THERMAL] = val & APIC_LVT_THERMAL_MASK;
         break;
     case APIC_OFFSET_LVT_ERROR:
         if (!is_apic_soft_enabled()) {
-            val |= APIC_LVT_VECTOR_MASK;
+            val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[APIC_OFFSET_LVT_ERROR] = val & APIC_LVT_ERROR_MASK;
         break;
@@ -874,9 +880,20 @@ inline void CPU::set_apic_address(address_t address)
         return;
     }
 
+    if ((address & APIC_ENABLE_MASK)) {
+
+        if ((_apic_address & APIC_ENABLE_MASK) != (address & APIC_ENABLE_MASK)) {
+            apic_reset();
+        }
+
+        _apic_start = address & GUEST_PAGE_MASK;
+        _apic_end = _apic_start + GUEST_PAGE_SIZE;
+    } else {
+        _apic_start = _apic_end = 0;
+        _apic_timer->disarm();
+    }
+
     _apic_address = address;
-    _apic_start = _apic_address & GUEST_PAGE_MASK;
-    _apic_end = _apic_start + GUEST_PAGE_SIZE;
 }
 
 
