@@ -82,6 +82,7 @@ private:
     bool start_all();
     void reset_childrens();
     void reset_all();
+    void down_all();
 
     VMPart(const char* name);
     void unregister_regions();

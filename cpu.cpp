@@ -149,6 +149,36 @@ static inline int find_high_interrupt(uint32_t* reg)
 }
 
 
+static void sig_usr1_handler(int sig_num)
+{
+
+}
+
+
+static void init_sig_usr1()
+{
+    static bool is_set = false;
+
+    if (is_set) {
+        return;
+    }
+
+    struct sigaction act;
+
+    memset(&act, 0, sizeof(act));
+    sigfillset(&act.sa_mask);
+
+    act.sa_handler = sig_usr1_handler;
+
+
+    if (sigaction(SIGUSR1, &act, NULL) == -1) {
+        THROW("sigaction failed %d", errno);
+    }
+
+    is_set = true;
+}
+
+
 CPU::CPU(NoxVM& vm, uint id)
     : VMPart ("cpu", vm)
     , _id (id)
@@ -167,6 +197,8 @@ CPU::CPU(NoxVM& vm, uint id)
     , _halt_on_resume (false)
     , _version_information (0)
 {
+    init_sig_usr1();
+
     pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
     _apic_timer = application->create_timer((void_callback_t)&CPU::apic_timer_cb, this);
 
@@ -188,6 +220,12 @@ CPU::CPU(NoxVM& vm, uint id)
 
 CPU::~CPU()
 {
+    Lock lock(_command_mutex);
+    ASSERT(_cpu_state == WAITING);
+    _command = TERMINATE;
+    _command_condition.signal();
+    lock.unlock();
+
     _thread.join();
 
     if (_kvm_run) {

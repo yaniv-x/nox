@@ -195,7 +195,7 @@ void IOBus::clear_invalid_regions()
     IOMap::iterator now = _io_map.begin();
 
     while (now != _io_map.end()) {
-        if (&(*now).second.region == NULL) {
+        if ((*now).second.region == NULL) {
             IOMap::iterator to_remove = now++;
             _io_map.erase(to_remove);
         } else {

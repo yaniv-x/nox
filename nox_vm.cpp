@@ -163,7 +163,12 @@ NoxVM::NoxVM()
 
 NoxVM::~NoxVM()
 {
-    while (_stat_change_req_list.empty()) {
+    while (!_dynamic_parts.empty()) {
+        delete _dynamic_parts.front();
+        _dynamic_parts.pop_front();
+    }
+
+    while (!_stat_change_req_list.empty()) {
         delete _stat_change_req_list.front();
         _stat_change_req_list.pop_front();
     }
@@ -176,6 +181,8 @@ NoxVM::~NoxVM()
     _mem_bus->release_physical_ram(_high_bios);
     _mem_bus->unmap_physical_ram(_high_ram);
     _mem_bus->release_physical_ram(_high_ram);
+
+    unregister_regions();
 }
 
 
@@ -199,6 +206,10 @@ void NoxVM::register_admin_commands()
     admin->register_command("restart", "restart the virtual machin", "???",
                             empty_va_type_list, output_args,
                             (admin_command_handler_t)&NoxVM::restart_command, this);
+
+    admin->register_command("terminate", "terminate virtual machin execution", "???",
+                            empty_va_type_list, output_args,
+                            (admin_command_handler_t)&NoxVM::terminate_command, this);
 }
 
 
@@ -392,6 +403,41 @@ void NoxVM::restart_command(AdminReplyContext* context)
 }
 
 
+class TerminateReply {
+public:
+    TerminateReply(AdminReplyContext* context)
+        : _context (context)
+    {
+
+    }
+
+    void reply(bool ok)
+    {
+        if (ok) {
+            _context->command_reply(0, "");
+            application->quit();
+        } else {
+            _context->command_reply(1, "failed");
+        }
+
+        delete this;
+    }
+
+private:
+    AdminReplyContext* _context;
+};
+
+
+void NoxVM::terminate_command(AdminReplyContext* context)
+{
+    D_MESSAGE("");
+
+    TerminateReply* r = new TerminateReply(context);
+
+    vm_down((compleation_routin_t)&TerminateReply::reply, r);
+}
+
+
 void NoxVM::a20_port_write(uint16_t port, uint8_t val)
 {
     ASSERT(port == 0x92);
@@ -550,7 +596,7 @@ void NoxVM::load_bios()
 void NoxVM::init_cpus()
 {
     for (int i = 0; i < _num_cpus; i++) {
-        new CPU(*this, i);
+        _dynamic_parts.push_back(new CPU(*this, i));
     }
 }
 
@@ -805,6 +851,51 @@ void NoxVM::vm_stop(NoxVM::compleation_routin_t cb, void* opaque)
     _stat_change_req_list.push_back(new StopRequest(cb, opaque));
 
     if (_stat_change_req_list.size() == 1) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
+class DownRequest: public NoxVM::StateChangeRequest {
+public:
+    DownRequest(NoxVM::compleation_routin_t cb, void* opaque)
+        : NoxVM::StateChangeRequest(cb, opaque)
+    {
+    }
+
+    virtual bool test(NoxVM& vm);
+    virtual bool start(NoxVM& vm) { vm.set_down(); return true;}
+    virtual bool cont(NoxVM& vm) { PANIC("unexpected") return false;}
+};
+
+
+bool DownRequest::test(NoxVM& vm)
+{
+    switch (vm.get_state()) {
+    case VMPart::STOPPED:
+    case VMPart::DOWN:
+        return true;
+    default:
+        return false;
+    }
+}
+
+
+void NoxVM::set_down()
+{
+    down_all();
+}
+
+
+void NoxVM::vm_down(compleation_routin_t cb, void* opaque)
+{
+    Lock lock(_vm_state_mutex);
+
+    _stat_change_req_list.push_back(new StopRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new DownRequest(cb, opaque));
+
+    if (_stat_change_req_list.size() == 2) {
         AutoRef<StateChngeTask> task(new StateChngeTask(*this));
         application->add_task(task.get());
     }

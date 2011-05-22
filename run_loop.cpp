@@ -102,6 +102,7 @@ RunLoop::RunLoop()
     , _exit_code (ERROR_OK)
     , _wakeup_event (NULL)
     , _run_loop_thread (-1)
+    , _break (false)
 {
 
     if (!_epoll.is_valid()) {
@@ -558,7 +559,7 @@ void RunLoop::run()
     int epoll = _epoll.get();
     _run_loop_thread = pthread_self();
 
-    while (true) {
+    while (!_break) {
         struct epoll_event events[EPOLL_NUM_EVENTS];
         int timeout_val = get_timeout_val();
 
@@ -593,6 +594,8 @@ void RunLoop::run()
 
         _sync_condition.broadcast();
     }
+
+    _break = false;
 }
 
 
