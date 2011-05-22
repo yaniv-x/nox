@@ -74,9 +74,11 @@ private:
     void reset_regs();
     void reset_sys_regs();
     void reset_fpu();
+    void reset_msrs();
     void handle_io();
     void set_cpu_state(CPUState state);
     void setup_cpuid();
+    void save_init_msrs();
     void create();
     void output_trigger();
     void halt();
@@ -123,6 +125,7 @@ private:
     AutoFD _vcpu_fd;
     struct kvm_run* _kvm_run;
     int _vcpu_mmap_size;
+    AutoArray<uint8_t> _init_msrs;
     bool _execution_break;
     IOBus& _io_bus;
     Thread _thread;

@@ -48,8 +48,10 @@ public:
     int get_dev_fd() { return _devfd.get();}
     int get_vm_fd() { return _vmfd.get();}
     int get_vcpu_mmap_size() { return _vcpu_mmap_size;}
+    const struct kvm_msr_list& get_msrs_list() { return *(struct kvm_msr_list*)_msrs_list.get();}
 
 private:
+    void init_msrs();
     void init();
     int check_extention(int extension);
     bool is_active_slot(uint32_t slot);
@@ -61,6 +63,7 @@ private:
     int _num_mem_slot;
     int _vcpu_mmap_size;
     FreeSlotsList _free_slots;
+    AutoArray<uint8_t> _msrs_list;
 };
 
 #endif
