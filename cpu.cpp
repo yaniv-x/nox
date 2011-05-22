@@ -244,6 +244,43 @@ void CPU::setup_cpuid()
 }
 
 
+void CPU::save_init_msrs()
+{
+    KVM& kvm = get_nox().get_kvm();
+    const struct kvm_msr_list& list = kvm.get_msrs_list();
+
+    uint size = sizeof(struct kvm_msrs) + list.nmsrs * sizeof(struct kvm_msr_entry);
+    AutoArray<uint8_t> msrs_list(new uint8_t[size]);
+
+    struct kvm_msrs* msrs_ptr = (struct kvm_msrs*)msrs_list.get();
+    memset(msrs_ptr, 0, size);
+
+    msrs_ptr->nmsrs = list.nmsrs;
+
+    for (int i = 0; i < list.nmsrs; i++) {
+        msrs_ptr->entries[i].index = list.indices[i];
+    }
+
+    for (;;) {
+        int r = ioctl(_vcpu_fd.get(), KVM_GET_MSRS, msrs_ptr);
+
+        if (r < 0) {
+            THROW("get init msrs failed");
+        }
+
+        if (!msrs_ptr->nmsrs || r == msrs_ptr->nmsrs) {
+            break;
+        }
+
+        D_MESSAGE("skiping msr 0x%x", msrs_ptr->entries[r].index);
+        memcpy(&msrs_ptr->entries[r], &msrs_ptr->entries[r + 1], msrs_ptr->nmsrs - r - 1);
+        msrs_ptr->nmsrs--;
+    }
+
+    _init_msrs.set(msrs_list.release());
+}
+
+
 void CPU::create()
 {
     KVM& kvm = get_nox().get_kvm();
@@ -264,6 +301,7 @@ void CPU::create()
     }
 
     setup_cpuid();
+    save_init_msrs();
 }
 
 
@@ -382,6 +420,22 @@ void CPU::reset_fpu()
 }
 
 
+void CPU::reset_msrs()
+{
+    struct kvm_msrs* msrs_ptr = (struct kvm_msrs*)_init_msrs.get();
+
+    int r = ioctl(_vcpu_fd.get(), KVM_SET_MSRS, msrs_ptr);
+
+    if (r < 0) {
+         THROW("failed");
+    }
+
+    if (r != msrs_ptr->nmsrs) {
+        D_MESSAGE("partial set %u %u", r, msrs_ptr->nmsrs);
+    }
+}
+
+
 void CPU::reset()
 {
     Lock lock(_cpu_state_mutex);
@@ -394,7 +448,7 @@ void CPU::reset()
     reset_regs();
     reset_sys_regs();
     reset_fpu();
-    D_MESSAGE_ONCE("todo: reset MSRs");
+    reset_msrs();
 
     _halt = false;
     _halt_on_resume = false;

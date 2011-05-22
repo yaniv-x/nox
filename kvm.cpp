@@ -58,6 +58,33 @@ int KVM::check_extention(int extension)
 }
 
 
+void KVM::init_msrs()
+{
+    struct kvm_msr_list test_list;
+
+    test_list.nmsrs = 0;
+
+    int r = ioctl(_devfd.get(), KVM_GET_MSR_INDEX_LIST, &test_list);
+
+    if (r == 0 || errno != E2BIG || test_list.nmsrs == 0) {
+        THROW("test msrs count failed");
+    }
+
+    uint size = sizeof(test_list) + test_list.nmsrs * sizeof(test_list.indices[0]);
+    AutoArray<uint8_t> list(new uint8_t[size]);
+    struct kvm_msr_list* list_ptr = (struct kvm_msr_list*)list.get();
+    memset(list_ptr, 0, size);
+
+    list_ptr->nmsrs = test_list.nmsrs;
+
+    if (ioctl(_devfd.get(), KVM_GET_MSR_INDEX_LIST, list_ptr)) {
+        THROW("get msrs list failed");
+    }
+
+    _msrs_list.set(list.release());
+}
+
+
 void KVM::init()
 {
     static const char* kvm_file_name = "/dev/kvm";
@@ -99,6 +126,8 @@ void KVM::init()
     if ((_vcpu_mmap_size = ioctl(_devfd.get(), KVM_GET_VCPU_MMAP_SIZE, 0)) < 0) {
         THROW("unable to get vcpu mmap size");
     }
+
+    init_msrs();
 
     _vmfd.reset(ioctl(_devfd.get(), KVM_CREATE_VM, 0));
 
