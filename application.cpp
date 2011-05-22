@@ -82,8 +82,85 @@ Application* application = NULL;
 
 Application::Application()
     : _vm (NULL)
+    , _quit_event (create_event((void_callback_t)&Application::quit_handler, this))
+    , _quitting (false)
 {
+    init_signals();
     application = this;
+}
+
+
+Application::~Application()
+{
+    restore_signals();
+    _quit_event->destroy();
+}
+
+
+void Application::sig_int_handler(int sig)
+{
+    W_MESSAGE("");
+    application->quit();
+}
+
+
+void Application::sig_term_handler(int sig)
+{
+    W_MESSAGE("");
+    application->quit();
+}
+
+
+void  Application::init_signals()
+{
+    struct sigaction act;
+
+    memset(&act, 0, sizeof(act));
+    sigfillset(&act.sa_mask);
+
+    act.sa_handler = sig_term_handler;
+
+    if (sigaction(SIGTERM, &act, &_prev_term_act) == -1) {
+        THROW("sigaction failed %d", errno);
+    }
+
+    act.sa_handler = sig_int_handler;
+
+    if (sigaction(SIGINT, &act, &_prev_int_act) == -1) {
+        sigaction(SIGTERM, &_prev_term_act, NULL);
+        THROW("sigaction failed %d", errno);
+    }
+}
+
+
+void Application::restore_signals()
+{
+    sigaction(SIGTERM, &_prev_term_act, NULL);
+    sigaction(SIGINT, &_prev_int_act, NULL);
+}
+
+
+void Application::continue_quitting(bool ok)
+{
+    run_break();
+}
+
+
+void Application::quit_handler()
+{
+    if (_quitting) {
+        return;
+    }
+
+    D_MESSAGE("");
+    _quitting = true;
+    _vm->vm_down((NoxVM::compleation_routin_t)&Application::continue_quitting, this);
+}
+
+
+void Application::quit()
+{
+    _quit_event->trigger();
 }
 
 
@@ -206,25 +283,6 @@ bool Application::init(int argc, const char** argv)
 }
 
 
-static void sig_handler(int sig)
-{
-}
-
-
-static void init_sig_handlers()
-{
-    struct sigaction act;
-
-    memset(&act, 0, sizeof(act));
-    sigfillset(&act.sa_mask);
-    act.sa_handler = sig_handler;
-
-    if (sigaction(SIGUSR1, &act, NULL) == -1) {
-        THROW("sigaction failed %d", errno);
-    }
-}
-
-
 static void init_nox_dir()
 {
     char* home_dir = getenv("HOME");
@@ -261,7 +319,6 @@ const std::string& Application::get_nox_dir()
 
 ErrorCode Application::main(int argc, const char** argv)
 {
-    init_sig_handlers();
     init_nox_dir();
 
     std::auto_ptr<Application> app(new Application());

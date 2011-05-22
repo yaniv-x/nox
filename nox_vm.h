@@ -67,6 +67,7 @@ public:
     void vm_start(compleation_routin_t cb, void* opaque);
     void vm_stop(compleation_routin_t cb, void* opaque);
     void vm_restart(compleation_routin_t cb, void* opaque);
+    void vm_down(compleation_routin_t cb, void* opaque);
 
     void resume_mode_change();
     void handle_state_request();
@@ -88,6 +89,7 @@ private:
     void load_bios();
     void init_cpus();
     void reset_bios_stuff();
+    void set_down();
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
@@ -101,6 +103,7 @@ private:
     void suspend_command(AdminReplyContext* context);
     void resume_command(AdminReplyContext* context);
     void restart_command(AdminReplyContext* context);
+    void terminate_command(AdminReplyContext* context);
 
 private:
     Mutex _vm_state_mutex;
@@ -116,6 +119,7 @@ private:
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
+    VMParts _dynamic_parts;
     PhysicalRam* _low_ram;
     PhysicalRam* _mid_ram;
     PhysicalRam* _high_bios;
@@ -136,6 +140,7 @@ private:
     friend class StopRequest;
     friend class StartRequest;
     friend class ResetRequest;
+    friend class DownRequest;
 };
 
 

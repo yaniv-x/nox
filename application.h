@@ -36,18 +36,31 @@ class AdminServer;
 class Application: public RunLoop {
 public:
     Application();
+    ~Application();
 
     AdminServer* get_admin() { return _admin_server.get();}
 
     static ErrorCode main(int argc, const char** argv);
     static const std::string& get_nox_dir();
+    void quit();
 
 private:
+    void init_signals();
+    void restore_signals();
     bool init(int argc, const char** argv);
+    void continue_quitting(bool ok);
+    void quit_handler();
+
+    static void sig_int_handler(int sig);
+    static void sig_term_handler(int sig);
 
 private:
-    std::auto_ptr<NoxVM> _vm;
     std::auto_ptr<AdminServer> _admin_server;
+    std::auto_ptr<NoxVM> _vm;
+    Event* _quit_event;
+    bool _quitting;
+    struct sigaction _prev_term_act;
+    struct sigaction _prev_int_act;
 };
 
 extern Application* application;

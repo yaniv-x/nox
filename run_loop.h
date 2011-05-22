@@ -90,6 +90,7 @@ public:
     ~RunLoop();
 
     void run();
+    void run_break() { _break = true; wakeup();}
     void wakeup();
 
     Timer* create_timer(void_callback_t proc, void* opaque);
@@ -119,6 +120,7 @@ private:
     ErrorCode _exit_code;
     Event* _wakeup_event;
     pthread_t _run_loop_thread;
+    bool _break;
 
     Mutex _dead_list_mutex;
     std::list<InternalItem*> _dead_list;
