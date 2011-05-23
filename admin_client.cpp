@@ -58,7 +58,9 @@ private:
     void enum_commands(AdminReplyContext* context, uint32_t index);
     void enum_commands_reply(uint32_t code, const char* name, const char* description,
                              const char* help, const va_type_list_t& inputs,
-                             const va_type_list_t& outputs);
+                             const va_names_list_t& inputs_names,
+                             const va_type_list_t& outputs,
+                             const va_names_list_t& outputs_names);
 
     void generic_call_reply_handler(...);
     void generic_call_error_handler(VAErrorCode code, const std::string& str);
@@ -100,20 +102,34 @@ AdminClient::AdminClient(const char* vm_name)
 {
 
     va_type_list_t input_args(1);
-    input_args[0] = VA_UINT32_T;      // command index
+    input_args[0] = VA_UINT32_T;
+    va_names_list_t input_names(1);
+    input_names[0] = "index";
 
-    va_type_list_t output_args(6);
-    output_args[0] = VA_UINT32_T;     // command id
-    output_args[1] = VA_UTF8_T;       // command name
-    output_args[2] = VA_UTF8_T;       // command description
-    output_args[3] = VA_UTF8_T;       // command help
-    output_args[4] = VA_UINT32V_T;    // inputs args
-    output_args[5] = VA_UINT32V_T;    // outputs args
+    va_type_list_t output_args(8);
+    output_args[0] = VA_UINT32_T;
+    output_args[1] = VA_UTF8_T;
+    output_args[2] = VA_UTF8_T;
+    output_args[3] = VA_UTF8_T;
+    output_args[4] = VA_UINT32V_T;
+    output_args[5] = VA_UTF8V_T;
+    output_args[6] = VA_UINT32V_T;
+    output_args[7] = VA_UTF8V_T;
+    va_names_list_t output_names(8);
+    output_names[0] = "code";
+    output_names[1] = "name";
+    output_names[2] = "description";
+    output_names[3] = "help";
+    output_names[4] = "input-args";
+    output_names[5] = "input-names";
+    output_names[6] = "output-args";
+    output_names[7] = "output-names";
 
     AdminLocalCommand* local;
 
-    local = new AdminLocalCommand(VA_CMD_ENUM_COMMANDS, "@enum-commands", "", "", input_args,
-                                  output_args, (admin_command_handler_t)&AdminClient::enum_commands,
+    local = new AdminLocalCommand(VA_CMD_ENUM_COMMANDS, "@enum-commands", "", "",
+                                  input_args, input_names, output_args, output_names,
+                                  (admin_command_handler_t)&AdminClient::enum_commands,
                                   this);
     _local_commands.push_back(local);
 
@@ -121,8 +137,9 @@ AdminClient::AdminClient(const char* vm_name)
 
     admin_reply_handler_t reply_handler = &AdminClient::enum_commands_reply;
     admin_error_handler_t error_handler = &AdminClient::generic_call_error_handler;
-    remote = new AdminRemoteCommand(VA_CMD_ENUM_COMMANDS, "@enum-commands", "", "", input_args,
-                                    output_args, reply_handler, error_handler, this);
+    remote = new AdminRemoteCommand(VA_CMD_ENUM_COMMANDS, "@enum-commands", "", "",
+                                    input_args, input_names, output_args, output_names,
+                                    reply_handler, error_handler, this);
     _remote_commands.push_back(remote);
 }
 
@@ -162,20 +179,25 @@ uint32_t AdminClient::alloc_call_serial(AdminRemoteCommand* command)
 
 void AdminClient::enum_commands(AdminReplyContext* context, uint32_t index)
 {
-    va_type_list_t empty_vec(0);
+    va_type_list_t empty_vec;
+    va_names_list_t empty_names_vec;
 
     if (!_active_command.get()) {
         THROW("no active command");
     }
 
     AutoRef<AdminLocalCommand> tmp(_active_command.release());
-    tmp->reply(_command_serial, this, 0, "", "", "", &empty_vec, &empty_vec);
+    tmp->reply(_command_serial, this, 0, "", "", "",
+               &empty_vec, &empty_names_vec,
+               &empty_vec, &empty_names_vec);
 }
 
 
 void AdminClient::enum_commands_reply(uint32_t code, const char* name, const char* description,
                                       const char* help, const va_type_list_t& inputs,
-                                      const va_type_list_t& outputs)
+                                      const va_names_list_t& inputs_names,
+                                      const va_type_list_t& outputs,
+                                      const va_names_list_t& outputs_names)
 {
     if (!code) {
         _enum_done = true;
@@ -187,8 +209,9 @@ void AdminClient::enum_commands_reply(uint32_t code, const char* name, const cha
     admin_reply_handler_t reply_handler = &AdminClient::generic_call_reply_handler;
     admin_error_handler_t err_handler = &AdminClient::generic_call_error_handler;
 
-    command = new AdminRemoteCommand(code, name, description, help, inputs, outputs,
-                                    reply_handler, err_handler, this);
+    command = new AdminRemoteCommand(code, name, description, help, inputs, inputs_names,
+                                     outputs, outputs_names, reply_handler, err_handler,
+                                     this);
 
     _remote_commands.push_back(command);
 }
@@ -196,7 +219,16 @@ void AdminClient::enum_commands_reply(uint32_t code, const char* name, const cha
 
 void AdminClient::generic_call_reply_handler(...)
 {
-    D_MESSAGE("");
+    va_list ap;
+    va_start(ap, this);
+
+    std::string result;
+
+    _active_call->reply_to_string(ap, result);
+
+    D_MESSAGE("reply: %s", result.c_str());
+
+    va_end(ap);
 }
 
 

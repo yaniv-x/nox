@@ -34,6 +34,8 @@
 #include "threads.h"
 
 typedef std::vector<uint32_t> va_type_list_t;
+typedef std::vector<const char*> va_names_list_t;
+
 
 class AdminBuf: public NonCopyable {
 public:
@@ -61,10 +63,12 @@ class ArgSource;
 class AdminCommand: public NonCopyable {
 public:
     AdminCommand(uint command_code, const std::string& name,
-                   const std::string& description,
-                   const std::string& help,
-                   const va_type_list_t& input_list,
-                   const va_type_list_t& output_list);
+                 const std::string& description,
+                 const std::string& help,
+                 const va_type_list_t& input_list,
+                 const va_names_list_t& input_names,
+                 const va_type_list_t& output_list,
+                 const va_names_list_t& output_names);
 
     AdminCommand* ref() {_refs.inc(); return this;}
     void unref() { if (!_refs.dec()) delete this;}
@@ -77,9 +81,13 @@ public:
     uint get_command_code() { return _command_code;}
     const va_type_list_t& get_input_list() { return _input_list;};
     const va_type_list_t& get_output_list() { return _output_list;};
+    const va_names_list_t& get_input_names() { return _input_names;};
+    const va_names_list_t& get_output_names() { return _output_names;};
+
+    struct BadCommand {};
 
 protected:
-    virtual ~AdminCommand() {}
+    virtual ~AdminCommand();
 
     uint get_fixed_output_size() { return _fixed_output_size;}
     uint get_fixed_input_size() { return _fixed_input_size;}
@@ -91,8 +99,7 @@ protected:
                uint8_t* ptr, uint32_t var_data_offset, AdminBuf** var_buf);
     bool execute(uint8_t* data, uint size, const va_type_list_t& arg_list,
                  uint64_t* vec, uint num_args, uint index, void* handler);
-
-    struct BadCommand {};
+    void names_cleanup();
 
 private:
     void init_io_params(const va_type_list_t& types, uint& fixed_size,
@@ -104,7 +111,9 @@ private:
     std::string _description;
     std::string _help;
     va_type_list_t _input_list;
+    va_names_list_t _input_names;
     va_type_list_t _output_list;
+    va_names_list_t _output_names;
     uint _fixed_output_size;
     uint _output_var_args;
     uint _fixed_input_size;
@@ -133,10 +142,13 @@ public:
                       const std::string& description,
                       const std::string& help,
                       const va_type_list_t& input_list,
+                      const va_names_list_t& input_names,
                       const va_type_list_t& output_list,
+                      const va_names_list_t& output_names,
                       admin_command_handler_t handler,
                       void* opaque)
-        : AdminCommand(command_code, name, description, help, input_list, output_list)
+        : AdminCommand(command_code, name, description, help, input_list,
+                       input_names, output_list, output_names)
         , _handler (handler)
         , _opaque (opaque)
     {
@@ -164,11 +176,14 @@ public:
                       const std::string& description,
                       const std::string& help,
                       const va_type_list_t& input_list,
+                       const va_names_list_t& input_names,
                       const va_type_list_t& output_list,
+                       const va_names_list_t& output_names,
                       admin_reply_handler_t reply_handler,
                       admin_error_handler_t error_handler,
                       void* opaque)
-        : AdminCommand(command_code, name, description, help, input_list, output_list)
+        : AdminCommand(command_code, name, description, help, input_list, input_names,
+                       output_list, output_names)
         , _reply_handler (reply_handler)
         , _error_handler (error_handler)
         , _opaque (opaque)
@@ -180,6 +195,7 @@ public:
     void calls(uint32_t serial, AdminTransmitContext* context, const std::string& args);
     bool process_reply(uint8_t* data, uint size);
     void report_error(VAErrorCode code, const std::string& str);
+    void reply_to_string(va_list args, std::string& result);
 
 private:
     virtual ~AdminRemoteCommand() {}
