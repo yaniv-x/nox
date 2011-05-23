@@ -25,6 +25,7 @@
 */
 
 #include <stdarg.h>
+#include <sstream>
 
 #include "admin_common.h"
 #include "dynamic_call.h"
@@ -34,7 +35,9 @@ AdminCommand::AdminCommand(uint command_code, const std::string& name,
                            const std::string& description,
                            const std::string& help,
                            const va_type_list_t& input_list,
-                           const va_type_list_t& output_list)
+                           const va_names_list_t& input_names,
+                           const va_type_list_t& output_list,
+                           const va_names_list_t& output_names)
     : _refs (1)
     , _command_code (command_code)
     , _name (name)
@@ -45,6 +48,41 @@ AdminCommand::AdminCommand(uint command_code, const std::string& name,
 {
     init_io_params(_output_list, _fixed_output_size, _output_var_args);
     init_io_params(_input_list, _fixed_input_size, _input_var_args);
+
+    if (input_list.size() != input_names.size() || output_list.size() != output_names.size()) {
+        THROW("invalid args");
+    }
+
+    try {
+        for (int i = 0; i < input_names.size(); i++) {
+            _input_names.push_back(copy_cstr(input_names[i]));
+        }
+
+        for (int i = 0; i < output_names.size(); i++) {
+            _output_names.push_back(copy_cstr(output_names[i]));
+        }
+    } catch (...) {
+        names_cleanup();
+    }
+}
+
+
+void AdminCommand::names_cleanup()
+{
+    while (!_input_names.empty()) {
+        delete[] _input_names.back();
+        _input_names.pop_back();
+    }
+
+    while (!_output_names.empty()) {
+        delete[] _output_names.back();
+        _output_names.pop_back();
+    }
+}
+
+AdminCommand::~AdminCommand()
+{
+    names_cleanup();
 }
 
 
@@ -74,12 +112,33 @@ void AdminCommand::init_io_params(const va_type_list_t& types, uint& fixed_size,
             fixed_size += 2 * sizeof(uint16_t);
             var_args++;
             break;
+        case VA_UTF8V_T:
+            fixed_size += 2 * sizeof(uint16_t);
+            var_args++;
+            break;
         default:
             PANIC("invalid type");
         }
     }
 }
 
+
+static const char* get_str(uint& offset, uint8_t* data, uint size)
+{
+    const char* str = (const char*)data + offset;
+
+    for (;;) {
+        if (offset >= size) {
+            throw AdminCommand::BadCommand();
+        }
+
+        if (data[offset++] == 0) {
+            break;
+        }
+    }
+
+    return copy_cstr(str);
+}
 
 uint64_t AdminCommand::get_arg_val(uint type, uint& offset, uint8_t* data, uint size)
 {
@@ -115,22 +174,7 @@ uint64_t AdminCommand::get_arg_val(uint type, uint& offset, uint8_t* data, uint 
             throw BadCommand();
         }
 
-        uint str_end = str_offset;
-
-        for (;;) {
-            if (str_end >= size) {
-                throw BadCommand();
-            }
-
-            if (data[str_end++] == 0) {
-                break;
-            }
-        }
-
-        uint len = str_end - str_offset;
-        char* str = new char[len];
-        memcpy(str, data + str_offset, len);
-        ret = (uint64_t)str;
+        ret = (uint64_t)get_str(str_offset, data, size);
         break;
     }
     case VA_UINT32V_T: {
@@ -148,12 +192,36 @@ uint64_t AdminCommand::get_arg_val(uint type, uint& offset, uint8_t* data, uint 
         uint len = *(uint16_t*)(data + offset);
         offset += sizeof(uint16_t);
 
-        if ((data_offset + len) > size) {
+        if ((data_offset + len * sizeof(uint32_t)) > size) {
             throw BadCommand();
         }
 
         std::vector<uint32_t>* v = new std::vector<uint32_t>(len);
         memcpy(&(*v)[0], data + data_offset, len * sizeof(uint32_t));
+        ret = (uint64_t)v;
+        break;
+    }
+    case VA_UTF8V_T: {
+        if (size < sizeof(uint32_t)) {
+            throw BadCommand();
+        }
+
+        uint data_offset = *(uint16_t*)(data + offset);
+        offset += sizeof(uint16_t);
+
+        if (!data_offset) {
+            throw BadCommand();
+        }
+
+        uint len = *(uint16_t*)(data + offset);
+        offset += sizeof(uint16_t);
+
+        std::vector<const char*>* v = new std::vector<const char*>(len);
+
+        for (int i = 0; i < len; i++) {
+            (*v)[i] = get_str(data_offset, data, size);
+        }
+
         ret = (uint64_t)v;
         break;
     }
@@ -180,6 +248,14 @@ void AdminCommand::arg_clean_up(uint stop_item, uint64_t* vec, const va_type_lis
             break;
         case VA_UINT32V_T:
             delete (std::vector<uint32_t>*)vec[i];
+            break;
+        case VA_UTF8V_T:
+            std::vector<const char*>* str_vec = (std::vector<const char*>*)vec[i];
+            while (!str_vec->empty()) {
+                delete[] str_vec->back();
+                str_vec->pop_back();
+            }
+            delete str_vec;
             break;
         }
     }
@@ -231,10 +307,11 @@ bool AdminCommand::is_valid_name(const std::string& name)
 
 class ArgSource {
 public:
-    virtual uint8_t* get_utf8() = 0;
+    virtual const char* get_utf8() = 0;
     virtual uint32_t get_uint32() = 0;
     virtual uint8_t get_uint8() = 0;
-    virtual std::vector<uint32_t>* get_uint32v() = 0;
+    virtual const std::vector<uint32_t>* get_uint32v() = 0;
+    virtual const std::vector<const char*>* get_utf8v() = 0;
 };
 
 
@@ -245,9 +322,9 @@ public:
         va_copy(_ap, ap);
     }
 
-    virtual uint8_t* get_utf8()
+    virtual const char* get_utf8()
     {
-        return va_arg(_ap, uint8_t*);
+        return va_arg(_ap, const char*);
     }
 
     virtual uint32_t get_uint32()
@@ -260,9 +337,14 @@ public:
         return va_arg(_ap, int);/* uint8_t is promoted to int*/
     }
 
-    virtual std::vector<uint32_t>* get_uint32v()
+    virtual const std::vector<uint32_t>* get_uint32v()
     {
-        return va_arg(_ap, std::vector<uint32_t>*);
+        return va_arg(_ap, const std::vector<uint32_t>*);
+    }
+
+    virtual const std::vector<const char*>* get_utf8v()
+    {
+        return va_arg(_ap, const std::vector<const char*>*);
     }
 
 private:
@@ -271,87 +353,156 @@ private:
 
 
 struct VariableInfo {
+    VariableInfo()
+        : depth (NULL)
+    {
+    }
+
     uint to;
-    void* from;
+    const void* from;
     uint length;
+    uint depth_count;
+    VariableInfo* depth;
 };
+
+
+static void var_info_cleanup(VariableInfo *info)
+{
+    if (!info) {
+        return;
+    }
+
+    var_info_cleanup(info->depth);
+    delete[] info;
+}
+
+
+static void copy_var_data(VariableInfo *info, uint n, uint8_t* dest_base)
+{
+    VariableInfo* end = info + n;
+
+    for (; info < end; info++) {
+        memcpy(dest_base + info->to, info->from, info->length);
+
+        if (info->depth) {
+            copy_var_data(info->depth, info->depth_count, dest_base);
+        }
+    }
+}
 
 
 void AdminCommand::build(ArgSource& source, const va_type_list_t& types, uint num_variable_args,
                          uint8_t* ptr, uint32_t var_data_offset, AdminBuf** var_buf)
 {
-    AutoArray<VariableInfo> variable_vec(new VariableInfo[num_variable_args]);
-    VariableInfo* var_vec = variable_vec.get();
+    VariableInfo* var_vec = new VariableInfo[num_variable_args];
 
-    uint32_t variable_data_size = 0;
-    uint32_t var_index = 0;
+    try {
+        uint32_t variable_data_size = 0;
+        uint32_t var_index = 0;
 
-    va_type_list_t::const_iterator iter = types.begin();
+        va_type_list_t::const_iterator iter = types.begin();
 
-    for (; iter != types.end(); iter++) {
-        switch (*iter) {
-        case VA_UINT32_T:
-        case VA_INT32_T: {
-            *(uint32_t*)ptr = source.get_uint32();
-            ptr += sizeof(uint32_t);
-            break;
-        }
-        case VA_UTF8_T:
-            var_vec[var_index].from = source.get_utf8();
-            if (!var_vec[var_index].from) {
-                PANIC("null string");
+        for (; iter != types.end(); iter++) {
+            switch (*iter) {
+            case VA_UINT32_T:
+            case VA_INT32_T: {
+                *(uint32_t*)ptr = source.get_uint32();
+                ptr += sizeof(uint32_t);
+                break;
             }
-            *(uint16_t*)ptr = variable_data_size + var_data_offset;
-            ptr += sizeof(uint16_t);
-            var_vec[var_index].to = variable_data_size;
-            var_vec[var_index].length = strlen((char*)var_vec[var_index].from) + 1;
-            variable_data_size += var_vec[var_index].length;
-            var_index++;
-            break;
-        case VA_UINT8_T:
-        case VA_INT8_T:
-            *(uint8_t*)ptr = source.get_uint8();
-            ptr += sizeof(uint8_t);
-            break;
-        case VA_UINT32V_T: {
-            std::vector<uint32_t>* v = source.get_uint32v();
-            if (!v) {
-                PANIC("null vector");
+            case VA_UTF8_T:
+                var_vec[var_index].from = source.get_utf8();
+
+                if (!var_vec[var_index].from) {
+                    PANIC("null string");
+                }
+
+                *(uint16_t*)ptr = variable_data_size + var_data_offset;
+                ptr += sizeof(uint16_t);
+                var_vec[var_index].to = variable_data_size;
+                var_vec[var_index].length = strlen((char*)var_vec[var_index].from) + 1;
+                variable_data_size += var_vec[var_index].length;
+                var_index++;
+                break;
+            case VA_UINT8_T:
+            case VA_INT8_T:
+                *(uint8_t*)ptr = source.get_uint8();
+                ptr += sizeof(uint8_t);
+                break;
+            case VA_UINT32V_T: {
+                const std::vector<uint32_t>* v = source.get_uint32v();
+
+                if (!v) {
+                    PANIC("null vector");
+                }
+
+                var_vec[var_index].from = &(*v)[0];
+                *(uint16_t*)ptr = variable_data_size + var_data_offset;
+                ptr += sizeof(uint16_t);
+                *(uint16_t*)ptr = v->size();
+                ptr += sizeof(uint16_t);
+                var_vec[var_index].to = variable_data_size;
+                var_vec[var_index].length = v->size() * sizeof(uint32_t);
+                variable_data_size += var_vec[var_index].length;
+                var_index++;
+                break;
             }
+            case VA_UTF8V_T: {
+                const std::vector<const char*>* v = source.get_utf8v();
 
-            var_vec[var_index].from = &(*v)[0];
-            *(uint16_t*)ptr = variable_data_size + var_data_offset;
-            ptr += sizeof(uint16_t);
-            *(uint16_t*)ptr = v->size();
-            ptr += sizeof(uint16_t);
-            var_vec[var_index].to = variable_data_size;
-            var_vec[var_index].length = v->size() * sizeof(uint32_t);
-            variable_data_size += var_vec[var_index].length;
-            var_index++;
-            break;
+                if (!v) {
+                    PANIC("null vector");
+                }
+
+                var_vec[var_index].from = NULL;
+                *(uint16_t*)ptr = variable_data_size + var_data_offset;
+                ptr += sizeof(uint16_t);
+                *(uint16_t*)ptr = v->size();
+                ptr += sizeof(uint16_t);
+                var_vec[var_index].to = 0;
+                var_vec[var_index].length = 0;
+                var_vec[var_index].depth_count = v->size();
+                var_vec[var_index].depth = new VariableInfo[v->size()];
+
+                for (int i = 0; i < var_vec[var_index].depth_count; i++) {
+                    const char* str = (*v)[i];
+                    VariableInfo* inf = &var_vec[var_index].depth[i];
+
+                    if (!str) {
+                        PANIC("null string");
+                    }
+
+                    inf->from = str;
+                    inf->to = variable_data_size;
+                    inf->length = strlen(str) + 1;
+                    variable_data_size += inf->length;
+                }
+
+                var_index++;
+                break;
+            }
+            default:
+                PANIC("invalid type");
+            }
         }
-        default:
-            PANIC("invalid type");
+
+        if (!variable_data_size) {
+            *var_buf = NULL;
+            return;
         }
+
+        if (variable_data_size > (1 << 16) - var_data_offset) {
+            THROW("overflow");
+        }
+
+        *var_buf = new AdminBuf(variable_data_size);
+        copy_var_data(var_vec, var_index, (*var_buf)->data());
+    } catch (...) {
+        var_info_cleanup(var_vec);
+        throw;
     }
 
-    if (!variable_data_size) {
-        *var_buf = NULL;
-        return;
-    }
-
-    if (variable_data_size > (1 << 16) - var_data_offset) {
-        THROW("overflow");
-    }
-
-    *var_buf = new AdminBuf(variable_data_size);
-    uint8_t* dest = (*var_buf)->data();
-    VariableInfo* now = var_vec;
-    VariableInfo* end = now + var_index;
-
-    for (; now < end; now++) {
-        memcpy(dest + now->to, now->from, now->length);
-    }
+    var_info_cleanup(var_vec);
 }
 
 
@@ -463,7 +614,7 @@ void AdminRemoteCommand::call(uint32_t serial, AdminTransmitContext* context, ..
 }
 
 
-void conv_u32(const char* str, uint64_t &bin_val)
+static void conv_u32(const char* str, uint64_t &bin_val)
 {
     char* end;
     uint64_t ret = strtoul(str, &end, 0);
@@ -476,7 +627,7 @@ void conv_u32(const char* str, uint64_t &bin_val)
 }
 
 
-void conv_i32(const char* str, uint64_t &bin_val)
+static void conv_i32(const char* str, uint64_t &bin_val)
 {
     char* end;
     int64_t ret = strtol(str, &end, 0);
@@ -489,7 +640,7 @@ void conv_i32(const char* str, uint64_t &bin_val)
 }
 
 
-void conv_u8(const char* str, uint64_t &bin_val)
+static void conv_u8(const char* str, uint64_t &bin_val)
 {
     char* end;
     uint64_t ret = strtoul(str, &end, 0);
@@ -502,7 +653,7 @@ void conv_u8(const char* str, uint64_t &bin_val)
 }
 
 
-void conv_i8(const char* str, uint64_t &bin_val)
+static void conv_i8(const char* str, uint64_t &bin_val)
 {
     char* end;
     int64_t ret = strtol(str, &end, 0);
@@ -523,7 +674,7 @@ static const char* skip_blank(const char* str)
 }
 
 
-void conv_uint32v(const char* str, uint64_t &bin_val)
+static void conv_uint32v(const char* str, uint64_t &bin_val)
 {
     std::auto_ptr<std::vector<uint32_t> > array( new std::vector<uint32_t>());
 
@@ -558,8 +709,16 @@ void conv_uint32v(const char* str, uint64_t &bin_val)
     bin_val = (uint64_t)array.release();
 }
 
+typedef int (*run_stop_test_t)(char ch);
 
-static const char* get_next_run(const char* str, std::string& next)
+
+static int default_stop_test(char ch)
+{
+    return isblank(ch);
+}
+
+static const char* get_next_run(const char* str, std::string& next,
+                                run_stop_test_t test = default_stop_test)
 {
     str = skip_blank(str);
 
@@ -569,7 +728,7 @@ static const char* get_next_run(const char* str, std::string& next)
 
     const char* start = str;
 
-    for (; *str && !isblank(*str); str++);
+    for (; *str && !test(*str); str++);
 
     next.assign((char*)(start), str - start);
 
@@ -577,12 +736,13 @@ static const char* get_next_run(const char* str, std::string& next)
 }
 
 
-static const char* get_next_string(const char* str, std::string& next)
+static const char* get_next_string(const char* str, std::string& next,
+                                   run_stop_test_t test = default_stop_test)
 {
     str = skip_blank(str);
 
     if (*str != '"') {
-        return get_next_run(str, next);
+        return get_next_run(str, next, test);
     }
 
     const char* start = ++str;
@@ -637,6 +797,42 @@ static const char* get_next_array(const char* str, std::string& next)
 }
 
 
+static int utf8v_stop_test(char ch)
+{
+    return ch == ',' || isblank(ch);
+}
+
+static void conv_utf8v(const char* str, uint64_t &bin_val)
+{
+    std::auto_ptr<std::vector<const char*> > array( new std::vector<const char*>());
+
+    str = skip_blank(str);
+
+    if (!*str) {
+        bin_val = (uint64_t)array.release();
+        return;
+
+    }
+
+    for (uint i = 0; ; i++, str++) {
+        std::string val;
+
+        str = get_next_string(str, val, utf8v_stop_test);
+        array->push_back(copy_cstr(val.c_str()));
+
+        if (!*(str = skip_blank(str))) {
+            break;
+        }
+
+        if (*str != ',') {
+            THROW("conv failed");
+        }
+    }
+
+    bin_val = (uint64_t)array.release();
+}
+
+
 class InternalSource: public ArgSource {
 public:
     InternalSource(uint64_t* vec)
@@ -645,9 +841,9 @@ public:
     {
     }
 
-    virtual uint8_t* get_utf8()
+    virtual const char* get_utf8()
     {
-        return (uint8_t*)_vec[_pos++];
+        return (const char*)_vec[_pos++];
     }
 
     virtual uint32_t get_uint32()
@@ -660,9 +856,14 @@ public:
         return (uint8_t)_vec[_pos++];
     }
 
-    virtual std::vector<uint32_t>* get_uint32v()
+    virtual const std::vector<uint32_t>* get_uint32v()
     {
-        return (std::vector<uint32_t>*)_vec[_pos++];
+        return (const std::vector<uint32_t>*)_vec[_pos++];
+    }
+
+    virtual const std::vector<const char*>* get_utf8v()
+    {
+        return (const std::vector<const char*>*)_vec[_pos++];
     }
 
 private:
@@ -708,6 +909,10 @@ void AdminRemoteCommand::calls(uint32_t serial, AdminTransmitContext* context,
             case VA_UINT32V_T:
                 str = get_next_array(str, val);
                 conv_uint32v(val.c_str(), bin_args[i]);
+                break;
+            case VA_UTF8V_T:
+                str = get_next_array(str, val);
+                conv_utf8v(val.c_str(), bin_args[i]);
                 break;
             }
         }
@@ -755,5 +960,92 @@ void AdminRemoteCommand::report_error(VAErrorCode code, const std::string& str)
     //}
 
     _error_handler(_opaque, code, str);
+}
+
+
+void AdminRemoteCommand::reply_to_string(va_list args, std::string& result)
+{
+    StdargSource source(args);
+    std::ostringstream os;
+
+    int len = get_output_list().size();
+
+    if (!len) {
+        return;
+    }
+
+    for (int i = 0; ;) {
+        switch (get_output_list()[i]) {
+        case VA_UINT32_T:
+            os << source.get_uint32();
+            break;
+        case VA_INT32_T:
+            os << int32_t(source.get_uint32());
+            break;
+        case VA_UINT8_T:
+            os << source.get_uint8();
+            break;
+        case VA_INT8_T:
+            os << int8_t(source.get_uint8());
+            break;
+        case VA_UTF8_T:
+            os << "\"";
+            os << source.get_utf8();
+            os << "\"";
+            break;
+        case VA_UINT32V_T: {
+            os << "[";
+            const std::vector<uint32_t>* v = source.get_uint32v();
+            uint v_size = v->size();
+
+            if (v_size) {
+                for (uint j = 0;  ;) {
+                    os << (*v)[j];
+
+                    if (++j == v_size) {
+                        break;
+                    }
+
+                    os << ", ";
+                }
+            }
+
+            os << "]";
+            break;
+        }
+        case VA_UTF8V_T: {
+            os << "[";
+            const std::vector<const char*>* v = source.get_utf8v();
+            uint v_size = v->size();
+
+            if (v_size) {
+                for (uint j = 0;  ;) {
+                    os << "\"";
+                    os << (*v)[j];
+                    os << "\"";
+
+                    if (++j == v_size) {
+                        break;
+                    }
+
+                    os << ", ";
+                }
+            }
+
+            os << "]";
+            break;
+        }
+        default:
+            PANIC("invalid type");
+        }
+
+        if (++i == len) {
+            break;
+        }
+
+        os << " ";
+    }
+
+    result = os.str();
 }
 

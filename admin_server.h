@@ -42,7 +42,9 @@ public:
                           const std::string& description,
                           const std::string& help,
                           const va_type_list_t& input_list,
+                          const va_names_list_t& input_names,
                           const va_type_list_t& output_list,
+                          const va_names_list_t& output_names,
                           admin_command_handler_t proc, void* opaque);
 
     void command_reply(void* context, ...);
@@ -75,6 +77,7 @@ private:
 };
 
 extern const va_type_list_t empty_va_type_list;
+extern const va_names_list_t empty_names_list;
 
 #endif
 

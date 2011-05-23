@@ -195,20 +195,26 @@ void NoxVM::register_admin_commands()
     output_args[0] = VA_UINT32_T;     // result
     output_args[1] = VA_UTF8_T;       // error string
 
+    va_names_list_t output_names(2);
+
+    output_names[0] = "result";
+    output_names[1] = "error-string";
+
+
     admin->register_command("suspend", "suspend virtual machin execution", "???",
-                            empty_va_type_list, output_args,
+                            empty_va_type_list, empty_names_list, output_args, output_names,
                             (admin_command_handler_t)&NoxVM::suspend_command, this);
 
     admin->register_command("resume", "resume virtual machin execution", "???",
-                            empty_va_type_list, output_args,
+                            empty_va_type_list, empty_names_list, output_args, output_names,
                             (admin_command_handler_t)&NoxVM::resume_command, this);
 
     admin->register_command("restart", "restart the virtual machin", "???",
-                            empty_va_type_list, output_args,
+                            empty_va_type_list, empty_names_list, output_args, output_names,
                             (admin_command_handler_t)&NoxVM::restart_command, this);
 
     admin->register_command("terminate", "terminate virtual machin execution", "???",
-                            empty_va_type_list, output_args,
+                            empty_va_type_list, empty_names_list, output_args, output_names,
                             (admin_command_handler_t)&NoxVM::terminate_command, this);
 }
 

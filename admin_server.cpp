@@ -35,6 +35,7 @@
 #define MAX_ADMIN_CONNECTIONS 10
 
 const va_type_list_t empty_va_type_list;
+const va_names_list_t empty_names_list;
 
 static AdminServer* server = NULL;
 static Atomic connection_count;
@@ -417,19 +418,32 @@ AdminServer::AdminServer(const std::string& uds_name)
     server = this;
 
     va_type_list_t input_args(1);
-    input_args[0] = VA_UINT32_T;      // command index
+    input_args[0] = VA_UINT32_T;
+    va_names_list_t input_names(1);
+    input_names[0] = "index";
 
-    va_type_list_t output_args(6);
-    output_args[0] = VA_UINT32_T;     // command id
-    output_args[1] = VA_UTF8_T;       // command name
-    output_args[2] = VA_UTF8_T;       // command description
-    output_args[3] = VA_UTF8_T;       // command help
-    output_args[4] = VA_UINT32V_T;    // inputs args
-    output_args[5] = VA_UINT32V_T;    // outputs args
+    va_type_list_t output_args(8);
+    output_args[0] = VA_UINT32_T;
+    output_args[1] = VA_UTF8_T;
+    output_args[2] = VA_UTF8_T;
+    output_args[3] = VA_UTF8_T;
+    output_args[4] = VA_UINT32V_T;
+    output_args[5] = VA_UTF8V_T;
+    output_args[6] = VA_UINT32V_T;
+    output_args[7] = VA_UTF8V_T;
+    va_names_list_t output_names(8);
+    output_names[0] = "code";
+    output_names[1] = "name";
+    output_names[2] = "description";
+    output_names[3] = "help";
+    output_names[4] = "input-args";
+    output_names[5] = "input-names";
+    output_names[6] = "output-args";
+    output_names[7] = "output-names";
 
     AdminLocalCommand* command;
     command = new AdminLocalCommand(VA_CMD_ENUM_COMMANDS, "@unum-commands", "???", "???",
-                                    input_args, output_args,
+                                    input_args, input_names, output_args, output_names,
                                     (admin_command_handler_t)&AdminServer::enum_commands, this);
     _handlers.push_back(command);
 }
@@ -465,7 +479,8 @@ void AdminServer::enum_commands(AdminReplyContext* context, uint32_t index)
 
     context->command_reply(handler->get_command_code(), handler->get_name(),
                            handler->get_description(), handler->get_help(),
-                           &handler->get_input_list(), &handler->get_output_list());
+                           &handler->get_input_list(), &handler->get_input_names(),
+                           &handler->get_output_list(), &handler->get_output_names());
 }
 
 
@@ -531,7 +546,9 @@ void AdminServer::register_command(const std::string& name,
                                    const std::string& description,
                                    const std::string& help,
                                    const va_type_list_t& input_list,
+                                   const va_names_list_t& input_names,
                                    const va_type_list_t& output_list,
+                                   const va_names_list_t& output_names,
                                    admin_command_handler_t handler,
                                    void* opaque)
 {
@@ -548,6 +565,7 @@ void AdminServer::register_command(const std::string& name,
     }
 
     _handlers.push_back(new AdminLocalCommand(_next_command_code++, name, description, help,
-                                              input_list, output_list, handler, opaque));
+                                              input_list, input_names, output_list, output_names,
+                                              handler, opaque));
 }
 
