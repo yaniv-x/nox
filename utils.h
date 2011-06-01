@@ -37,6 +37,9 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
+#define OFFSETOF(type, member) ((unsigned long)&((type *)0)->member)
+#define CONTAINEROF(ptr, type, member) ((type *)((uint8_t *)(ptr) - OFFSETOF(type, member)))
+
 class AutoFD {
 public:
     AutoFD() : _fd (-1) {}

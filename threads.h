@@ -50,7 +50,6 @@ private:
 
 class Mutex: public NonCopyable {
 public:
-
     Mutex()
     {
         if (pthread_mutex_init(&_mutex, NULL)) {

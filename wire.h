@@ -29,6 +29,7 @@
 
 
 #include "non_copyable.h"
+#include "threads.h"
 
 
 class Wire: public NonCopyable {

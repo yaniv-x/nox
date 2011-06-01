@@ -38,9 +38,10 @@
 #include "pic.h"
 #include "pit.h"
 #include "pci_bus.h"
-#include "ata_controller.h"
+#include "ata_host.h"
+#include "ata_disk.h"
+#include "atapi_cdrom.h"
 #include "cmos.h"
-#include "disk.h"
 #include "keyboard.h"
 #include "vga.h"
 #include "display.h"
@@ -631,9 +632,9 @@ void NoxVM::init_hard_disk()
         return;
     }
 
-    Disk* hd = new Disk(_hard_disk_file_name.c_str());
-    _hard_disk_size = hd->get_size();
-    _ata_host->set_device_0(hd);
+    ATADiskFactory factory(_hard_disk_file_name.c_str());
+    _ata_host->set_device_0(factory);
+    _hard_disk_size = factory.get_size();
 }
 
 
@@ -651,7 +652,8 @@ void NoxVM::init_cdrom()
         return;
     }
 
-    _ata_host->set_device_1(new ATAPIDevice(_cdrom_file_name.c_str()));
+    ATAPICdromFactory factory(_cdrom_file_name.c_str());
+    _ata_host->set_device_1(factory);
 }
 
 

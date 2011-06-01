@@ -33,8 +33,6 @@ nox_SOURCES =					\
 	pic.cpp					\
 	pci_bus.cpp				\
         pci_device.cpp                          \
-	ata_controller.cpp			\
-	disk.cpp				\
 	vga.cpp					\
 	display.cpp				\
 	options_parser.cpp			\
@@ -42,6 +40,11 @@ nox_SOURCES =					\
 	admin_server.cpp		\
     admin_common.cpp        \
     dynamic_call.nasm        \
+    ata_device.cpp        \
+    ata_host.cpp        \
+    ata_disk.cpp        \
+    atapi_cdrom.cpp        \
+    block_device.cpp        \
 	run_loop.cpp
 
 INCLUDES =												\
