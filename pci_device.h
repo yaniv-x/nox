@@ -46,13 +46,6 @@ public:
               uint8_t revision, uint32_t class_code, bool with_interrupt);
     virtual ~PCIDevice();
 
-    virtual void reset();
-    virtual bool start() { return true;}
-    virtual bool stop() { return true;}
-    virtual void power() {}
-    virtual void save(OutStream& stream) {}
-    virtual void load(InStream& stream) {}
-
     void add_mmio_region(uint bar, uint64_t size, void* opaque,
                          read_mem_proc_t read, write_mem_proc_t write,
                          bool bits64);
@@ -74,6 +67,13 @@ public:
     class Region;
 
 protected:
+    virtual void reset();
+    virtual bool start() { return true;}
+    virtual bool stop() { return true;}
+    virtual void power() {}
+    virtual void save(OutStream& stream) {}
+    virtual void load(InStream& stream) {}
+
     virtual void on_io_enabled() {}
     virtual void on_io_disabled() {}
 

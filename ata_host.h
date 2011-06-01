@@ -24,59 +24,55 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_DISK
-#define _H_DISK
+#ifndef _H_ATA_HOST
+#define _H_ATA_HOST
 
-#include "common.h"
-#include "non_copyable.h"
+#include "pci_device.h"
+
+class ATADeviceFactory;
+class ATADevice;
+class Wire;
 
 
-class ATADevice: public NonCopyable {
+class ATAHost: public PCIDevice {
 public:
-    virtual bool is_ATAPI() = 0;
-    virtual uint64_t get_size() = 0;
-    virtual bool read(uint64_t sector, uint8_t* buf) = 0;
-    virtual bool write(uint64_t sector, const uint8_t* buf) = 0;
+    ATAHost();
+
+    void set_device_0(ATADeviceFactory& factory);
+    void set_device_1(ATADeviceFactory& factory);
+
+protected:
+    virtual void reset();
+
+    virtual void on_io_enabled();
+    virtual void on_io_disabled();
+
+private:
+    uint8_t io_channel_0_alt_status(uint16_t port);
+    void io_channel_0_control(uint16_t port, uint8_t val);
+    uint8_t io_channel_0_read(uint16_t port);
+    void io_channel_0_write(uint16_t port, uint8_t val);
+    uint16_t io_channel_0_read_word(uint16_t port);
+    void io_channel_0_write_word(uint16_t port, uint16_t data);
+
+    uint8_t io_channel_1_alt_status(uint16_t port);
+    void io_channel_1_control(uint16_t port, uint8_t val);
+    uint8_t io_channel_1_read(uint16_t port);
+    void io_channel_1_write(uint16_t port, uint8_t val);
+    uint16_t io_channel_1_read_word(uint16_t port);
+    void io_channel_1_write_word(uint16_t port, uint16_t data);
+
+private:
+    std::auto_ptr<Wire> _channel_0_wire;
+    std::auto_ptr<Wire> _channel_1_wire;
+    std::auto_ptr<ATADevice> _channel_0;
+    std::auto_ptr<ATADevice> _channel_1;
 };
 
 
-class ATAPIDevice: public ATADevice {
+class ATADeviceFactory: public NonCopyable {
 public:
-    ATAPIDevice(const char* file_name);
-
-    virtual bool is_ATAPI() { return true;}
-
-    virtual uint64_t get_size() { return _size;}
-    virtual bool read(uint64_t sector, uint8_t* buf);
-    virtual bool write(uint64_t sector, const uint8_t* buf) { THROW("");}
-
-private:
-    AutoFD _file;
-    uint64_t _size;
-};
-
-class Disk: public ATADevice {
-public:
-    Disk(const char* file_name, uint read_cache = 0, uint write_cache = 0);
-    virtual ~Disk();
-
-    virtual bool is_ATAPI() { return false;}
-    virtual uint64_t get_size() { return _size;}
-
-    virtual bool read(uint64_t sector, uint8_t* buf);
-    virtual bool write(uint64_t sector, const uint8_t* buf);
-
-    //void enable_cache();
-    //void disable_cache();
-    //void set_queue_size();
-    //void get_io_buf();
-    //void put_io_buf();
-private:
-    AutoFD _file;
-    uint64_t _size;
-
-    typedef std::map<uint64_t, uint8_t*> SectorsMap;
-    SectorsMap _sectors;
+    virtual ATADevice* creat_device(VMPart& owner, Wire& wire) = 0;
 };
 
 
