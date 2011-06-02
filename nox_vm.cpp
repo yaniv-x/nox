@@ -134,8 +134,9 @@ NoxVM::NoxVM()
     , _high_ram (NULL)
     , _ram_size (MB)
     , _num_cpus (1)
-    , _boot_from_cdrom (false)
     , _hard_disk_size (0)
+    , _cdrom (false)
+    , _boot_from_cdrom (false)
 {
     add_io_region(_io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                            (io_read_byte_proc_t)&NoxVM::a20_port_read,
@@ -642,13 +643,14 @@ void NoxVM::set_cdrom(const char* file_name)
 {
     ASSERT(_state == INIT);
 
+    _cdrom = true;
     _cdrom_file_name = file_name ? file_name : "";
 }
 
 
 void NoxVM::init_cdrom()
 {
-    if (!_cdrom_file_name.length()) {
+    if (!_cdrom) {
         return;
     }
 

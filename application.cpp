@@ -183,7 +183,7 @@ bool Application::init(int argc, const char** argv)
     parser.add_option_with_arg(OPT_HARD_DISK, "hard-disk", OptionsParser::ONE_ARGUMENT,
                                "file_name", "specifay hard disk file name",
                                OptionsParser::MANDATORY);
-    parser.add_option_with_arg(OPT_CDROM, "cdrom", OptionsParser::ONE_ARGUMENT, "file_name",
+    parser.add_option_with_arg(OPT_CDROM, "cdrom", OptionsParser::OPTIONAL_ARGUMENT, "file_name",
                                "specifay hard disk file name");
     parser.add_option_with_arg(OPT_BOOT_DEVICE, "boot-device", OptionsParser::ONE_ARGUMENT,
                                "device", "specifay boot device \"hd\" pr \"cd\"");
@@ -199,7 +199,8 @@ bool Application::init(int argc, const char** argv)
     const char* vm_name = NULL;
     uint64_t ram_size = 0;
     const char* hard_disk = NULL;
-    const char* cdrom = NULL;
+    bool cdrom = false;
+    const char* cdrom_media = NULL;
     bool boot_from_cd = false;
 
     int option;
@@ -235,7 +236,8 @@ bool Application::init(int argc, const char** argv)
             hard_disk = arg;
             break;
         case OPT_CDROM:
-            cdrom = arg;
+            cdrom = true;
+            cdrom_media = arg;
             break;
         case OPT_BOOT_DEVICE:
             if (strcmp(arg, "hd") == 0) {
@@ -266,7 +268,11 @@ bool Application::init(int argc, const char** argv)
 
         _vm->set_ram_size(ram_size / MB);
         _vm->set_hard_disk(hard_disk);
-        _vm->set_cdrom(cdrom);
+
+        if (cdrom) {
+            _vm->set_cdrom(cdrom_media);
+        }
+
         _vm->set_boot_device(boot_from_cd);
 
         _vm->init();
