@@ -1047,6 +1047,7 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
     AutoRef<CDReadTask> task(new CDReadTask(*this, start, end, MIN(bunch, length)));
 #endif
     start_task(task.get());
+    set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
 
@@ -1359,6 +1360,7 @@ void ATAPICdrom::read_formatted_toc(uint8_t* packet)
     memcpy(task->get_data(), data, length);
 
     start_task(task.get());
+    set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
 
@@ -1403,6 +1405,7 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
         AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
         memcpy(task->get_data(), data, length);
         start_task(task.get());
+        set_power_mode(ATADevice::POWER_ACTIVE);
         return;
     }
 
@@ -1470,6 +1473,7 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
     memcpy(task->get_data(), data, length);
 
     start_task(task.get());
+    set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
 void ATAPICdrom::mmc_read_toc(uint8_t* packet)
@@ -1847,6 +1851,65 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
 }
 
 
+void ATAPICdrom::mmc_start_stop_unit(uint8_t* packet)
+{
+    Lock lock(_media_lock);
+
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
+    if ((packet[5] & 1) /*link bit is set*/) {
+        D_MESSAGE("link is set");
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+        return;
+    }
+
+    bool immediate = packet[1] & 1;
+    uint power_condition = packet[4] >> 4;
+
+    D_MESSAGE("power condition %u%s", power_condition, immediate ? " immediate" : "");
+
+    switch (power_condition) {
+    case 0: //no change
+        switch (packet[4] & 0x3) {
+        case 2: // eject
+            if (!(_cdrom_state & LOCK_STATE_MASK)) {
+                open_tray();
+            }
+            break;
+        case 3: // load
+            if (!(_cdrom_state & LOCK_STATE_MASK)) {
+                close_tray();
+            }
+            break;
+        case 0: // stop the disk
+            break;
+        case 1: // Start the disc and make ready for access
+            set_power_mode(ATADevice::POWER_ACTIVE);
+            break;
+        }
+        break;
+    case 2: // idle
+        set_power_mode(ATADevice::POWER_IDLE);
+        break;
+    case 3: // standbuy
+        set_power_mode(ATADevice::POWER_STANDBY);
+        break;
+    case 5: // sleap
+        set_power_mode(ATADevice::POWER_SLEEP);
+        break;
+    default:
+        D_MESSAGE("invalid powr condition");
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+        return;
+    }
+
+    packet_cmd_sucess();
+}
+
+
 void ATAPICdrom::mmc_mechanisim_status(uint8_t* packet)
 {
 }
@@ -1899,6 +1962,10 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     case MMC_CMD_GET_EVENT_STATUS_NOTIFICATION:
         D_MESSAGE("MMC_CMD_GET_EVENT_STATUS_NOTIFICATION");
         mmc_get_event_status_notification(packet);
+        break;
+    case MMC_CMD_START_STOP_UNIT:
+        D_MESSAGE("MMC_CMD_START_STOP_UNIT:");
+        mmc_start_stop_unit(packet);
         break;
     //case MMC_CMD_MECHANISM_STATUS:
         //mmc_mechanisim_status(packet);
@@ -2145,7 +2212,7 @@ void ATAPICdrom::open_tray()
     _cdrom_state &= ~(MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK);
     _mounted_media = NULL;
 
-    raise();
+    raise(); //??
 }
 
 
@@ -2167,7 +2234,7 @@ void ATAPICdrom::close_tray()
         _cdrom_state |= MEW_MEDIA_EVENT_MASK | ATTENTION_MEDIA_MASK;
     }
 
-    raise();
+    raise(); //??
 }
 
 
@@ -2229,7 +2296,7 @@ void ATAPICdrom::set_media(const std::string& file_name)
     if (_cdrom_state & LOCK_STATE_MASK) {
         D_MESSAGE("event");
         _cdrom_state |= EJECT_EVENT_MASK;
-        raise();
+        raise(); //??
     } else {
         close_tray();
     }

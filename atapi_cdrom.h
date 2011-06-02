@@ -67,6 +67,7 @@ private:
     void mmc_prevent_allow_removal(uint8_t* packet);
     void mmc_get_event_status_notification(uint8_t* packet);
     void mmc_mechanisim_status(uint8_t* packet);
+    void mmc_start_stop_unit(uint8_t* packet);
     void scsi_request_sens(uint8_t* packet);
     void scsi_test_unit_ready(uint8_t* packet);
     void scsi_inquiry(uint8_t* packet);
