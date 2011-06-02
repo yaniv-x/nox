@@ -120,7 +120,7 @@ public:
                  BlockDeviceCallback& call_back, bool read_only);
     virtual ~BlockDevice();
 
-    uint64_t get_size() { return __size * _block_size;}
+    uint64_t get_size() { return _size * _block_size;}
     void read(Block* block);
     void write(Block* block);
     void sync(void* mark);
@@ -155,7 +155,7 @@ private:
     Mutex _mutex;
     Condition _condition;
     Thread* _thread;
-    uint64_t __size;
+    uint64_t _size;
     uint _block_size;
     BlockDeviceCallback& _call_back;
 
