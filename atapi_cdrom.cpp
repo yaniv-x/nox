@@ -28,6 +28,8 @@
 #include "block_device.h"
 #include "ata.h"
 #include "malloc.h"
+#include "application.h"
+#include "admin_server.h"
 
 #define ATA_LOG(format, ...)
 
@@ -46,6 +48,19 @@ enum {
     MAX_BUNCH = MAX_PACKET_PIO_TRANSFER_SIZE / MMC_CD_SECTOR_SIZE,
 
     CDROM_NUM_BLOCKS = MAX_BUNCH,
+};
+
+
+enum {
+    LOCK_STATE_MASK = (1 << 0),
+    ACTIVE_PERSISTENT_LOCK_MASK = (1 << 1),
+    PERSISTENT_LOCK_MASK = (1 << 2),
+    EJECT_EVENT_MASK = (1 << 3),
+    TRAY_DOR_OPEN_MASK = (1 << 4),
+    OPERATIONAL_EVENT_MASK = (1 << 5),
+    MEW_MEDIA_EVENT_MASK = (1 << 6),
+    ATTENTION_PARAMETERS_MASK = (1 << 7),
+    ATTENTION_MEDIA_MASK = (1 << 8),
 };
 
 
@@ -638,6 +653,7 @@ private:
 
 ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
     : ATADevice("atapi-cdrom", owner, wire)
+    , _mounted_media (NULL)
 {
     if (file_name.size()) {
         try {
@@ -648,6 +664,7 @@ ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
     }
 
     init_blocks();
+    register_admin_commands();
 }
 
 
@@ -677,6 +694,86 @@ void ATAPICdrom::init_blocks()
 }
 
 
+void ATAPICdrom::register_admin_commands()
+{
+    AdminServer* admin = application->get_admin();
+
+    admin->register_command("eject", "press eject button", "???",
+                            empty_va_type_list, empty_names_list,
+                            empty_va_type_list, empty_names_list,
+                            (admin_command_handler_t)&ATAPICdrom::eject_command, this);
+
+    va_type_list_t input_args(1);
+
+    input_args[0] = VA_UTF8_T;
+
+    va_names_list_t input_names(1);
+
+    input_names[0] = "file-name";
+
+    admin->register_command("set-media", "set cdrom media", "???",
+                            input_args, input_names,
+                            empty_va_type_list, empty_names_list,
+                            (admin_command_handler_t)&ATAPICdrom::set_media_command, this);
+}
+
+
+class DeferSetMedia {
+public:
+    DeferSetMedia(ATAPICdrom& cdrom, const char* file_name, AdminReplyContext* context)
+        : _cdrom (cdrom)
+        , _file (copy_cstr(file_name))
+        , _context (context)
+        , _timer (application->create_timer((void_callback_t)&DeferSetMedia::do_set, this))
+    {
+        _timer->arm(uint64_t(1000) * 1000 * 1000 * 2, false);
+    }
+
+    void do_set()
+    {
+        if (_cdrom.is_tray_open()) {
+            _cdrom.set_media(_file);
+        }
+
+        _context->command_reply();
+        _timer->destroy();
+        delete[] _file;
+        delete this;
+    }
+
+public:
+    ATAPICdrom& _cdrom;
+    const char* _file;
+    AdminReplyContext* _context;
+    Timer* _timer;
+};
+
+
+void ATAPICdrom::set_media_command(AdminReplyContext* context, const char* name)
+{
+    if (is_tray_open()) {
+        set_media(name);
+        context->command_reply();
+        return;
+    }
+
+    eject_button_press();
+
+    new DeferSetMedia(*this, name, context); // deferring inserting of new media in-order to let
+                                             // windows detact removal of current media. The
+                                             // DeferSetMedia object is unsafe and will be fixd
+                                             // once  I'll know for sure that it is the right way
+                                             // to go.
+}
+
+
+void ATAPICdrom::eject_command(AdminReplyContext* context)
+{
+    eject_button_press();
+    context->command_reply();
+}
+
+
 CDBlock* ATAPICdrom::get_block(uint address)
 {
     Lock lock(_blocks_mutex);
@@ -691,7 +788,7 @@ CDBlock* ATAPICdrom::get_block(uint address)
     ret->valid = false;
     ret->refs = 2;
     inc_async_count();
-    _media->read(ret);
+    _mounted_media->read(ret);
 
     return ret;
 }
@@ -714,8 +811,8 @@ void ATAPICdrom::reset(bool cold)
 
     _sense = SCSI_SENSE_NO_SENSE;
     _sense_add = SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION;
-    _locked = false;
-    _persistent_prevent = false;
+    _cdrom_state = 0;
+    _mounted_media = _media.get();
 }
 
 
@@ -787,13 +884,29 @@ void ATAPICdrom::packet_cmd_chk(uint sens, uint sens_add)
     ATA_LOG("packet_chk: 0x%x 0x%x", sens, sens_add);
     _status |= ATA_STATUS_CHK_MASK;
     _error = (sens << SCSI_SENSE_SHIFT);
-    _packet_cmd_done(SCSI_SENSE_NO_SENSE, SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION);
+    _packet_cmd_done(sens, sens_add);
 }
 
 
 void ATAPICdrom::packet_cmd_sucess()
 {
     _packet_cmd_done(SCSI_SENSE_NO_SENSE, SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION);
+}
+
+
+bool ATAPICdrom::handle_attention_condition()
+{
+    if (!(_cdrom_state & (ATTENTION_PARAMETERS_MASK | ATTENTION_MEDIA_MASK))) {
+        return false;
+    }
+
+    if ((_cdrom_state & ATTENTION_PARAMETERS_MASK)) {
+        packet_cmd_chk(SCSI_SENSE_UNIT_ATTENTION, SCSI_SENSE_ADD_PARAMETERS_CHANGED);
+    } else {
+        packet_cmd_chk(SCSI_SENSE_UNIT_ATTENTION, SCSI_SENSE_ADD_MEDIUM_MAY_HAVE_CHANGED);
+    }
+
+    return true;
 }
 
 
@@ -809,8 +922,20 @@ uint ATAPICdrom::max_pio_transfer_bytes()
 }
 
 
+uint ATAPICdrom::get_not_present_sens_add()
+{
+    return (_cdrom_state & TRAY_DOR_OPEN_MASK) ? SCSI_SENSE_ADD_MEDIUM_NOT_PRESENT_OPEN :
+                                                 SCSI_SENSE_ADD_MEDIUM_NOT_PRESENT_CLOSED;
+}
+
+
 void ATAPICdrom::mmc_read_capacity(uint8_t* packet)
 {
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
     uint max_transfer = max_pio_transfer_bytes();
 
     if (!max_transfer) {
@@ -841,16 +966,16 @@ void ATAPICdrom::mmc_read_capacity(uint8_t* packet)
 
     Lock lock(_media_lock);
 
-    if (!_media.get()) {
+    if (!_mounted_media) {
         D_MESSAGE("media not present");
-        packet_cmd_chk(SCSI_SENSE_NOT_READY, SCSI_SENSE_ADD_MEDIUM_NOT_PRESENT);
+        packet_cmd_chk(SCSI_SENSE_NOT_READY, get_not_present_sens_add());
         return;
     }
 
     AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, 8, max_transfer));
 
     uint32_t* data = (uint32_t*)task->get_data();
-    data[0] = revers_unit32(_media->get_size() / MMC_CD_SECTOR_SIZE - 1);
+    data[0] = revers_unit32(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE - 1);
     data[1] = revers_unit32(MMC_CD_SECTOR_SIZE);
 
     start_task(task.get());
@@ -859,6 +984,11 @@ void ATAPICdrom::mmc_read_capacity(uint8_t* packet)
 
 void ATAPICdrom::mmc_read(uint8_t* packet)
 {
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
     if ((packet[9] & 1) /*link bit is set*/) {
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
@@ -871,9 +1001,9 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
 
     Lock lock(_media_lock);
 
-    if (!_media.get()) {
+    if (!_mounted_media) {
         D_MESSAGE("media not present");
-        packet_cmd_chk(SCSI_SENSE_NOT_READY, SCSI_SENSE_ADD_MEDIUM_NOT_PRESENT);
+        packet_cmd_chk(SCSI_SENSE_NOT_READY, get_not_present_sens_add());
         return;
     }
 
@@ -882,7 +1012,7 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
     uint16_t length = revers_unit16(*(uint16_t*)&packet[7]);
     uint64_t end = start + length;
 
-    if (start > _media->get_size() / MMC_CD_SECTOR_SIZE || start > end)  {
+    if (start > _mounted_media->get_size() / MMC_CD_SECTOR_SIZE || start > end)  {
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST,
                          SCSI_SENSE_ADD_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE);
         return;
@@ -922,6 +1052,11 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
 
 void ATAPICdrom::scsi_test_unit_ready(uint8_t* packet)
 {
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
     if ((packet[5] & 1) /*link bit is set*/ ) {
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
@@ -929,10 +1064,10 @@ void ATAPICdrom::scsi_test_unit_ready(uint8_t* packet)
 
     Lock lock(_media_lock);
 
-    if (_media.get()) {
+    if (_mounted_media) {
         packet_cmd_sucess();
     } else {
-        packet_cmd_chk(SCSI_SENSE_NOT_READY, SCSI_SENSE_ADD_MEDIUM_NOT_PRESENT);
+        packet_cmd_chk(SCSI_SENSE_NOT_READY, get_not_present_sens_add());
     }
 }
 
@@ -1052,6 +1187,11 @@ public:
 
 void ATAPICdrom::scsi_mode_sense(uint8_t* packet)
 {
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
     if ((packet[1] & 1) /* DESC*/ || (packet[9] & 1) /*link bit is set*/) {
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
@@ -1213,7 +1353,7 @@ void ATAPICdrom::read_formatted_toc(uint8_t* packet)
     data[14] = MMC_LEADOUT_TRACK_ID; // track number
     data[15] = 0;     // reservd
     ptr32 = (uint32_t*)&data[16];
-    *ptr32 = revers_unit32(_media->get_size() / MMC_CD_SECTOR_SIZE);
+    *ptr32 = revers_unit32(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE);
 
     AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
     memcpy(task->get_data(), data, length);
@@ -1270,7 +1410,7 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
     data[5] = 0x14;  // control = Data track, recorded uninterrupted
     data[6] = 0;     //TNO;
     data[7] = 1;     //POINT ; track 1
-    frames_to_time(_media->get_size() / MMC_CD_SECTOR_SIZE,
+    frames_to_time(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE,
                    data[8], data[9], data[10]); // running time
     data[11] = 0; //ZERO
     data[12] = 0; // track start MIN
@@ -1310,7 +1450,7 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
     data[42] = 0;     // lead-in running time SEC
     data[43] = 0;    // lead-in running time FRAME
     data[44] = 0;    //ZERO
-    frames_to_time(_media->get_size() / MMC_CD_SECTOR_SIZE,
+    frames_to_time(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE,
                    data[45], data[46], data[47]); // lead out start time
 
     ptr16 = (uint16_t*)&data[0];
@@ -1334,11 +1474,16 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
 
 void ATAPICdrom::mmc_read_toc(uint8_t* packet)
 {
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
     Lock lock(_media_lock);
 
-    if (!_media.get()) {
+    if (!_mounted_media) {
         D_MESSAGE("media not present");
-        packet_cmd_chk(SCSI_SENSE_NOT_READY, SCSI_SENSE_ADD_MEDIUM_NOT_PRESENT);
+        packet_cmd_chk(SCSI_SENSE_NOT_READY, get_not_present_sens_add());
         return;
     }
 
@@ -1391,6 +1536,14 @@ void ATAPICdrom::scsi_request_sens(uint8_t* packet)
     data[12] = _sense_add >> 8;
     data[13] = _sense_add;
 
+    if (_sense == SCSI_SENSE_UNIT_ATTENTION) {
+        if (_sense_add == SCSI_SENSE_ADD_PARAMETERS_CHANGED) {
+            _cdrom_state &= ~ATTENTION_PARAMETERS_MASK;
+        } else if (_sense_add == SCSI_SENSE_ADD_MEDIUM_MAY_HAVE_CHANGED) {
+            _cdrom_state &= ~ATTENTION_MEDIA_MASK;
+        }
+    }
+
     AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
     memcpy(task->get_data(), data, length);
 
@@ -1418,7 +1571,7 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
 {
     Lock lock(_media_lock);
 
-    bool media = !!_media.get();
+    bool media = !!_mounted_media;
 
     if ((packet[9] & 1) /*link bit is set*/) {
         D_MESSAGE("link is set");
@@ -1549,24 +1702,33 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
 
 void ATAPICdrom::mmc_prevent_allow_removal(uint8_t* packet)
 {
-    //Lock lock(_media_lock);
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
+    Lock lock(_media_lock);
 
     switch (packet[4] & 3) {
     case 0:
         D_MESSAGE("unlock");
-        _locked = false;
+        _cdrom_state &= ~LOCK_STATE_MASK;
         break;
     case 1:
         D_MESSAGE("lock");
-        _locked = true;
+        _cdrom_state |= LOCK_STATE_MASK;
         break;
     case 2:
         D_MESSAGE("persistent allow");
-        _persistent_prevent = false;
+        _cdrom_state &= ~(PERSISTENT_LOCK_MASK | ACTIVE_PERSISTENT_LOCK_MASK);
         break;
     case 3:
         D_MESSAGE("Persistent Prevent");
-        _persistent_prevent = true;
+        _cdrom_state |= PERSISTENT_LOCK_MASK;
+
+        if (_mounted_media && !(_cdrom_state & MEW_MEDIA_EVENT_MASK)) {
+            _cdrom_state |= ACTIVE_PERSISTENT_LOCK_MASK;
+        }
         break;
     }
 
@@ -1597,32 +1759,87 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
 
     uint max_transfer = max_pio_transfer_bytes();
 
-    if (length > max_transfer) {
-        D_MESSAGE("not implemented length > max_transfer");
+    if (length > max_transfer && (max_transfer & 1)) {
+        D_MESSAGE("odd max_transfer 0x%x 0x%x", max_transfer, length);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
     }
 
-    //uint notification_request_mask = _sector[4];
+    uint8_t request_mask = packet[4];
 
     if (length == 0) {
         packet_cmd_sucess();
         return;
     }
 
-    if (length < 5) {
-        // keep event
-    }
+    bool report = length > 4;
 
-    uint8_t buf[4];
+    #define MAX_NOTIFICTION_SIZE 8
 
-    length = MIN(length, 4);
+    uint8_t buf[MAX_NOTIFICTION_SIZE];
 
     memset(buf, 0, sizeof(buf));
 
-    ptr16 = (uint16_t*)&buf[0];
-    *ptr16 = revers_unit16(0);
-    buf[3] = (1 << MMC_NOTIFY_MEDIA_CLASS_BIT);
+    buf[3] = MMC_NOTIFY_OPERATIONAL_MASK | MMC_NOTIFY_MEDIA_MASK;
+    request_mask &= buf[3];
+
+    if (!request_mask) {
+        buf[2] = 0x80;
+        report = false;
+        D_MESSAGE("empty");
+    }
+
+    if (!report) {
+        length = MIN(length, 4);
+    } else if ((request_mask & MMC_NOTIFY_OPERATIONAL_MASK) &&
+                                                        (_cdrom_state & OPERATIONAL_EVENT_MASK)) {
+        D_MESSAGE("op");
+        ptr16 = (uint16_t*)&buf[0];
+        *ptr16 = revers_unit16(4);
+        buf[2] = MMC_NOTIFY_OPERATIONAL_CLASS;
+        buf[4] = 2;                 // Logical Unit has changed Operational state
+        buf[5] = (_cdrom_state & ACTIVE_PERSISTENT_LOCK_MASK) ? (1 << 7) : 0;
+        ptr16 = (uint16_t*)&buf[6];
+        *ptr16 = revers_unit16(1);  // Feature Change
+        _cdrom_state &= ~OPERATIONAL_EVENT_MASK;
+        length = MIN(length, 8);
+    } else if ((request_mask & MMC_NOTIFY_MEDIA_MASK) &&
+                                     (_cdrom_state & (MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK))) {
+        ptr16 = (uint16_t*)&buf[0];
+        *ptr16 = revers_unit16(4);
+        buf[2] = MMC_NOTIFY_MEDIA_CLASS;
+        if ((_cdrom_state & EJECT_EVENT_MASK)) {
+            D_MESSAGE("eject");
+            buf[4] = 1;             // EjectRequest
+            _cdrom_state &= ~EJECT_EVENT_MASK;
+        } else {
+            buf[4] = 2;             // NewMedia
+            _cdrom_state &= ~MEW_MEDIA_EVENT_MASK;
+            D_MESSAGE("new");
+            if ((_cdrom_state & PERSISTENT_LOCK_MASK)) {
+                D_MESSAGE("active");
+                _cdrom_state |= ACTIVE_PERSISTENT_LOCK_MASK;
+            }
+        }
+
+        buf[5] = (_mounted_media ? (1 << 1) : 0) |  ((_cdrom_state & TRAY_DOR_OPEN_MASK) ? 1 : 0);
+
+        length = MIN(length, 8);
+    } else if ((request_mask & MMC_NOTIFY_OPERATIONAL_MASK)) {
+        // not sure if it is necessary to put no change event
+        ptr16 = (uint16_t*)&buf[0];
+        *ptr16 = revers_unit16(4);
+        buf[2] = MMC_NOTIFY_OPERATIONAL_CLASS;
+        buf[5] = (_cdrom_state & ACTIVE_PERSISTENT_LOCK_MASK) ? (1 << 7) : 0;
+        length = MIN(length, 8);
+    } else {
+        // not sure if it is necessary to put no change event
+        ptr16 = (uint16_t*)&buf[0];
+        *ptr16 = revers_unit16(4);
+        buf[2] = MMC_NOTIFY_MEDIA_CLASS;
+        buf[5] = (_mounted_media ? (1 << 1) : 0) |  ((_cdrom_state & TRAY_DOR_OPEN_MASK) ? 1 : 0);
+        length = MIN(length, 8);
+    }
 
     AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
     memcpy(task->get_data(), buf, length);
@@ -1637,35 +1854,50 @@ void ATAPICdrom::mmc_mechanisim_status(uint8_t* packet)
 
 void ATAPICdrom::handle_packet(uint8_t* packet)
 {
+    // if an Initiator issues a command other than GET CONFIGURATION, GET EVENT STATUS
+    // NOTIFICATION, INQUIRY or REQUEST SENSE while a unit attention condition exists for that
+    // Initiator, the logical unit shall not perform the command and shall report CHECK CONDITION
+    // status unless a higher priority status as defined by the logical unit is also pending.
+
     switch (packet[0]) {
     case MMC_CMD_READ:
+        D_MESSAGE("MMC_CMD_READ");
         mmc_read(packet);
         break;
     case SCSI_CMD_TEST_UNIT_READY:
+        D_MESSAGE("SCSI_CMD_TEST_UNIT_READY");
         scsi_test_unit_ready(packet);
         break;
     case SCSI_CMD_INQUIRY:
+        D_MESSAGE("SCSI_CMD_INQUIRY");
         scsi_inquiry(packet);
         break;
     case SCSI_CMD_MODE_SENSE:
+        D_MESSAGE("SCSI_CMD_MODE_SENSE");
         scsi_mode_sense(packet);
         break;
     case MMC_CMD_READ_TOC:
+        D_MESSAGE("MMC_CMD_READ_TOC");
         mmc_read_toc(packet);
         break;
     case MMC_CMD_READ_CAPACITY:
+        D_MESSAGE("MMC_CMD_READ_CAPACITY");
         mmc_read_capacity(packet);
         break;
     case SCSI_CMD_REQUEST_SENSE:
+        D_MESSAGE("SCSI_CMD_REQUEST_SENSE");
         scsi_request_sens(packet);
         break;
     case MMC_CMD_GET_CONFIGURATION:
+        D_MESSAGE("MMC_CMD_GET_CONFIGURATION");
         mmc_get_configuration(packet);
         break;
     case MMC_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL:
+        D_MESSAGE("MMC_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL");
         mmc_prevent_allow_removal(packet);
         break;
     case MMC_CMD_GET_EVENT_STATUS_NOTIFICATION:
+        D_MESSAGE("MMC_CMD_GET_EVENT_STATUS_NOTIFICATION");
         mmc_get_event_status_notification(packet);
         break;
     //case MMC_CMD_MECHANISM_STATUS:
@@ -1720,7 +1952,7 @@ void ATAPICdrom::do_device_reset()
         task->cancel();
     }
 
-    _locked = false;
+    _cdrom_state &= ~LOCK_STATE_MASK;
 
     drop();
     set_signature();
@@ -1883,6 +2115,123 @@ void ATAPICdrom::do_command(uint8_t command)
         D_MESSAGE("unhandled 0x%x %u", command, command);
         command_abort_error();
         for (;;) sleep(2);
+    }
+}
+
+
+bool ATAPICdrom::is_tray_locked()
+{
+    return (_cdrom_state & (LOCK_STATE_MASK | ACTIVE_PERSISTENT_LOCK_MASK)) || _media_refs.val();
+}
+
+
+bool ATAPICdrom::is_tray_open()
+{
+    return !!(_cdrom_state & TRAY_DOR_OPEN_MASK);
+}
+
+
+void ATAPICdrom::open_tray()
+{
+    D_MESSAGE("");
+
+    if (_cdrom_state & TRAY_DOR_OPEN_MASK) {
+        return;
+    }
+
+    D_MESSAGE("do");
+
+    _cdrom_state |= TRAY_DOR_OPEN_MASK | OPERATIONAL_EVENT_MASK | ATTENTION_PARAMETERS_MASK;
+    _cdrom_state &= ~(MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK);
+    _mounted_media = NULL;
+
+    raise();
+}
+
+
+void ATAPICdrom::close_tray()
+{
+    D_MESSAGE("");
+
+    if (!(_cdrom_state & TRAY_DOR_OPEN_MASK)) {
+        return;
+    }
+
+    D_MESSAGE("do");
+
+    _cdrom_state &= ~(TRAY_DOR_OPEN_MASK | EJECT_EVENT_MASK);
+    _cdrom_state |= OPERATIONAL_EVENT_MASK | ATTENTION_PARAMETERS_MASK;
+
+    if ((_mounted_media = _media.get())) {
+        D_MESSAGE("new media");
+        _cdrom_state |= MEW_MEDIA_EVENT_MASK | ATTENTION_MEDIA_MASK;
+    }
+
+    raise();
+}
+
+
+void ATAPICdrom::eject_button_press()
+{
+    //Lock lock(get_state_mutex());
+
+    if (get_state() != VMPart::RUNNING) {
+        return;
+    }
+
+    Lock lock(_media_lock);
+
+    if (is_tray_locked()) {
+        D_MESSAGE("event");
+        _cdrom_state |= EJECT_EVENT_MASK;
+        return;
+    }
+
+    if (is_tray_open()) {
+        close_tray();
+    } else {
+        open_tray();
+    }
+}
+
+
+void ATAPICdrom::set_media(const std::string& file_name)
+{
+    //Lock lock(get_state_mutex());
+
+    if (get_state() != VMPart::RUNNING) {
+        return;
+    }
+
+    Lock lock(_media_lock);
+
+    if (!is_tray_open() && is_tray_locked()) {
+        D_MESSAGE("locked");
+        return;
+    }
+
+    open_tray();
+
+    _media.reset(NULL);
+
+    if (file_name == "") {
+        D_MESSAGE("remove media");
+        return;
+    }
+
+    try {
+        _media.reset(new BlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
+    } catch (...) {
+        D_MESSAGE("failed");
+        return;
+    }
+
+    if (_cdrom_state & LOCK_STATE_MASK) {
+        D_MESSAGE("event");
+        _cdrom_state |= EJECT_EVENT_MASK;
+        raise();
+    } else {
+        close_tray();
     }
 }
 

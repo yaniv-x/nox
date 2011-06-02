@@ -32,6 +32,7 @@
 #include "block_device.h"
 
 class CDBlock;
+class AdminReplyContext;
 
 class ATAPICdrom: public ATADevice, public BlockDeviceCallback {
 public:
@@ -75,15 +76,26 @@ private:
     void do_identify_packet_device();
     void do_device_reset();
 
+    void set_media_command(AdminReplyContext* context, const char* name);
+    void eject_command(AdminReplyContext* context);
+    void register_admin_commands();
     void init_blocks();
     CDBlock* get_block(uint address);
     void put_block(CDBlock* block);
     void get_media() { _media_refs.inc();}
     void put_media() { _media_refs.dec();}
-
+    bool is_tray_locked();
+    bool is_tray_open();
+    void open_tray();
+    void close_tray();
+    void eject_button_press();
+    void set_media(const std::string& file_name);
+    uint get_not_present_sens_add();
+    bool handle_attention_condition();
 
 private:
     std::auto_ptr<BlockDevice> _media;
+    BlockDevice* _mounted_media;
     Mutex _media_lock;
     Atomic _media_refs;
 
@@ -94,13 +106,13 @@ private:
 
     uint _sense;
     uint _sense_add;
-    bool _locked;
-    bool _persistent_prevent;
+    uint _cdrom_state;
 
     friend class CDIdentifyTask;
     friend class PacketTask;
     friend class CDGenericTransfer;
     friend class CDReadTask;
+    friend class DeferSetMedia;
 };
 
 

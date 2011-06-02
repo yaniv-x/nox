@@ -127,10 +127,11 @@ private:
     uint8_t _a20_port_val;
     uint64_t _ram_size;
     uint _num_cpus;
-    bool _boot_from_cdrom;
     std::string _hard_disk_file_name;
     uint64_t _hard_disk_size;
+    bool _cdrom;
     std::string _cdrom_file_name;
+    bool _boot_from_cdrom;
 
     bool _nmi_mask;
     uint8_t _misc_port;
