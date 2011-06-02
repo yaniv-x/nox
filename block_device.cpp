@@ -287,7 +287,7 @@ BlockDevice::BlockDevice(const std::string& file_name, uint block_size,
         THROW("invalid file size: %lu is not align on %d bytes", stat.st_size, _block_size);
     }
 
-    __size = stat.st_size / _block_size;
+    _size = stat.st_size / _block_size;
 
     _thread = new Thread((Thread::start_proc_t)&BlockDevice::thread_main, this);
 }
@@ -333,7 +333,7 @@ void BlockDevice::read(Task& task)
 {
     Block* block = (Block*)task.data;
 
-    if (block->address >= __size) {
+    if (block->address >= _size) {
         _call_back.block_io_error(block, 0);
         return;
     }
@@ -369,7 +369,7 @@ void BlockDevice::write(Task& task)
 {
     Block* block = (Block*)task.data;
 
-    if (block->address >= __size) {
+    if (block->address >= _size) {
         _call_back.block_io_error(block, 0);
         return;
     }
