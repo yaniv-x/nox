@@ -265,7 +265,7 @@ void ATADevice::io_control(uint8_t val)
 
     if (_status & ATA_INTERNAL_STATUS_RESET_MASK) {
         _status &= ~(ATA_STATUS_BUSY_MASK | ATA_INTERNAL_STATUS_RESET_MASK);
-        _status |= ATA_STATUS_READY_MASK | (1 << 4) /* ??? */;
+        _status |= ATA_STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
         ATA_LOG("reset done");
     }
 
@@ -397,7 +397,7 @@ void ATADevice::io_write(uint16_t port, uint8_t val)
         _device_reg = val | ATA_DEVICE_MUST_BE_ONE_MASK;
 
         if (!(_device_reg & ATA_DEVICE_SELECT_MASK)) {
-            _status |= ATA_STATUS_READY_MASK | (1 << 4);
+            _status |= ATA_STATUS_READY_MASK /*| ATA_STATUS_SEEK_COMPLEAT*/;
 
             if (_irq_level) {
                 raise();
