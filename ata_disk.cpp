@@ -789,15 +789,18 @@ CachedBlock* ATADisk::alloc_block(uint64_t block_index)
         CachedBlock* block = *iter;
         _blocks_lru.erase(iter);
 
-        if (_cache[block->address] == block) {
-            _cache.erase(block->address);
-        } else {
-            ASSERT(block->is_obsolete())
+        BlocksMap::iterator cache_iter = _cache.find(block->address);
+
+        if (cache_iter != _cache.end()) {
+            if ((*cache_iter).second == block) {
+                _cache.erase(cache_iter);
+            } else {
+                ASSERT(block->is_obsolete());
+            }
         }
 
         block->reset(block_index);
         _blocks_lru.push_back(block);
-        ASSERT(block);
         _cache[block_index] = block;
 
         return block;
@@ -883,6 +886,7 @@ CachedBlock* ATADisk::get_for_write(uint64_t block_index)
            obsolete->ref();
 
            if (!(block = alloc_block(block_index))) {
+               obsolete->unref();
                return NULL;
            }
 
