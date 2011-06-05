@@ -267,7 +267,7 @@ bool Application::init(int argc, const char** argv)
         _vm.reset(new NoxVM());
 
         _vm->set_ram_size(ram_size / MB);
-        _vm->set_hard_disk(hard_disk);
+        _vm->set_hard_disk(hard_disk, false);
 
         if (cdrom) {
             _vm->set_cdrom(cdrom_media);
@@ -314,6 +314,12 @@ static void init_nox_dir()
     if (mkdir(sub_dir.c_str(), 0777) == -1 && errno != EEXIST) {
         THROW("create dir %s failed %d %s", sub_dir.c_str(), errno, strerror(errno));
     }
+
+    sub_dir = nox_dir + "/tmp";
+
+    if (mkdir(sub_dir.c_str(), 0777) == -1 && errno != EEXIST) {
+        THROW("create dir %s failed %d %s", sub_dir.c_str(), errno, strerror(errno));
+    }
 }
 
 
@@ -325,6 +331,8 @@ const std::string& Application::get_nox_dir()
 
 ErrorCode Application::main(int argc, const char** argv)
 {
+    srand(time(NULL));
+
     init_nox_dir();
 
     std::auto_ptr<Application> app(new Application());

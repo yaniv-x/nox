@@ -620,10 +620,15 @@ private:
 };
 
 
-ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name)
+ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool read_only)
     : ATADevice("ata-disk", owner, wire)
-    , _block_dev (new BlockDevice(file_name, SECTOR_SIZE, *this, false))
 {
+    if (read_only) {
+        _block_dev.reset(new ROBlockDevice(file_name, SECTOR_SIZE, *this));
+    } else {
+        _block_dev.reset(new PBlockDevice(file_name, SECTOR_SIZE, *this, false));
+    }
+
     uint64_t size = _block_dev->get_size();
 
     if (size < MB) {
@@ -1387,16 +1392,17 @@ void ATADisk::do_command(uint8_t command)
 }
 
 
-ATADiskFactory::ATADiskFactory(const std::string& file_mame)
+ATADiskFactory::ATADiskFactory(const std::string& file_mame, bool read_only)
     : _file_name (file_mame)
     , _device (NULL)
+    , _read_only (read_only)
 {
 }
 
 
 ATADevice* ATADiskFactory::creat_device(VMPart &owner, Wire &wire)
 {
-    _device = new ATADisk(owner, wire, _file_name);
+    _device = new ATADisk(owner, wire, _file_name, _read_only);
     return _device;
 }
 

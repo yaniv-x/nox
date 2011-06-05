@@ -35,7 +35,7 @@ class CachedBlock;
 
 class ATADisk: public ATADevice, public BlockDeviceCallback {
 public:
-    ATADisk(VMPart& owner, Wire& wire, const std::string& file_name);
+    ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool read_only);
     virtual ~ATADisk();
 
     uint64_t get_size();
@@ -112,13 +112,14 @@ private:
 
 class ATADiskFactory: public ATADeviceFactory {
 public:
-    ATADiskFactory(const std::string& file_mame);
+    ATADiskFactory(const std::string& file_mame, bool read_only);
     virtual ATADevice* creat_device(VMPart &owner, Wire &wire);
     uint64_t get_size() { return _device->get_size();}
 
 private:
     std::string _file_name;
     ATADisk* _device;
+    bool _read_only;
 };
 
 #endif

@@ -58,7 +58,7 @@ public:
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}
 
     void set_ram_size(uint32_t ram_size);
-    void set_hard_disk(const char* file_name);
+    void set_hard_disk(const char* file_name, bool read_only);
     void set_cdrom(const char* file_name);
     void set_boot_device(bool from_cdrom);
 
@@ -128,6 +128,7 @@ private:
     uint64_t _ram_size;
     uint _num_cpus;
     std::string _hard_disk_file_name;
+    bool _ro_hard_disk_file;
     uint64_t _hard_disk_size;
     bool _cdrom;
     std::string _cdrom_file_name;

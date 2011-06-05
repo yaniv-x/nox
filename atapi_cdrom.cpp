@@ -659,7 +659,7 @@ ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
 {
     if (file_name.size()) {
         try {
-            _media.reset(new BlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
+            _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
         } catch (...) {
             W_MESSAGE("loading media failed");
         }
@@ -1927,47 +1927,36 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
 
     switch (packet[0]) {
     case MMC_CMD_READ:
-        D_MESSAGE("MMC_CMD_READ");
         mmc_read(packet);
         break;
     case SCSI_CMD_TEST_UNIT_READY:
-        D_MESSAGE("SCSI_CMD_TEST_UNIT_READY");
         scsi_test_unit_ready(packet);
         break;
     case SCSI_CMD_INQUIRY:
-        D_MESSAGE("SCSI_CMD_INQUIRY");
         scsi_inquiry(packet);
         break;
     case SCSI_CMD_MODE_SENSE:
-        D_MESSAGE("SCSI_CMD_MODE_SENSE");
         scsi_mode_sense(packet);
         break;
     case MMC_CMD_READ_TOC:
-        D_MESSAGE("MMC_CMD_READ_TOC");
         mmc_read_toc(packet);
         break;
     case MMC_CMD_READ_CAPACITY:
-        D_MESSAGE("MMC_CMD_READ_CAPACITY");
         mmc_read_capacity(packet);
         break;
     case SCSI_CMD_REQUEST_SENSE:
-        D_MESSAGE("SCSI_CMD_REQUEST_SENSE");
         scsi_request_sens(packet);
         break;
     case MMC_CMD_GET_CONFIGURATION:
-        D_MESSAGE("MMC_CMD_GET_CONFIGURATION");
         mmc_get_configuration(packet);
         break;
     case MMC_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL:
-        D_MESSAGE("MMC_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL");
         mmc_prevent_allow_removal(packet);
         break;
     case MMC_CMD_GET_EVENT_STATUS_NOTIFICATION:
-        D_MESSAGE("MMC_CMD_GET_EVENT_STATUS_NOTIFICATION");
         mmc_get_event_status_notification(packet);
         break;
     case MMC_CMD_START_STOP_UNIT:
-        D_MESSAGE("MMC_CMD_START_STOP_UNIT:");
         mmc_start_stop_unit(packet);
         break;
     //case MMC_CMD_MECHANISM_STATUS:
@@ -2316,7 +2305,7 @@ void ATAPICdrom::set_media(const std::string& file_name)
     }
 
     try {
-        _media.reset(new BlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
+        _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
     } catch (...) {
         D_MESSAGE("failed");
         return;

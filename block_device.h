@@ -27,6 +27,8 @@
 #ifndef _H_BLOCK_DEVICE
 #define _H_BLOCK_DEVICE
 
+#include <set>
+
 #include "common.h"
 #include "threads.h"
 
@@ -125,6 +127,14 @@ public:
     void write(Block* block);
     void sync(void* mark);
 
+protected:
+    virtual int get_fd_for_read(uint64_t address) = 0;
+    virtual void on_write_done(uint64_t address) = 0;
+    virtual int get_fd_for_write() = 0;
+
+    int get_file() { return _file.get();}
+    void start();
+
 private:
     class Task {
     public:
@@ -162,6 +172,41 @@ private:
     typedef std::list<Task> TaskList;
     TaskList _tasks;
 };
+
+
+class PBlockDevice: public BlockDevice {
+public:
+    PBlockDevice(const std::string& file_name, uint block_size,
+                 BlockDeviceCallback& call_back, bool read_only)
+        : BlockDevice(file_name, block_size, call_back, read_only)
+    {
+        start();
+    }
+
+private:
+    virtual int get_fd_for_read(uint64_t address) { return get_file();}
+    virtual void on_write_done(uint64_t address) {}
+    virtual int get_fd_for_write() { return get_file();}
+};
+
+
+class ROBlockDevice: public BlockDevice {
+public:
+    ROBlockDevice(const std::string& file_name, uint block_size,
+                  BlockDeviceCallback& call_back);
+
+private:
+    virtual int get_fd_for_read(uint64_t address);
+    virtual void on_write_done(uint64_t address);
+    virtual int get_fd_for_write();
+
+private:
+    AutoFD _tmp;
+
+    typedef std::set<uint64_t> BlocksSet;
+    BlocksSet _tmp_blocks;
+};
+
 
 #endif
 

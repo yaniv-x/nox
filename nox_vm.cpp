@@ -134,6 +134,7 @@ NoxVM::NoxVM()
     , _high_ram (NULL)
     , _ram_size (MB)
     , _num_cpus (1)
+    , _ro_hard_disk_file (false)
     , _hard_disk_size (0)
     , _cdrom (false)
     , _boot_from_cdrom (false)
@@ -629,10 +630,11 @@ void NoxVM::set_ram_size(uint32_t ram_size_mb)
 }
 
 
-void NoxVM::set_hard_disk(const char* file_name)
+void NoxVM::set_hard_disk(const char* file_name, bool read_only)
 {
     ASSERT(_state == INIT);
     _hard_disk_file_name = file_name ? file_name : "";
+    _ro_hard_disk_file = read_only;
 }
 
 
@@ -642,7 +644,7 @@ void NoxVM::init_hard_disk()
         return;
     }
 
-    ATADiskFactory factory(_hard_disk_file_name.c_str());
+    ATADiskFactory factory(_hard_disk_file_name.c_str(), _ro_hard_disk_file);
     _ata_host->set_device_0(factory);
     _hard_disk_size = factory.get_size();
 }
