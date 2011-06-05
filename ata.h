@@ -47,6 +47,8 @@ enum {
 
     ATA_STATUS_BUSY_MASK = (1 << 7), // is exclusive                            //BSY
     ATA_STATUS_READY_MASK = (1 << 6),                                           //DRDY
+    ATA_STATUS_SEEK_COMPLEAT = (1 << 4),                                        //DSC
+
     ATA_STATUS_DATA_REQUEST_MASK = (1 << 3), //expeting data from host          //DRQ
     ATA_STATUS_ERROR_MASK = (1 << 0),                                           //ERR
     ATA_STATUS_CHK_MASK = ATA_STATUS_ERROR_MASK,                                //CHK

@@ -835,27 +835,6 @@ CachedBlock* ATADisk::get_for_read(uint64_t block_index)
     return block->ref();
 }
 
-void write_all(int fd, const void* source, uint size)
-{
-    const uint8_t* ptr = (const uint8_t*)source;
-
-    while (size) {
-        ssize_t n = write(fd, ptr, size);
-
-        if (n > 0) {
-            size -= n;
-            ptr += n;
-            continue;
-        }
-
-        if (n == -1 && errno == EINTR) {
-            continue;
-        }
-
-        PANIC("failed");
-    }
-}
-
 
 void ATADisk::store(CachedBlock* block)
 {
@@ -1355,7 +1334,7 @@ void ATADisk::do_command(uint8_t command)
         break;
 #if 0
     case ATA_CMD_CHECK_POWER_MODE:
-        _status = STATUS_READY_MASK | (1 << 4);
+        _status = STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
         _count = get_ata_power_state();
         raise();
         break;

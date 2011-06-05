@@ -2107,7 +2107,7 @@ void ATAPICdrom::do_command(uint8_t command)
         if (!(_status & STATUS_READY_MASK)) {
             command_abort_error();
         } else {
-            _status = STATUS_READY_MASK | (1 << 4);
+            _status = STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
             _count = get_ata_power_state();
             raise();
         }
