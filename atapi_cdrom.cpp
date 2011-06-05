@@ -61,6 +61,7 @@ enum {
     MEW_MEDIA_EVENT_MASK = (1 << 6),
     ATTENTION_PARAMETERS_MASK = (1 << 7),
     ATTENTION_MEDIA_MASK = (1 << 8),
+    ATTENTION_REMOVE_REQUEST = (1 << 9),
 };
 
 
@@ -732,10 +733,7 @@ public:
 
     void do_set()
     {
-        if (_cdrom.is_tray_open()) {
-            _cdrom.set_media(_file);
-        }
-
+        _cdrom.set_media(_file);
         _context->command_reply();
         _timer->destroy();
         delete[] _file;
@@ -752,13 +750,7 @@ public:
 
 void ATAPICdrom::set_media_command(AdminReplyContext* context, const char* name)
 {
-    if (is_tray_open()) {
-        set_media(name);
-        context->command_reply();
-        return;
-    }
-
-    eject_button_press();
+    open_tray();
 
     new DeferSetMedia(*this, name, context); // deferring inserting of new media in-order to let
                                              // windows detact removal of current media. The
@@ -809,6 +801,8 @@ void ATAPICdrom::put_block(CDBlock* block)
 
 void ATAPICdrom::reset(bool cold)
 {
+    D_MESSAGE("");
+
     ATADevice::reset(cold);
 
     _sense = SCSI_SENSE_NO_SENSE;
@@ -898,11 +892,14 @@ void ATAPICdrom::packet_cmd_sucess()
 
 bool ATAPICdrom::handle_attention_condition()
 {
-    if (!(_cdrom_state & (ATTENTION_PARAMETERS_MASK | ATTENTION_MEDIA_MASK))) {
+    if (!(_cdrom_state & (ATTENTION_PARAMETERS_MASK | ATTENTION_MEDIA_MASK |
+                          ATTENTION_REMOVE_REQUEST))) {
         return false;
     }
 
-    if ((_cdrom_state & ATTENTION_PARAMETERS_MASK)) {
+    if ((_cdrom_state & ATTENTION_REMOVE_REQUEST)) {
+        packet_cmd_chk(SCSI_SENSE_UNIT_ATTENTION, SCSI_SENSE_ADD_OPERATOR_REMOVAL_REQUEST);
+    } else if ((_cdrom_state & ATTENTION_PARAMETERS_MASK)) {
         packet_cmd_chk(SCSI_SENSE_UNIT_ATTENTION, SCSI_SENSE_ADD_PARAMETERS_CHANGED);
     } else {
         packet_cmd_chk(SCSI_SENSE_UNIT_ATTENTION, SCSI_SENSE_ADD_MEDIUM_MAY_HAVE_CHANGED);
@@ -1547,6 +1544,8 @@ void ATAPICdrom::scsi_request_sens(uint8_t* packet)
             _cdrom_state &= ~ATTENTION_PARAMETERS_MASK;
         } else if (_sense_add == SCSI_SENSE_ADD_MEDIUM_MAY_HAVE_CHANGED) {
             _cdrom_state &= ~ATTENTION_MEDIA_MASK;
+        } else if (_sense_add == SCSI_SENSE_ADD_OPERATOR_REMOVAL_REQUEST) {
+            _cdrom_state &= ~ATTENTION_REMOVE_REQUEST;
         }
     }
 
@@ -1878,12 +1877,12 @@ void ATAPICdrom::mmc_start_stop_unit(uint8_t* packet)
         switch (packet[4] & 0x3) {
         case 2: // eject
             if (!(_cdrom_state & LOCK_STATE_MASK)) {
-                open_tray();
+                _open_tray();
             }
             break;
         case 3: // load
             if (!(_cdrom_state & LOCK_STATE_MASK)) {
-                close_tray();
+                _close_tray();
             }
             break;
         case 0: // stop the disk
@@ -2202,7 +2201,7 @@ bool ATAPICdrom::is_tray_open()
 }
 
 
-void ATAPICdrom::open_tray()
+void ATAPICdrom::_open_tray()
 {
     D_MESSAGE("");
 
@@ -2213,14 +2212,13 @@ void ATAPICdrom::open_tray()
     D_MESSAGE("do");
 
     _cdrom_state |= TRAY_DOR_OPEN_MASK | OPERATIONAL_EVENT_MASK | ATTENTION_PARAMETERS_MASK;
-    _cdrom_state &= ~(MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK);
+    _cdrom_state &= ~(MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK |
+                      ATTENTION_REMOVE_REQUEST);
     _mounted_media = NULL;
-
-    raise(); //??
 }
 
 
-void ATAPICdrom::close_tray()
+void ATAPICdrom::_close_tray()
 {
     D_MESSAGE("");
 
@@ -2230,15 +2228,13 @@ void ATAPICdrom::close_tray()
 
     D_MESSAGE("do");
 
-    _cdrom_state &= ~(TRAY_DOR_OPEN_MASK | EJECT_EVENT_MASK);
+    _cdrom_state &= ~(TRAY_DOR_OPEN_MASK);
     _cdrom_state |= OPERATIONAL_EVENT_MASK | ATTENTION_PARAMETERS_MASK;
 
     if ((_mounted_media = _media.get())) {
         D_MESSAGE("new media");
         _cdrom_state |= MEW_MEDIA_EVENT_MASK | ATTENTION_MEDIA_MASK;
     }
-
-    raise(); //??
 }
 
 
@@ -2253,16 +2249,46 @@ void ATAPICdrom::eject_button_press()
     Lock lock(_media_lock);
 
     if (is_tray_locked()) {
-        D_MESSAGE("event");
-        _cdrom_state |= EJECT_EVENT_MASK;
+        D_MESSAGE("locked");
+
+        if (!is_tray_open()) {
+            D_MESSAGE("event");
+            _cdrom_state |= EJECT_EVENT_MASK | ATTENTION_REMOVE_REQUEST;
+        }
+
         return;
     }
 
     if (is_tray_open()) {
-        close_tray();
+        _close_tray();
     } else {
-        open_tray();
+        _open_tray();
     }
+}
+
+
+void ATAPICdrom::open_tray()
+{
+    //Lock lock(get_state_mutex());
+
+    if (get_state() != VMPart::RUNNING) {
+        D_MESSAGE("not running");
+        return;
+    }
+
+    Lock lock(_media_lock);
+
+    if (is_tray_open()) {
+        return;
+    }
+
+    if (is_tray_locked()) {
+        D_MESSAGE("event");
+        _cdrom_state |= EJECT_EVENT_MASK | ATTENTION_REMOVE_REQUEST;
+        return;
+    }
+
+    _open_tray();
 }
 
 
@@ -2271,17 +2297,16 @@ void ATAPICdrom::set_media(const std::string& file_name)
     //Lock lock(get_state_mutex());
 
     if (get_state() != VMPart::RUNNING) {
+        D_MESSAGE("not running");
         return;
     }
 
     Lock lock(_media_lock);
 
-    if (!is_tray_open() && is_tray_locked()) {
-        D_MESSAGE("locked");
+    if (!is_tray_open()) {
+        D_MESSAGE("closed");
         return;
     }
-
-    open_tray();
 
     _media.reset(NULL);
 
@@ -2297,13 +2322,11 @@ void ATAPICdrom::set_media(const std::string& file_name)
         return;
     }
 
-    if (_cdrom_state & LOCK_STATE_MASK) {
-        D_MESSAGE("event");
-        _cdrom_state |= EJECT_EVENT_MASK;
-        raise(); //??
-    } else {
-        close_tray();
+    if (!(_cdrom_state & LOCK_STATE_MASK)) {
+        _close_tray();
     }
+
+    return;
 }
 
 

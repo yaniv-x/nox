@@ -87,8 +87,9 @@ private:
     void put_media() { _media_refs.dec();}
     bool is_tray_locked();
     bool is_tray_open();
+    void _open_tray();
+    void _close_tray();
     void open_tray();
-    void close_tray();
     void eject_button_press();
     void set_media(const std::string& file_name);
     uint get_not_present_sens_add();
