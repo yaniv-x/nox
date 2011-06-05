@@ -619,7 +619,7 @@ public:
 
     virtual void start()
     {
-        _cd.set_pio_dest(this);
+        _cd.set_pio_dest(this, false);
     }
 
     virtual void cancel()
@@ -796,6 +796,7 @@ CDBlock* ATAPICdrom::get_block(uint address)
 
 void ATAPICdrom::put_block(CDBlock* block)
 {
+    ASSERT(block);
     Lock lock(_blocks_mutex);
 
     ASSERT(block->refs > 0);
@@ -1921,6 +1922,8 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     // NOTIFICATION, INQUIRY or REQUEST SENSE while a unit attention condition exists for that
     // Initiator, the logical unit shall not perform the command and shall report CHECK CONDITION
     // status unless a higher priority status as defined by the logical unit is also pending.
+
+    drop();
 
     switch (packet[0]) {
     case MMC_CMD_READ:

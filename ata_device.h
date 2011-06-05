@@ -80,7 +80,7 @@ public:
     void set_pio_source(PIODataSource* pio);
     void remove_pio_source(bool done);
 
-    void set_pio_dest(PIODataDest* pio);
+    void set_pio_dest(PIODataDest* pio, bool notify = true);
     void remove_pio_dest(bool done);
 
 protected:

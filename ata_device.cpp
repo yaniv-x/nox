@@ -456,13 +456,16 @@ void ATADevice::remove_pio_source(bool done)
 }
 
 
-void ATADevice::set_pio_dest(PIODataDest* pio)
+void ATADevice::set_pio_dest(PIODataDest* pio, bool notify)
 {
     _pio_dest = pio;
 
     uint new_state = (_status | ATA_STATUS_DATA_REQUEST_MASK) & ~ATA_STATUS_BUSY_MASK;
     _status = new_state;
-    raise();
+
+    if (notify) {
+        raise();
+    }
 }
 
 
