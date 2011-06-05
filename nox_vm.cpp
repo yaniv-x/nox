@@ -496,6 +496,11 @@ void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
     case 0x402:
     case 0x403:
         printf("%c", val);
+
+        if (val == '\n') {
+            fflush(stdout);
+        }
+
         break;
     case IO_PORT_BOCHS_MY_TEST:
         D_MESSAGE("my %u", val);
@@ -510,6 +515,10 @@ void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
     }
 
     printf("%c", val);
+
+    if (val == '\n') {
+        fflush(stdout);
+    }
 }
 
 
