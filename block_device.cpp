@@ -29,6 +29,7 @@
 
 #include "block_device.h"
 #include "run_loop.h"
+#include "application.h"
 
 #if 0
 BlockDevice::BlockDevice(const std::string& file_name,
@@ -270,6 +271,7 @@ void BlockDevice::write(Block* block)
 BlockDevice::BlockDevice(const std::string& file_name, uint block_size,
                          BlockDeviceCallback& call_back, bool read_only)
     : _file (open(file_name.c_str(), (read_only) ? O_RDONLY : O_RDWR | O_LARGEFILE))
+    , _thread (NULL)
     , _block_size (block_size)
     , _call_back (call_back)
 {
@@ -288,13 +290,21 @@ BlockDevice::BlockDevice(const std::string& file_name, uint block_size,
     }
 
     _size = stat.st_size / _block_size;
+}
 
+
+void BlockDevice::start()
+{
     _thread = new Thread((Thread::start_proc_t)&BlockDevice::thread_main, this);
 }
 
 
 BlockDevice::~BlockDevice()
 {
+    if (!_thread) {
+        return;
+    }
+
     Lock lock(_mutex);
     _tasks.push_back(Task(Task::QUIT, NULL));
     _condition.signal();
@@ -332,18 +342,19 @@ void BlockDevice::sync(void* mark)
 void BlockDevice::read(Task& task)
 {
     Block* block = (Block*)task.data;
+    uint64_t address = block->address;
 
-    if (block->address >= _size) {
+    if (address >= _size) {
         _call_back.block_io_error(block, 0);
         return;
     }
 
-    uint64_t from = block->address * _block_size;
+    uint64_t from = address * _block_size;
     uint8_t* to = block->data;
     uint size = _block_size;
 
     for (;;) {
-        ssize_t n = pread64(_file.get(), to, size, from);
+        ssize_t n = pread64(get_fd_for_read(address), to, size, from);
 
         if (n <= 0) {
             if (n == -1 && errno == EINTR) {
@@ -368,18 +379,19 @@ void BlockDevice::read(Task& task)
 void BlockDevice::write(Task& task)
 {
     Block* block = (Block*)task.data;
+    uint64_t address = block->address;
 
-    if (block->address >= _size) {
+    if (address >= _size) {
         _call_back.block_io_error(block, 0);
         return;
     }
 
-    uint64_t to = block->address * _block_size;
+    uint64_t to = address * _block_size;
     uint8_t* from = block->data;
     uint size = _block_size;
 
     for (;;) {
-        ssize_t n = pwrite64(_file.get(), from, size, to);
+        ssize_t n = pwrite64(get_fd_for_write(), from, size, to);
 
         if (n <= 0) {
             if (n == -1 && errno == EINTR) {
@@ -391,6 +403,7 @@ void BlockDevice::write(Task& task)
         }
 
         if ((size -= n) == 0) {
+            on_write_done(address);
             _call_back.block_io_done(block);
             return;
         }
@@ -403,7 +416,7 @@ void BlockDevice::write(Task& task)
 
 void BlockDevice::sync(Task& task)
 {
-    int r = fdatasync(_file.get());
+    int r = fdatasync(get_fd_for_write());
 
     if (!r) {
         _call_back.sync_done(task.data);
@@ -440,5 +453,48 @@ void* BlockDevice::thread_main()
             return NULL;
         }
     }
+}
+
+
+ROBlockDevice::ROBlockDevice(const std::string& file_name, uint block_size,
+                             BlockDeviceCallback& call_back)
+    : BlockDevice(file_name, block_size, call_back, true)
+{
+    std::string tmp_file;
+
+    sprintf(tmp_file, "%s/tmp/%s_%u.tmp", Application::get_nox_dir().c_str(),
+            basename(file_name.c_str()), rand());
+
+    _tmp.reset(open(tmp_file.c_str(), O_CREAT | O_EXCL | O_LARGEFILE | O_NOATIME | O_RDWR));
+
+    if (!_tmp.is_valid()) {
+        THROW("create %s failed", tmp_file.c_str());
+    }
+
+    unlink(tmp_file.c_str());
+
+    if (ftruncate(_tmp.get(), get_size()) == -1) {
+        THROW_SYS_ERROR("truncate failed");
+    }
+
+    start();
+}
+
+
+int ROBlockDevice::get_fd_for_read(uint64_t address)
+{
+     return (_tmp_blocks.find(address) != _tmp_blocks.end()) ? _tmp.get() : get_file();
+}
+
+
+int ROBlockDevice::get_fd_for_write()
+{
+     return  _tmp.get();
+}
+
+
+void ROBlockDevice::on_write_done(uint64_t address)
+{
+    _tmp_blocks.insert(address);
 }
 
