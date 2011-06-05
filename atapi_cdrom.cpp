@@ -263,12 +263,11 @@ public:
         if (_block) {
             _cd.put_block(_block);
         }
-
-        _cd.put_media();
     }
 
     virtual void cancel()
     {
+        _cd.put_media();
         _cd.remove_task(this);
     }
 
@@ -284,6 +283,7 @@ public:
     {
         if (_next == _end) {
             _cd.packet_cmd_sucess();
+            _cd.put_media();
             _cd.remove_task(this);
             return;
         }
@@ -309,8 +309,8 @@ public:
         _cd._lba_mid = MMC_CD_SECTOR_SIZE & 0xff;
         _cd._lba_high = MMC_CD_SECTOR_SIZE >> 8;
 
-        _cd._count &= REASON_TAG_MASK;
-        _cd._count |= (1 << REASON_IO_BIT);
+        _cd._count &= ATA_REASON_TAG_MASK;
+        _cd._count |= (1 << ATA_REASON_IO_BIT);
 
         next_sector();
     }
@@ -379,11 +379,11 @@ public:
     virtual ~CDReadTask()
     {
         blocks_cleanup();
-        _cd.put_media();
     }
 
     virtual void cancel()
     {
+        _cd.put_media();
         _cd.remove_task(this);
     }
 
@@ -411,6 +411,7 @@ public:
         ASSERT(_bunch <= MAX_BUNCH);
 
         if (!_bunch) {
+            _cd.put_media();
             _cd.packet_cmd_sucess();
             _cd.remove_task(this);
             return;
