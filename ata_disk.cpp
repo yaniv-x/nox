@@ -1279,7 +1279,7 @@ void ATADisk::do_command(uint8_t command)
         return;
     }
 
-    _status &= ~ATA_STATUS_ERROR_MASK;
+    _status &= ATA_STATUS_READY_MASK;
     _error = 0;
 
     ATA_LOG("command: %s (0x%x)", command_name(command), command);
