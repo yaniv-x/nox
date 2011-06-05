@@ -25,6 +25,7 @@
 */
 
 #include <sys/stat.h>
+#include <sstream>
 
 #include "application.h"
 #include "nox_vm.h"
@@ -164,6 +165,51 @@ void Application::quit()
 }
 
 
+class InnerArg {
+public:
+    InnerArg(const std::string& name, const std::string& val)
+        : _name (name)
+        , _val (val)
+        , _null_val (false)
+    {
+    }
+
+    InnerArg(const std::string& name)
+        : _name (name)
+        , _null_val (true)
+    {
+    }
+
+    const std::string& name() { return _name;}
+    const char* val() { return _null_val ? NULL : _val.c_str();}
+
+private:
+    std::string _name;
+    std::string _val;
+    bool _null_val;
+};
+
+
+typedef std::list<InnerArg> InnerArgs;
+
+
+void split_option_arg(const std::string& str, InnerArgs& args)
+{
+    std::istringstream is(str);
+    std::string line;
+
+    while (std::getline(is, line, ',')) {
+        size_t pos = line.find('=');
+
+        if (pos == std::string::npos) {
+            args.push_back(InnerArg(line));
+        } else {
+            args.push_back(InnerArg(line.substr(0, pos), line.substr(pos + 1)));
+        }
+    }
+}
+
+
 bool Application::init(int argc, const char** argv)
 {
     OptionsParser parser;
@@ -198,7 +244,8 @@ bool Application::init(int argc, const char** argv)
 
     const char* vm_name = NULL;
     uint64_t ram_size = 0;
-    const char* hard_disk = NULL;
+    std::string hard_disk_file;
+    bool ro_hard_disk_file;
     bool cdrom = false;
     const char* cdrom_media = NULL;
     bool boot_from_cd = false;
@@ -232,9 +279,42 @@ bool Application::init(int argc, const char** argv)
             }
             break;
         }
-        case OPT_HARD_DISK:
-            hard_disk = arg;
+        case OPT_HARD_DISK: {
+            InnerArgs disk_args;
+
+            split_option_arg(arg, disk_args);
+
+            if (disk_args.empty()) {
+                return false;
+            }
+
+            if (disk_args.front().name().c_str()[0] != '/') {
+                printf("invalid disk file name \"%s\"\n", disk_args.front().name().c_str());
+                return false;
+            }
+
+            if (disk_args.front().val()) {
+                printf("unexpected disk file name val\n");
+                return false;
+            }
+
+            hard_disk_file = disk_args.front().name();
+            ro_hard_disk_file = false;
+
+            disk_args.pop_front();
+
+            if (!disk_args.empty()) {
+
+                if (disk_args.size() != 1 || disk_args.front().name() != "ro" ||
+                    disk_args.front().val()) {
+                    printf("invalid disk arguments\n");
+                    return false;
+                }
+
+                ro_hard_disk_file = true;
+            }
             break;
+        }
         case OPT_CDROM:
             cdrom = true;
             cdrom_media = arg;
@@ -267,7 +347,7 @@ bool Application::init(int argc, const char** argv)
         _vm.reset(new NoxVM());
 
         _vm->set_ram_size(ram_size / MB);
-        _vm->set_hard_disk(hard_disk, false);
+        _vm->set_hard_disk(hard_disk_file.c_str(), ro_hard_disk_file);
 
         if (cdrom) {
             _vm->set_cdrom(cdrom_media);
