@@ -51,17 +51,10 @@ enum {
 };
 
 
-class ATADiskTask : public ATATask {
-public:
-    virtual void block_changed() {}
-    virtual void sync_done(void* mark) {}
-};
-
-
-class ReadTask: public ATADiskTask, public PIODataSource {
+class ReadTask: public ATATask, public PIODataSource {
 public:
     ReadTask(ATADisk& disk, uint64_t start, uint64_t end, uint bunch)
-        : ATADiskTask()
+        : ATATask()
         , _disk (disk)
         , _now (start)
         , _end (end)
@@ -175,10 +168,10 @@ private:
 };
 
 
-class ReadDMATask: public ATADiskTask {
+class ReadDMATask: public ATATask {
 public:
     ReadDMATask(ATADisk& disk, uint64_t start, uint64_t end)
-        : ATADiskTask()
+        : ATATask()
         , _disk (disk)
         , _start (start)
         , _end (end)
@@ -299,10 +292,10 @@ private:
 };
 
 
-class WriteTask: public ATADiskTask, public PIODataDest {
+class WriteTask: public ATATask, public PIODataDest {
 public:
     WriteTask(ATADisk& disk, uint64_t start, uint64_t end, uint bunch)
-        : ATADiskTask()
+        : ATATask()
         , _disk (disk)
         , _now (start)
         , _end (end)
@@ -417,10 +410,10 @@ private:
 };
 
 
-class WriteDMATask: public ATADiskTask {
+class WriteDMATask: public ATATask {
 public:
     WriteDMATask(ATADisk& disk, uint64_t start, uint64_t end)
-        : ATADiskTask()
+        : ATATask()
         , _disk (disk)
         , _start (start)
         , _end (end)
@@ -537,11 +530,12 @@ private:
 };
 
 
-class SyncTask: public ATADiskTask {
+class SyncTask: public ATATask {
 public:
     SyncTask(ATADisk& disk)
-        : ATADiskTask()
+        : ATATask()
         , _disk (disk)
+        , _sync ((io_sync_cb_t)&SyncTask::sync_done, this)
     {
 
     }
@@ -559,25 +553,27 @@ public:
 
     virtual void start()
     {
-        _disk.sync(this);
+        _disk.inc_async_count();
+        _disk._block_dev->sync(&_sync);
     }
 
-    virtual void sync_done(void* mark)
+
+    void sync_done(IOSync* obj, uint err)
     {
-        if (mark == this) {
-            done();
-        }
+        done();
+        _disk.dec_async_count();
     }
 
 private:
     ATADisk& _disk;
+    IOSync _sync;
 };
 
 
-class IdentifyTask: public ATADiskTask, public PIODataSource {
+class IdentifyTask: public ATATask, public PIODataSource {
 public:
     IdentifyTask(ATADisk& disk)
-        : ATADiskTask()
+        : ATATask()
         , _disk (disk)
         , _data_now (_identity)
         , _data_end (_data_now + 256)
@@ -843,33 +839,6 @@ uint ATADisk::get_sector_count_ext()
 bool ATADisk::is_valid_sectors_range(uint64_t start, uint64_t end)
 {
     return start < end && end <= _block_dev->get_size() / SECTOR_SIZE;
-}
-
-
-void ATADisk::sync(void* mark)
-{
-    inc_async_count();
-    _block_dev->sync(mark);
-}
-
-
-void ATADisk::sync_done(void* mark)
-{
-    AutoRef<ATADiskTask> task((ATADiskTask*)get_task());
-
-    if (task.get()) {
-        task->sync_done(mark);
-    }
-
-    dec_async_count();
-}
-
-
-void ATADisk::sync_failed(void*, int error)
-{
-    D_MESSAGE("todo: add error handling");
-
-    dec_async_count();
 }
 
 

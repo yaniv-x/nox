@@ -114,10 +114,10 @@ void BlockDevice::write(Block* block)
 }
 
 
-void BlockDevice::sync(void* mark)
+void BlockDevice::sync(IOSync* sync_obj)
 {
     Lock lock(_mutex);
-    _tasks.push_back(Task(Task::SYNC, mark));
+    _tasks.push_back(Task(Task::SYNC, sync_obj));
     _condition.signal();
 }
 
@@ -397,11 +397,8 @@ void BlockDevice::sync(Task& task)
 {
     int r = fdatasync(get_fd_for_write());
 
-    if (!r) {
-        _call_back.sync_done(task.data);
-    } else {
-        _call_back.sync_failed(task.data, errno);
-    }
+    IOSync* sync_obj = (IOSync*)task.data;
+    sync_obj->cb(sync_obj->opaque, sync_obj, r);
 }
 
 
