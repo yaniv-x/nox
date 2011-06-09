@@ -108,15 +108,14 @@ public:
 
     void redv_done(IOVec* vec, int err)
     {
-        _disk.dec_async_count();
-
         if (err) {
             D_MESSAGE("failed %d", err)
              error();
-            return;
+        } else {
+            start_bunch();
         }
 
-        start_bunch();
+        _disk.dec_async_count();
     }
 
     void get_bunch()
@@ -355,20 +354,16 @@ public:
 
     void writev_done(IOVec* vec, int err)
     {
-        _disk.dec_async_count();
-
         if (err) {
             D_MESSAGE("failed %d", err)
             error();
-            return;
-        }
-
-        if ((_now += _bunch) == _end) {
+        } else if ((_now += _bunch) == _end) {
             end();
-            return;
+        } else {
+            start_bunch();
         }
 
-        start_bunch();
+        _disk.dec_async_count();
     }
 
     void write_bunch()
