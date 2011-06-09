@@ -73,12 +73,27 @@ public:
 };
 
 
+class IOSync;
+
+typedef void (*io_sync_cb_t)(void*, IOSync*, uint err);
+
+class IOSync {
+public:
+    IOSync(io_sync_cb_t in_cb, void* in_opaque)
+        : cb (in_cb)
+        , opaque (in_opaque)
+    {
+    }
+
+    io_sync_cb_t cb;
+    void* opaque;
+};
+
+
 class BlockDeviceCallback {
 public:
     virtual void block_io_done(Block* block) = 0;
     virtual void block_io_error(Block* block, int error) = 0;
-    virtual void sync_done(void*) {}
-    virtual void sync_failed(void*, int error) {}
 };
 
 
@@ -94,7 +109,7 @@ public:
     void writev(IOVec* vec);
     void read(Block* block);
     void write(Block* block);
-    void sync(void* mark);
+    void sync(IOSync* obj);
 
 protected:
     virtual int get_fd_for_read(uint64_t address) = 0;

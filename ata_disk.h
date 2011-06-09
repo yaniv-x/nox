@@ -78,10 +78,6 @@ private:
     void do_idle_immediate();
     void do_standby_immediate();
 
-    void sync(void* mark);
-
-    virtual void sync_done(void* mark);
-    virtual void sync_failed(void*, int error);
     virtual void block_io_done(Block* block) {}
     virtual void block_io_error(Block* block, int error) {}
 
