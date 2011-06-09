@@ -31,7 +31,6 @@
 #include "ata_host.h"
 #include "block_device.h"
 
-class CDBlock;
 class AdminReplyContext;
 
 class ATAPICdrom: public ATADevice, public BlockDeviceCallback {
@@ -47,8 +46,8 @@ protected:
     virtual void reset(bool cold);
 
 private:
-    virtual void block_io_done(Block* block);
-    virtual void  block_io_error(Block* block, int error);
+    virtual void block_io_done(Block* block) {}
+    virtual void  block_io_error(Block* block, int error) {}
 
     void _packet_cmd_done(uint sense, uint sense_add);
     void packet_cmd_abort(uint sens, uint sens_add);
@@ -80,9 +79,6 @@ private:
     void set_media_command(AdminReplyContext* context, const char* name);
     void eject_command(AdminReplyContext* context);
     void register_admin_commands();
-    void init_blocks();
-    CDBlock* get_block(uint address);
-    void put_block(CDBlock* block);
     void get_media() { _media_refs.inc();}
     void put_media() { _media_refs.dec();}
     bool is_tray_locked();
@@ -100,11 +96,6 @@ private:
     BlockDevice* _mounted_media;
     Mutex _media_lock;
     Atomic _media_refs;
-
-    Mutex _blocks_mutex;
-    typedef std::list<CDBlock*> BlocksList;
-    BlocksList _free_blocks;
-    uint8_t* _cache_area;
 
     uint _sense;
     uint _sense_add;

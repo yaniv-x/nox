@@ -24,6 +24,8 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <sys/uio.h>
+
 #include "atapi_cdrom.h"
 #include "block_device.h"
 #include "ata.h"
@@ -241,158 +243,38 @@ private:
     uint16_t* _data_end;
 };
 
-//#define SINGLE_SECTOR
-
-#ifdef SINGLE_SECTOR
-class CDReadTask: public ATAPITask, public PIODataSource {
-public:
-    CDReadTask(ATAPICdrom& cd, uint64_t start, uint64_t end)
-        : ATAPITask()
-        , _cd (cd)
-        , _next (start)
-        , _end (end)
-        , _block (NULL)
-        , _await_block (false)
-        , _data_now (NULL)
-        , _data_end (NULL)
-    {
-        _cd.get_media();
-    }
-
-    virtual ~CDReadTask()
-    {
-        if (_block) {
-            _cd.put_block(_block);
-        }
-    }
-
-    virtual void cancel()
-    {
-        _cd.put_media();
-        _cd.remove_task(this);
-    }
-
-    void start_block()
-    {
-        _data_now = (uint16_t*)_block->data;
-        _data_end = (uint16_t*)(_block->data + MMC_CD_SECTOR_SIZE);
-        _next++;
-        _cd.set_pio_source(this);
-    }
-
-    void next_sector()
-    {
-        if (_next == _end) {
-            _cd.packet_cmd_sucess();
-            _cd.put_media();
-            _cd.remove_task(this);
-            return;
-        }
-
-        Lock lock (_mutex);
-
-        if (_block) {
-            _cd.put_block(_block);
-        }
-
-        _block = _cd.get_block(_next);
-
-        if (!_block || !_block->valid) {
-            _await_block = true;
-            return;
-        }
-
-        start_block();
-    }
-
-    virtual void start()
-    {
-        _cd._lba_mid = MMC_CD_SECTOR_SIZE & 0xff;
-        _cd._lba_high = MMC_CD_SECTOR_SIZE >> 8;
-
-        _cd._count &= ATA_REASON_TAG_MASK;
-        _cd._count |= (1 << ATA_REASON_IO_BIT);
-
-        next_sector();
-    }
-
-    virtual uint16_t get_word()
-    {
-        if (_data_now == _data_end) {
-            PANIC("no data");
-        }
-
-        uint16_t ret = *_data_now;
-
-        if (++_data_now == _data_end) {
-            _cd.remove_pio_source(false);
-            next_sector();
-        }
-
-        return ret;
-    }
-
-    virtual void block_changed()
-    {
-        Lock lock (_mutex);
-
-        if (!_await_block) {
-            return;
-        }
-
-        if ((!_block && !(_block = _cd.get_block(_next))) || !_block->valid) {
-            return;
-        }
-
-        _await_block = false;
-        start_block();
-    }
-
-private:
-    Mutex _mutex;
-    ATAPICdrom& _cd;
-    uint64_t _next;
-    uint64_t _end;
-    CDBlock* _block;
-    bool _await_block;
-    uint16_t* _data_now;
-    uint16_t* _data_end;
-};
-
-#else
-
-class CDReadTask: public ATAPITask, public PIODataSource {
+class CDReadTask: public ATATask, public PIODataSource {
 public:
     CDReadTask(ATAPICdrom& cd, uint64_t start, uint64_t end, uint bunch)
-        : ATAPITask()
+        : ATATask()
         , _cd (cd)
         , _now (start)
         , _end (end)
         , _bunch (bunch)
-        , _await_blocks (false)
         , _data_now (NULL)
         , _data_end (NULL)
     {
+        ASSERT(_bunch <= MAX_BUNCH);
+
+        if (!(_io_block = _cd.get_io_block())) {
+            THROW("age io block failed");
+        }
+
         _cd.get_media();
-        memset(_blocks, 0, sizeof(_blocks));
     }
 
-    virtual ~CDReadTask()
-    {
-        blocks_cleanup();
-    }
-
-    virtual void cancel()
+    void cancel()
     {
         _cd.put_media();
+        _cd.put_io_block(_io_block);
         _cd.remove_task(this);
     }
 
-    void start_block()
+    void start()
     {
-        ASSERT(_blocks[_current_block]);
-        _data_now = (uint16_t*)_blocks[_current_block]->data;
-        _data_end = (uint16_t*)(_blocks[_current_block]->data + MMC_CD_SECTOR_SIZE);
+        _cd._count &= ATA_REASON_TAG_MASK;
+        _cd._count |= (1 << ATA_REASON_IO_BIT);
+        get_bunch();
     }
 
     void start_bunch()
@@ -400,57 +282,62 @@ public:
         uint length = _bunch * MMC_CD_SECTOR_SIZE;
         _cd._lba_mid = length & 0xff;
         _cd._lba_high = length >> 8;
-        _current_block = 0;
-        start_block();
+        _data_now = (uint16_t*)_io_block;
+        _data_end = (uint16_t*)(_io_block + length);
         _cd.set_pio_source(this);
+    }
+
+    void end()
+    {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        _cd.put_media();
+        _cd.put_io_block(_io_block);
+        _cd.remove_task(this);
+        _cd.remove_pio_source(false);
+        _cd.packet_cmd_sucess();
+    }
+
+    void error()
+    {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        _cd.put_media();
+        _cd.put_io_block(_io_block);
+        _cd.remove_task(this);
+        _cd.remove_pio_source(false);
+        _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
+                           SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+    }
+
+    void redv_done(IOVec* vec, int err)
+    {
+        if (err) {
+            D_MESSAGE("failed %d", err)
+             error();
+        } else {
+            start_bunch();
+        }
+
+        _cd.dec_async_count();
     }
 
     void get_bunch()
     {
-        _bunch = MIN(_bunch, _end - _now);
+        _bunch = MIN(_end - _now, _bunch);
 
-        ASSERT(_bunch <= MAX_BUNCH);
+        ASSERT(_bunch);
 
-        if (!_bunch) {
-            _cd.put_media();
-            _cd.packet_cmd_sucess();
-            _cd.remove_task(this);
-            return;
-        }
+        _cd.inc_async_count();
 
-        bool ready = true;
-
-        Lock lock (_mutex);
-
-        for (uint i = 0; i < _bunch; i++) {
-
-            if (!( _blocks[i] = _cd.get_block(_now + i))) {
-                _await_blocks = true;
-                return;
-            }
-
-            if (!_blocks[i]->valid) {
-                ready = false;
-            }
-        }
-
-        if (!ready) {
-            _await_blocks = true;
-            return;
-        }
-
-        start_bunch();
+        _io_vec.iov_base = _io_block;
+        _io_vec.iov_len = _bunch * MMC_CD_SECTOR_SIZE;
+        new (&_iov) IOVec(_now, _io_vec.iov_len, &_io_vec, 1,(io_vec_cb_t)&CDReadTask::redv_done,
+                          this);
+        _cd._mounted_media->readv(&_iov);
     }
 
-    virtual void start()
-    {
-        _cd._count &= ATA_REASON_TAG_MASK;
-        _cd._count |= (1 << ATA_REASON_IO_BIT);
-
-        get_bunch();
-    }
-
-    virtual uint16_t get_word()
+    uint16_t get_word()
     {
         if (_data_now == _data_end) {
             PANIC("no data");
@@ -459,68 +346,30 @@ public:
         uint16_t ret = *_data_now;
 
         if (++_data_now == _data_end) {
-            _cd.put_block(_blocks[_current_block]);
-            _blocks[_current_block] = NULL;
-            if (++_current_block == _bunch) {
-                _cd.remove_pio_source(false);
-                _now += _bunch;
-                get_bunch();
-            } else {
-                start_block();
+            if ((_now += _bunch) == _end) {
+                end();
+                return ret;
             }
+
+            _cd.remove_pio_source(false);
+            get_bunch();
         }
 
         return ret;
     }
 
-    virtual void block_changed()
-    {
-        Lock lock (_mutex);
-
-        if (!_await_blocks) {
-            return;
-        }
-
-        for (uint i = 0; i < _bunch; i++) {
-            if (!_blocks[i] && !(_blocks[i] = _cd.get_block(_now + i))) {
-                return;
-            }
-
-            if (!_blocks[i]->valid) {
-                return;
-            }
-        }
-
-        _await_blocks = false;
-        start_bunch();
-    }
-
-    void blocks_cleanup()
-    {
-        for (uint i = 0; i < MAX_BUNCH; i++) {
-            if (!_blocks[i]) {
-                continue;
-            }
-
-            _cd.put_block(_blocks[i]);
-            _blocks[i] = NULL;
-        }
-    }
-
 private:
-    Mutex _mutex;
     ATAPICdrom& _cd;
     uint64_t _now;
     uint64_t _end;
     uint _bunch;
-    CDBlock* _blocks[MAX_BUNCH];
-    uint _current_block;
-    bool _await_blocks;
+    uint8_t* _io_block;
     uint16_t* _data_now;
     uint16_t* _data_end;
+    struct iovec _io_vec;
+    IOVec _iov;
 };
 
-#endif
 
 class CDGenericTransfer: public ATAPITask, public PIODataSource {
 public:
@@ -665,34 +514,12 @@ ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
         }
     }
 
-    init_blocks();
     register_admin_commands();
 }
 
 
 ATAPICdrom::~ATAPICdrom()
 {
-    while (!_free_blocks.empty()) {
-        delete _free_blocks.front();
-        _free_blocks.pop_front();
-    }
-
-    free(_cache_area);
-}
-
-
-void ATAPICdrom::init_blocks()
-{
-    _cache_area = (uint8_t*)memalign(MMC_CD_SECTOR_SIZE, MMC_CD_SECTOR_SIZE * CDROM_NUM_BLOCKS);
-
-    if (!_cache_area) {
-        THROW("memalign failed");
-    }
-
-    for (int i = 0; i < CDROM_NUM_BLOCKS; i++) {
-        CDBlock* block = new CDBlock(_cache_area + i * MMC_CD_SECTOR_SIZE);
-        _free_blocks.push_back(block);
-    }
 }
 
 
@@ -767,38 +594,6 @@ void ATAPICdrom::eject_command(AdminReplyContext* context)
 }
 
 
-CDBlock* ATAPICdrom::get_block(uint address)
-{
-    Lock lock(_blocks_mutex);
-
-    if (_free_blocks.empty()) {
-        return NULL;
-    }
-
-    CDBlock* ret = _free_blocks.front();
-    _free_blocks.pop_front();
-    ret->address = address;
-    ret->valid = false;
-    ret->refs = 2;
-    inc_async_count();
-    _mounted_media->read(ret);
-
-    return ret;
-}
-
-
-void ATAPICdrom::put_block(CDBlock* block)
-{
-    ASSERT(block);
-    Lock lock(_blocks_mutex);
-
-    ASSERT(block->refs > 0);
-    if (!--block->refs) {
-        _free_blocks.push_front(block);
-    }
-}
-
-
 void ATAPICdrom::reset(bool cold)
 {
     D_MESSAGE("");
@@ -829,30 +624,6 @@ void ATAPICdrom::set_signature()
     _lba_mid = 0x14;
     _lba_high = 0xeb;
     _device_reg = 0;
-}
-
-
-void ATAPICdrom::block_io_done(Block* in_block)
-{
-    AutoRef<ATAPITask> task((ATAPITask*)get_task());
-
-    CDBlock* block = (CDBlock*)in_block;
-
-    if (task.get()) {
-        block->valid = true;
-        task->block_changed();
-    }
-
-    put_block(block);
-    dec_async_count();
-}
-
-
-void ATAPICdrom::block_io_error(Block* block, int error)
-{
-    D_MESSAGE("todo: add error handleing");
-    put_block((CDBlock*)block);
-    dec_async_count();
 }
 
 
@@ -1026,15 +797,7 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
 
     uint max_transfer = max_pio_transfer_bytes();
 
-#ifdef SINGLE_SECTOR
-    if (max_transfer < MMC_CD_SECTOR_SIZE) {
-        D_MESSAGE("invalid  transfer size %u", max_transfer);
-        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
-        return;
-    }
 
-    AutoRef<CDReadTask> task(new CDReadTask(*this, start, end));
-#else
     uint bunch = max_transfer / MMC_CD_SECTOR_SIZE;
 
     if (!bunch) {
@@ -1044,7 +807,7 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
     }
 
     AutoRef<CDReadTask> task(new CDReadTask(*this, start, end, MIN(bunch, length)));
-#endif
+
     start_task(task.get());
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
