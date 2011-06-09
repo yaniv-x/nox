@@ -24,9 +24,16 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <malloc.h>
+
 #include "ata_device.h"
 #include "ata.h"
 #include "wire.h"
+#include "dma_state.h"
+
+enum {
+    ATA_DEV_NUM_IO_BLOCKS = 1,
+};
 
 
 #define ATA_LOG(format, ...)
@@ -43,6 +50,16 @@ ATADevice::ATADevice(const char* name, VMPart& owner, Wire& wire)
     , _pio_source (NULL)
     , _pio_dest (NULL)
 {
+    _io_blocks_data = (uint8_t*)memalign(ATADEV_IO_BLOCK_SIZE,
+                                         ATADEV_IO_BLOCK_SIZE * ATA_DEV_NUM_IO_BLOCKS);
+
+    if (!_io_blocks_data) {
+        THROW("memalign failed");
+    }
+
+    for (uint i = 0; i < ATA_DEV_NUM_IO_BLOCKS; i++) {
+        _free_blocks_list.push_front(_io_blocks_data + i * ATADEV_IO_BLOCK_SIZE);
+    }
 }
 
 
@@ -53,6 +70,32 @@ ATADevice::~ATADevice()
     if (_dead_task) {
         _dead_task->unref();
     }
+
+    free(_io_blocks_data);
+}
+
+
+uint8_t* ATADevice::get_io_block()
+{
+    Lock lock(_io_blocks_mutex);
+
+    if (_free_blocks_list.empty()) {
+        return NULL;
+    }
+
+    uint8_t* ret = _free_blocks_list.front();
+    _free_blocks_list.pop_front();
+
+    return ret;
+}
+
+
+void ATADevice::put_io_block(uint8_t* block)
+{
+    ASSERT(block);
+
+    Lock lock(_io_blocks_mutex);
+    _free_blocks_list.push_front(block);
 }
 
 
@@ -231,6 +274,28 @@ void ATADevice::command_abort_error()
     _error = ATA_ERROR_ABORT;
 
     raise();
+}
+
+
+void ATADevice::dma_write_start(DMAState& state)
+{
+    AutoRef<ATATask> task(get_task());
+
+    if (!task.get() || !task->dma_write_start(state)) {
+        D_MESSAGE("no active dma client");
+        state.nop();
+    }
+}
+
+
+void ATADevice::dma_read_start(DMAState& state)
+{
+    AutoRef<ATATask> task(get_task());
+
+    if (!task.get() || !task->dma_read_start(state)) {
+        D_MESSAGE("no active dma client");
+        state.nop();
+    }
 }
 
 

@@ -31,8 +31,6 @@
 #include "ata_host.h"
 #include "block_device.h"
 
-class CachedBlock;
-
 class ATADisk: public ATADevice, public BlockDeviceCallback {
 public:
     ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool read_only);
@@ -61,11 +59,17 @@ private:
     void do_read_multi_ext();
     void do_read_verify_sectors();
     void do_read_verify_sectors_ext();
+    void do_read_dma_common(uint64_t start, uint64_t end);
+    void do_read_dma();
+    void do_read_dma_ext();
     void do_write_sectors_common(uint64_t start, uint64_t end, uint bunch);
     void do_write_sectors();
     void do_write_sectors_ext();
     void do_write_multi();
     void do_write_multi_ext();
+    void do_write_dma_common(uint64_t start, uint64_t end);
+    void do_write_dma();
+    void do_write_dma_ext();
     void do_identify_device();
     void do_set_multi_mode();
     void do_set_features();
@@ -73,30 +77,16 @@ private:
     void do_flush();
     void do_idle_immediate();
     void do_standby_immediate();
-    void init_cache();
 
-    void block_hit(CachedBlock* block);
-    CachedBlock* alloc_block(uint64_t block_index);
-    void store(CachedBlock* block);
-    void fetch(uint64_t block_index);
     void sync(void* mark);
-    CachedBlock* get_for_read(uint64_t block_index);
-    CachedBlock* get_for_write(uint64_t block_index);
-    void notify_block_change();
 
-    virtual void block_io_done(Block* in_block);
-    virtual void block_io_error(Block* in_block, int error);
     virtual void sync_done(void* mark);
     virtual void sync_failed(void*, int error);
+    virtual void block_io_done(Block* block) {}
+    virtual void block_io_error(Block* block, int error) {}
 
 private:
     std::auto_ptr<BlockDevice> _block_dev;
-
-    Mutex _cache_mutex;
-    std::list<CachedBlock*> _blocks_lru;
-    typedef std::map<uint64_t, CachedBlock*> BlocksMap;
-    BlocksMap _cache;
-    uint8_t* _cache_area;
 
     bool _sync_mode;
     uint _heads_per_cylinder;
@@ -104,7 +94,9 @@ private:
     uint _multi_mode;
 
     friend class ReadTask;
+    friend class ReadDMATask;
     friend class WriteTask;
+    friend class WriteDMATask;
     friend class IdentifyTask;
     friend class SyncTask;
 };

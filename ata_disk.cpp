@@ -31,6 +31,8 @@
 #include "ata.h"
 #include "application.h"
 #include "block_device.h"
+#include "memory_bus.h"
+#include "dma_state.h"
 
 #define ATA_LOG(format, ...)
 
@@ -44,54 +46,8 @@ enum {
     ATA3_MAX_HEAD = 16,
     ATA3_MAX_SEC = 63,
 
-    ATADISK_CACHE_SIZE = (2 * MB) / SECTOR_SIZE,
-    ATADISK_BUNCH_MAX = 128,
+    ATADISK_BUNCH_MAX = 64 * KB / SECTOR_SIZE,
     ATADISK_BUNCH_DEFAULT = 1,
-    ATADISK_PRE_FETCH_MAX = ATADISK_BUNCH_MAX * 2,
-};
-
-
-class CachedBlock: public Block {
-public:
-    enum State {
-        INVALID,
-        INITILIZING,
-        MODIFYING,
-        LOADING,
-        VALID,
-        DIRTY,
-        STORING,
-    };
-
-    CachedBlock(uint64_t address, uint8_t* in_data)
-        : Block(address, in_data)
-        , _refs (0)
-        , _state (INVALID)
-        , _obsolete (false)
-    {
-    }
-
-    void reset(uint64_t block_index)
-    {
-        ASSERT(_refs.val() == 0)
-        _state = INVALID;
-        address = block_index;
-        _obsolete = false;
-    }
-
-    State get_state() { return _state;}
-    void set_state(State state) { _state = state;}
-    bool is_valid() { return _state >= VALID;}
-    bool is_obsolete() { return _obsolete;}
-    void set_obsolete() { _obsolete = true;}
-    bool is_in_use() { return !!_refs.val();}
-    CachedBlock* ref() { _refs.inc(); return this;};
-    void unref() { ASSERT(_refs.val() > 0); _refs.dec();}
-
-private:
-    Atomic _refs;
-    State _state;
-    bool _obsolete;
 };
 
 
@@ -107,29 +63,22 @@ public:
     ReadTask(ATADisk& disk, uint64_t start, uint64_t end, uint bunch)
         : ATADiskTask()
         , _disk (disk)
-        , _start (start)
         , _now (start)
         , _end (end)
         , _bunch (bunch)
         , _data_now (NULL)
         , _data_end (NULL)
-        , _wait_resorces (false)
     {
         ASSERT(_bunch <= ATADISK_BUNCH_MAX);
+
+        if (!(_io_block = _disk.get_io_block())) {
+            THROW("age io block failed");
+        }
     }
 
     void cancel()
     {
-        Lock lock(_mutex);
-
-        for (uint i = 0; i < _bunch; i++) {
-            if (_blocks[i]) {
-                _blocks[i]->unref();
-                _blocks[i] = NULL;
-            }
-        }
-
-        _wait_resorces = false;
+        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
     }
 
@@ -138,65 +87,59 @@ public:
         get_bunch();
     }
 
-    void pre_fetch()
-    {
-    }
-
-    void start_block()
-    {
-        _data_now = (uint16_t*)_blocks[_current_block]->data;
-        _data_end = (uint16_t*)(_blocks[_current_block]->data + SECTOR_SIZE);
-    }
-
     void start_bunch()
     {
-        _current_block = 0;
-        start_block();
+        _data_now = (uint16_t*)_io_block;
+        _data_end = (uint16_t*)(_io_block + _bunch * SECTOR_SIZE);
         _disk.set_pio_source(this);
     }
 
     void end()
     {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
         _disk.remove_pio_source(true);
+    }
+
+    void error()
+    {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        _disk.put_io_block(_io_block);
+        _disk.remove_task(this);
+        _disk.remove_pio_source(false);
+        _disk.command_abort_error();
+    }
+
+    void redv_done(IOVec* vec, int err)
+    {
+        _disk.dec_async_count();
+
+        if (err) {
+            D_MESSAGE("failed %d", err)
+             error();
+            return;
+        }
+
+        start_bunch();
     }
 
     void get_bunch()
     {
         _bunch = MIN(_end - _now, _bunch);
 
-        if (_bunch == 0) {
-            end();
-            return;
-        }
+        ASSERT(_bunch);
 
-        bool ready = true;
+        _disk.inc_async_count();
 
-        Lock lock(_mutex);
-
-        for (uint i = 0; i < _bunch; i++) {
-            _blocks[i] = _disk.get_for_read(_now + i);
-
-            if (!_blocks[i]) {
-                _wait_resorces = true;
-                return;
-            }
-
-            if (!_blocks[i]->is_valid()) {
-                ready = false;
-            }
-        }
-
-        if (ready) {
-            start_bunch();
-        } else {
-            _wait_resorces = true;
-        }
-
-        lock.unlock();
-        pre_fetch();
+        _io_vec.iov_base = _io_block;
+        _io_vec.iov_len = _bunch * SECTOR_SIZE;
+        new (&_iov) IOVec(_now, _io_vec.iov_len, &_io_vec, 1,(io_vec_cb_t)&ReadTask::redv_done,
+                          this);
+        _disk._block_dev->readv(&_iov);
     }
-
 
     uint16_t get_word()
     {
@@ -207,57 +150,152 @@ public:
         uint16_t ret = *_data_now;
 
         if (++_data_now == _data_end) {
-            _blocks[_current_block]->unref();
-            _blocks[_current_block] = NULL;
-            if (++_current_block == _bunch) {
-                _now += _bunch;
-                _disk.remove_pio_source(false);
-                get_bunch();
-            } else {
-                start_block();
+            if ((_now += _bunch) == _end) {
+                end();
+                return ret;
             }
+
+            _disk.remove_pio_source(false);
+            get_bunch();
         }
 
         return ret;
     }
 
-    virtual void block_changed()
-    {
-        Lock lock(_mutex);
+private:
+    ATADisk& _disk;
+    uint64_t _now;
+    uint64_t _end;
+    uint _bunch;
+    uint8_t* _io_block;
+    uint16_t* _data_now;
+    uint16_t* _data_end;
+    struct iovec _io_vec;
+    IOVec _iov;
+};
 
-        if (!_wait_resorces) {
+
+class ReadDMATask: public ATADiskTask {
+public:
+    ReadDMATask(ATADisk& disk, uint64_t start, uint64_t end)
+        : ATADiskTask()
+        , _disk (disk)
+        , _start (start)
+        , _end (end)
+        , _dma_started (false)
+        , _dma_state (NULL)
+    {
+    }
+
+    virtual void cancel()
+    {
+        if (_dma_state) {
+            _dma_state->nop();
+        }
+        _disk.remove_task(this);
+    }
+
+    virtual void start()
+    {
+    }
+
+    void redv_done_direct(IOVec* vec, int err)
+    {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        if (err) {
+            _dma_state->error();
+            _dma_state = NULL;
+            _disk.remove_task(this);
+            _disk.command_abort_error();
+        } else {
+            _dma_state->done();
+            _dma_state = NULL;
+            _disk.remove_task(this);
+            _disk.notify_command_done();
+        }
+
+        _disk.dec_async_count();
+    }
+
+    void redv_done_indirect(IOVec* vec, int err)
+    {
+        if (err) {
+            redv_done_direct(vec, err);
             return;
         }
 
-        for (uint i = 0; i < _bunch; i++) {
-            if (!_blocks[i]) {
-                 if (!(_blocks[i] = _disk.get_for_read(_now + i))) {
-                     return;
-                 }
-            }
+        IndirectVector::iterator iter = _indirect_vector->begin();
+        uint8_t* src = _buf.get();
 
-            if (!_blocks[i]->is_valid()) {
-                return;
-            }
+        for (; iter != _indirect_vector->end(); iter++) {
+            memory_bus->write(src, (*iter).size, (*iter).address);
+            src += (*iter).size;
         }
 
-        _wait_resorces = false;
-        start_bunch();
-        pre_fetch();
+        redv_done_direct(vec, 0);
+    }
+
+    virtual bool dma_write_start(DMAState& dma)
+    {
+        Lock lock(_mutex);
+
+        if (_dma_started) {
+            return false;
+        }
+
+        _dma_started = true;
+
+        uint transfer_size = (_end - _start) * SECTOR_SIZE;
+
+        _direct_vector.reset(dma.get_direct_vector(transfer_size));
+
+        if (_direct_vector.get()) {
+            _dma_state = &dma;
+            _disk.inc_async_count();
+            new (&_iov) IOVec(_start, transfer_size, &(*_direct_vector)[0], _direct_vector->size(),
+                              (io_vec_cb_t)&ReadDMATask::redv_done_direct,
+                              this);
+            _disk._block_dev->readv(&_iov);
+            return true;
+        }
+
+        _indirect_vector.reset(dma.get_indirect_vector(transfer_size));
+
+        if (_indirect_vector.get()) {
+            _disk.inc_async_count();
+            _dma_state = &dma;
+            _buf.set(new uint8_t[transfer_size]);
+            _io_vec.iov_base = _buf.get();
+            _io_vec.iov_len = transfer_size;
+            new (&_iov) IOVec(_start, transfer_size, &_io_vec, 1,
+                              (io_vec_cb_t)&ReadDMATask::redv_done_indirect,
+                              this);
+            _disk._block_dev->readv(&_iov);
+            return true;
+        }
+
+        D_MESSAGE("unable to obtaine transfer vector");
+
+        dma.error();
+        _disk.remove_task(this);
+        _disk.command_abort_error();
+
+        return true;
     }
 
 private:
     Mutex _mutex;
     ATADisk& _disk;
     uint64_t _start;
-    uint64_t _now;
     uint64_t _end;
-    uint _bunch;
-    CachedBlock* _blocks[ATADISK_BUNCH_MAX];
-    uint16_t* _data_now;
-    uint16_t* _data_end;
-    uint _current_block;
-    bool _wait_resorces;
+    std::auto_ptr<IndirectVector> _indirect_vector;
+    struct iovec _io_vec;
+    std::auto_ptr<DirectVector> _direct_vector;
+    IOVec _iov;
+    bool _dma_started;
+    DMAState* _dma_state;
+    AutoArray<uint8_t> _buf;
 };
 
 
@@ -271,96 +309,85 @@ public:
         , _bunch (bunch)
         , _data_now (NULL)
         , _data_end (NULL)
-        , _wait_resorces (false)
-        , _wait_sync (false)
     {
         ASSERT(_bunch <= ATADISK_BUNCH_MAX);
-    }
 
-    void start()
-    {
-        claim_blocks();
+        if (!(_io_block = _disk.get_io_block())) {
+            THROW("age io block failed");
+        }
     }
 
     void cancel()
     {
-        Lock lock(_mutex);
-
-        for (uint i = 0; i < _bunch; i++) {
-            if (_blocks[i]) {
-                _blocks[i]->unref();
-                _blocks[i] = NULL;
-            }
-        }
-
-        _wait_resorces = false;
-        _wait_sync = false;
+        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
     }
 
-    void start_block()
+    void start()
     {
-        _data_now = (uint16_t*)_blocks[_current_block]->data;
-        _data_end = (uint16_t*)(_blocks[_current_block]->data + SECTOR_SIZE);
+        start_bunch();
     }
 
     void start_bunch()
     {
-        _current_block = 0;
-        start_block();
+        _bunch = MIN(_end - _now, _bunch);
+
+        ASSERT(_bunch);
+
+        _data_now = (uint16_t*)_io_block;
+        _data_end = (uint16_t*)(_io_block + _bunch * SECTOR_SIZE);
+
         _disk.set_pio_dest(this);
     }
 
     void end()
     {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
         _disk.remove_pio_dest(true);
     }
 
-    void claim_blocks()
+    void error()
     {
-        _bunch = MIN(_end - _now, _bunch);
+        AutoRef<ATATask> auto_ref(this->ref());
 
-        if (_bunch == 0) {
-            end();
+        _disk.put_io_block(_io_block);
+        _disk.remove_task(this);
+        _disk.remove_pio_dest(false);
+        _disk.command_abort_error();
+    }
+
+
+    void writev_done(IOVec* vec, int err)
+    {
+        _disk.dec_async_count();
+
+        if (err) {
+            D_MESSAGE("failed %d", err)
+            error();
             return;
         }
 
-        Lock lock(_mutex);
-
-        for (uint i = 0; i < _bunch; i++) {
-            _blocks[i] = _disk.get_for_write(_now + i);
-
-            if (!_blocks[i]) {
-                _wait_resorces = true;
-                D_MESSAGE("wait");
-                _disk.remove_pio_dest(false);
-                return;
-            }
+        if ((_now += _bunch) == _end) {
+            end();
+            return;
         }
 
         start_bunch();
     }
 
-    void sync_bunch()
+    void write_bunch()
     {
-        for (uint i = 0; i < _bunch; i++) {
-            if (!_blocks[i]) {
-                continue;
-            }
+        _disk.inc_async_count();
 
-            if (_blocks[i]->get_state() != CachedBlock::VALID) {
-                _wait_sync = true;
-                return;
-            }
-
-            _blocks[i]->unref();
-            _blocks[i] = NULL;
-        }
-
-        _wait_sync = false;
-        _now += _bunch;
-        claim_blocks();
+        _io_vec.iov_base = _io_block;
+        _io_vec.iov_len = _bunch * SECTOR_SIZE;
+        new (&_iov) IOVec(_now, _io_vec.iov_len, &_io_vec, 1,
+                              (io_vec_cb_t)&WriteTask::writev_done,
+                              this);
+        _disk._block_dev->writev(&_iov);
     }
 
     void put_word(uint16_t data)
@@ -372,63 +399,141 @@ public:
         *_data_now = data;
 
         if (++_data_now == _data_end) {
-            _disk.store(_blocks[_current_block]);
-
-            if (_disk._sync_mode) {
-                if (++_current_block == _bunch) {
-                    _disk.remove_pio_dest(false);
-                    Lock lock(_mutex);
-                    sync_bunch();
-                } else {
-                    start_block();
-                }
-            } else {
-                _blocks[_current_block]->unref();
-                _blocks[_current_block] = NULL;
-                if (++_current_block == _bunch) {
-                    _now += _bunch;
-                    claim_blocks();
-                } else {
-                    start_block();
-                }
-            }
+            _disk.remove_pio_dest(false);
+            write_bunch();
         }
-    }
-
-    virtual void block_changed()
-    {
-        Lock lock(_mutex);
-
-        if (_wait_sync) {
-            sync_bunch();
-            return;
-        }
-
-        if (!_wait_resorces) {
-            return;
-        }
-
-        for (uint i = 0; i < _bunch; i++) {
-            if (!_blocks[i] && !(_blocks[i] = _disk.get_for_write(_now + i))) {
-                return;
-            }
-        }
-        _wait_resorces = false;
-        start_bunch();
     }
 
 private:
-    RecursiveMutex _mutex;
     ATADisk& _disk;
     uint64_t _now;
     uint64_t _end;
     uint _bunch;
-    CachedBlock* _blocks[ATADISK_BUNCH_MAX];
+    uint8_t* _io_block;
     uint16_t* _data_now;
     uint16_t* _data_end;
-    uint _current_block;
-    bool _wait_resorces;
-    bool _wait_sync;
+    struct iovec _io_vec;
+    IOVec _iov;
+};
+
+
+class WriteDMATask: public ATADiskTask {
+public:
+    WriteDMATask(ATADisk& disk, uint64_t start, uint64_t end)
+        : ATADiskTask()
+        , _disk (disk)
+        , _start (start)
+        , _end (end)
+        , _dma_started (false)
+        , _dma_state (NULL)
+    {
+    }
+
+    virtual void cancel()
+    {
+        if (_dma_state) {
+            _dma_state->nop();
+        }
+        _disk.remove_task(this);
+    }
+
+    virtual void start()
+    {
+    }
+
+    void writev_done(IOVec*, int err)
+    {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        if (err) {
+            _dma_state->error();
+            _dma_state = NULL;
+            _disk.remove_task(this);
+            _disk.command_abort_error();
+        } else {
+            _dma_state->done();
+            _dma_state = NULL;
+            _disk.remove_task(this);
+            _disk.notify_command_done();
+        }
+
+        _disk.dec_async_count();
+    }
+
+
+    void copy()
+    {
+        IndirectVector::iterator iter = _indirect_vector->begin();
+        uint8_t* dest = _buf.get();
+
+        for (; iter != _indirect_vector->end(); iter++) {
+            memory_bus->read((*iter).address, (*iter).size, dest);
+            dest += (*iter).size;
+        }
+    }
+
+
+    virtual bool dma_read_start(DMAState& dma)
+    {
+        Lock lock(_mutex);
+
+        if (_dma_started) {
+            return false;
+        }
+
+        _dma_started = true;
+
+        uint transfer_size = (_end - _start) * SECTOR_SIZE;
+
+        _direct_vector.reset(dma.get_direct_vector(transfer_size));
+
+        if (_direct_vector.get()) {
+            _dma_state = &dma;
+            _disk.inc_async_count();
+            new (&_iov) IOVec(_start, transfer_size, &(*_direct_vector)[0], _direct_vector->size(),
+                              (io_vec_cb_t)&WriteDMATask::writev_done,
+                              this);
+            _disk._block_dev->writev(&_iov);
+            return true;
+        }
+
+        _indirect_vector.reset(dma.get_indirect_vector(transfer_size));
+
+        if (_indirect_vector.get()) {
+            _disk.inc_async_count();
+            _dma_state = &dma;
+            _buf.set(new uint8_t[transfer_size]);
+            copy();
+            _io_vec.iov_base = _buf.get();
+            _io_vec.iov_len = transfer_size;
+            new (&_iov) IOVec(_start, transfer_size, &_io_vec, 1,
+                              (io_vec_cb_t)&WriteDMATask::writev_done,
+                              this);
+            _disk._block_dev->writev(&_iov);
+            return true;
+        }
+
+        D_MESSAGE("unable to obtaine transfer vector");
+
+        dma.error();
+        _disk.remove_task(this);
+        _disk.command_abort_error();
+
+        return true;
+    }
+
+private:
+    Mutex _mutex;
+    ATADisk& _disk;
+    uint64_t _start;
+    uint64_t _end;
+    std::auto_ptr<IndirectVector> _indirect_vector;
+    struct iovec _io_vec;
+    std::auto_ptr<DirectVector> _direct_vector;
+    IOVec _iov;
+    bool _dma_started;
+    DMAState* _dma_state;
+    AutoArray<uint8_t> _buf;
 };
 
 
@@ -537,8 +642,7 @@ public:
 
         _identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
                                             ATA_ID_NULTI_DMA_MODE1_MASK |
-                                            ATA_ID_NULTI_DMA_MODE2_MASK |
-                                            ATA_ID_NULTI_DMA_MODE0_SELECT_MASK;
+                                            ATA_ID_NULTI_DMA_MODE2_MASK;
 
         _identity[ATA_ID_OFFSET_PIO] = ATA_IO_PIO_MODE3_MASK | ATA_IO_PIO_MODE4_MASK;
 
@@ -575,7 +679,7 @@ public:
                                         ATA_ID_UDMA_MODE3_MASK |
                                         ATA_ID_UDMA_MODE4_MASK |
                                         ATA_ID_UDMA_MODE5_MASK |
-                                        ATA_ID_UDMA_MODE0_SELECT_MASK;
+                                        ATA_ID_UDMA_MODE5_SELECT_MASK;
 
         //_identity[ATA_ID_OFFSET_ADVANCE_POWR_MANAG] = ATA_ID_ADVANCE_POWR_MANAG_MAX_PERFORMANCE;
 
@@ -623,6 +727,8 @@ private:
 ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool read_only)
     : ATADevice("ata-disk", owner, wire)
 {
+    ASSERT(ATADEV_IO_BLOCK_SIZE == ATADISK_BUNCH_MAX * SECTOR_SIZE);
+
     if (read_only) {
         _block_dev.reset(new ROBlockDevice(file_name, SECTOR_SIZE, *this));
     } else {
@@ -642,42 +748,17 @@ ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool r
         I_MESSAGE("partial cylinder: %lu is not align on %u bytes",
                   size, ATA3_MAX_HEAD * SECTOR_SIZE * SECTOR_SIZE);
     }
-
-    init_cache();
 }
 
 
 ATADisk::~ATADisk()
 {
-    while (!_blocks_lru.empty()) {
-        delete _blocks_lru.front();
-        _blocks_lru.pop_front();
-    }
-
-    free(_cache_area);
 }
 
 
 uint64_t ATADisk::get_size()
 {
     return _block_dev->get_size();
-}
-
-
-void ATADisk::init_cache()
-{
-    _cache_area = (uint8_t*)memalign(SECTOR_SIZE, SECTOR_SIZE * ATADISK_CACHE_SIZE);
-
-    if (!_cache_area) {
-        THROW("memalign failed");
-    }
-
-    for (int i = 0; i < ATADISK_CACHE_SIZE; i++) {
-        uint64_t address = ~uint64_t(0) - i;
-        CachedBlock* block = new CachedBlock(address, _cache_area + i * SECTOR_SIZE);
-        _blocks_lru.push_back(block);
-        _cache[address] = block;
-    }
 }
 
 
@@ -765,200 +846,10 @@ bool ATADisk::is_valid_sectors_range(uint64_t start, uint64_t end)
 }
 
 
-void ATADisk::block_hit(CachedBlock* block)
-{
-    std::list<CachedBlock*>::iterator iter = _blocks_lru.begin();
-
-    for (;iter != _blocks_lru.end(); iter++) {
-        if ((*iter)->address == block->address) {
-            _blocks_lru.erase(iter);
-            _blocks_lru.push_back(block);
-            return;
-        }
-    }
-
-    D_MESSAGE("not found");
-}
-
-
-CachedBlock* ATADisk::alloc_block(uint64_t block_index)
-{
-    std::list<CachedBlock*>::iterator iter = _blocks_lru.begin();
-
-    for (; iter != _blocks_lru.end(); iter++) {
-
-        if ((*iter)->is_in_use()) {
-            continue;
-        }
-
-        CachedBlock* block = *iter;
-        _blocks_lru.erase(iter);
-
-        BlocksMap::iterator cache_iter = _cache.find(block->address);
-
-        if (cache_iter != _cache.end()) {
-            if ((*cache_iter).second == block) {
-                _cache.erase(cache_iter);
-            } else {
-                ASSERT(block->is_obsolete());
-            }
-        }
-
-        block->reset(block_index);
-        _blocks_lru.push_back(block);
-        _cache[block_index] = block;
-
-        return block;
-    }
-
-    return NULL;
-}
-
-
-CachedBlock* ATADisk::get_for_read(uint64_t block_index)
-{
-    Lock lock(_cache_mutex);
-
-    BlocksMap::iterator iter = _cache.find(block_index);
-
-    CachedBlock* block;
-
-    if (iter != _cache.end()) {
-       block = (*iter).second;
-       block_hit(block);
-    } else if (!(block = alloc_block(block_index))) {
-        return NULL;
-    }
-
-    if (block->get_state() == CachedBlock::INVALID) {
-        block->set_state(CachedBlock::LOADING);
-        block->ref();
-        inc_async_count();
-        _block_dev->read(block);
-    }
-
-    return block->ref();
-}
-
-
-void ATADisk::store(CachedBlock* block)
-{
-    Lock lock(_cache_mutex);
-    block->set_state(CachedBlock::STORING);
-    block->ref();
-    inc_async_count();
-    _block_dev->write(block);
-    lock.unlock();
-    notify_block_change();
-}
-
-
-CachedBlock* ATADisk::get_for_write(uint64_t block_index)
-{
-    Lock lock(_cache_mutex);
-
-    BlocksMap::iterator iter = _cache.find(block_index);
-
-    CachedBlock* block;
-
-    if (iter != _cache.end()) {
-       block = (*iter).second;
-
-       if (block->is_in_use()) {
-           D_MESSAGE("replace");
-           CachedBlock* obsolete = block;
-           obsolete->ref();
-
-           if (!(block = alloc_block(block_index))) {
-               obsolete->unref();
-               return NULL;
-           }
-
-           obsolete->set_obsolete();
-           obsolete->unref();
-       } else {
-           block_hit(block);
-       }
-    } else if (!(block = alloc_block(block_index))) {
-        return NULL;
-    }
-
-    block->set_state((block->get_state() == CachedBlock::INVALID) ? CachedBlock::INITILIZING :
-                                                                    CachedBlock::MODIFYING);
-    return block->ref();
-}
-
-
-void ATADisk::fetch(uint64_t block_index)
-{
-    CachedBlock* block = get_for_read(block_index);
-
-    if (block) {
-        block->unref();
-    }
-}
-
-
 void ATADisk::sync(void* mark)
 {
     inc_async_count();
     _block_dev->sync(mark);
-}
-
-
-void ATADisk::notify_block_change()
-{
-    AutoRef<ATADiskTask> task((ATADiskTask*)get_task());
-
-    if (!task.get()) {
-        return;
-    }
-
-    task->block_changed();
-}
-
-
-void ATADisk::block_io_done(Block* in_block)
-{
-    CachedBlock* block = (CachedBlock*)in_block;
-
-    Lock lock(_cache_mutex);
-
-    block->unref();
-    block->set_state(CachedBlock::VALID);
-
-    lock.unlock();
-
-    notify_block_change();
-
-    dec_async_count();
-}
-
-
-void ATADisk::block_io_error(Block* in_block, int error)
-{
-    D_MESSAGE("todo: add error handleing");
-    CachedBlock* block = (CachedBlock*)in_block;
-
-    Lock lock(_cache_mutex);
-
-    CachedBlock::State state = block->get_state();
-
-    if (state == CachedBlock::STORING) {
-        block->set_state(CachedBlock::DIRTY);
-    } else if (state == CachedBlock::LOADING) {
-        block->set_state(CachedBlock::INVALID);
-    } else {
-        PANIC("invalid");
-    }
-
-    block->unref();
-
-    lock.unlock();
-
-    notify_block_change();
-
-    dec_async_count();
 }
 
 
@@ -1062,6 +953,33 @@ void ATADisk::do_read_verify_sectors_ext()
 }
 
 
+void ATADisk::do_read_dma_common(uint64_t start, uint64_t end)
+{
+    if (!is_valid_sectors_range(start, end)) {
+        command_abort_error();
+        return;
+    }
+
+    set_power_mode(POWER_ACTIVE);
+    AutoRef<ATATask> autoref(new ReadDMATask(*this, start, end));
+    start_task(autoref.get());
+}
+
+
+void ATADisk::do_read_dma()
+{
+    uint64_t start = get_sector_address();
+    do_read_dma_common(start, start + get_sector_count());
+}
+
+
+void ATADisk::do_read_dma_ext()
+{
+    uint64_t start = get_sector_address_ext();
+    do_read_dma_common(start, start + get_sector_count_ext());
+}
+
+
 void ATADisk::do_write_sectors_common(uint64_t start, uint64_t end, uint bunch)
 {
     if (!is_valid_sectors_range(start, end)) {
@@ -1112,6 +1030,33 @@ void ATADisk::do_write_multi_ext()
     uint64_t start = get_sector_address_ext();
     do_write_sectors_common(start, start + get_sector_count_ext(),
                             _multi_mode & ATA_ID_MULTIPLE_VAL_MASK);
+}
+
+
+void ATADisk::do_write_dma_common(uint64_t start, uint64_t end)
+{
+    if (!is_valid_sectors_range(start, end)) {
+        command_abort_error();
+        return;
+    }
+
+    set_power_mode(POWER_ACTIVE);
+    AutoRef<ATATask> autoref(new WriteDMATask(*this, start, end));
+    start_task(autoref.get());
+}
+
+
+void ATADisk::do_write_dma()
+{
+    uint64_t start = get_sector_address();
+    do_write_dma_common(start, start + get_sector_count());
+}
+
+
+void ATADisk::do_write_dma_ext()
+{
+    uint64_t start = get_sector_address_ext();
+    do_write_dma_common(start, start + get_sector_count_ext());
 }
 
 
@@ -1271,8 +1216,17 @@ void ATADisk::do_command(uint8_t command)
     drop();
 
     switch (command) {
-    case ATA_CMD_PACKET:
-        command_abort_error();
+    case ATA_CMD_READ_DMA:
+        do_read_dma();
+        break;
+    case ATA_CMD_READ_DMA_EXT:
+        do_read_dma_ext();
+        break;
+    case ATA_CMD_WRITE_DMA:
+        do_write_dma();
+        break;
+    case ATA_CMD_WRITE_DMA_EXT:
+        do_write_dma_ext();
         break;
     case ATA_CMD_READ_SECTORS:
         do_read_sectors();
@@ -1301,20 +1255,6 @@ void ATADisk::do_command(uint8_t command)
     case ATA_CMD_WRITE_SECTORS_EXT:
         do_write_sectors_ext();
         break;
-#if 0
-    case CMD_WRITE_DMA:
-        do_write_dma();
-        break;
-    case CMD_WRITE_DMA_EXT:
-        do_write_dma_ext();
-        break;
-    case CMD_READ_DMA:
-        do_read_dma();
-        break;
-    case CMD_READ_DMA_EXT:
-        do_read_dma_ext();
-        break;
-#endif
     case ATA_CMD_READ_MULTIPLE:
         do_read_multi();
         break;
@@ -1383,6 +1323,9 @@ void ATADisk::do_command(uint8_t command)
         break;
     case ATA_CMOMPAT_CMD_INITIALIZE_DEVICE_PARAMETERS:
         do_initialize_device_parameters();
+        break;
+    case ATA_CMD_PACKET:
+        command_abort_error();
         break;
     default:
         D_MESSAGE("unhandled 0x%x %u", command, command);

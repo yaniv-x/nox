@@ -62,11 +62,20 @@ private:
     uint16_t io_channel_1_read_word(uint16_t port);
     void io_channel_1_write_word(uint16_t port, uint16_t data);
 
+    uint8_t io_bus_maste_read(uint16_t port);
+    void io_bus_maste_write(uint16_t port, uint8_t val);
+
+    void set_bm_command(uint8_t val, uint8_t* reg, ATADevice* device);
+    void set_bm_status(uint8_t val, uint8_t* reg);
+
 private:
     std::auto_ptr<Wire> _channel_0_wire;
     std::auto_ptr<Wire> _channel_1_wire;
     std::auto_ptr<ATADevice> _channel_0;
     std::auto_ptr<ATADevice> _channel_1;
+
+    uint16_t _bus_master_io_base;
+    uint8_t _bus_master_regs[16];
 };
 
 

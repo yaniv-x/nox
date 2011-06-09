@@ -53,6 +53,7 @@ static inline bool is_valid_page_range(page_address_t start, uint64_t num_pages)
 class MemoryBus::Internal {
 public:
     virtual void on_unmapped() = 0;
+    virtual uint8_t* get_direct() = 0; // todo: add ref to memory object
 };
 
 
@@ -90,6 +91,11 @@ public:
         delete this;
     }
 
+    virtual uint8_t* get_direct()
+    {
+        return NULL;
+    }
+
 private:
     MemoryBus& _bus;
     address_t _start;
@@ -108,6 +114,11 @@ public:
     {
         ASSERT(_mapped);
         _mapped = false;
+    }
+
+    virtual uint8_t* get_direct()
+    {
+        return NULL;
     }
 
 private:
@@ -143,6 +154,7 @@ public:
 
     virtual void map(page_address_t address);
     virtual void on_unmapped();
+    virtual uint8_t* get_direct() { return get_ptr();}
 
     KvmMapRef map_section(page_address_t address, uint64_t start_page, uint64_t num_pages);
     void unmap_section(KvmMapRef _ref);
@@ -372,6 +384,36 @@ void MemoryBus::write(const void* src, uint64_t length, uint64_t dest)
 #else
     (*now).second.io.write((uint8_t*)src, length, page_start_address + offset);
 #endif
+}
+
+
+uint8_t* MemoryBus::get_direct(uint64_t address, uint64_t size)
+{
+    ASSERT(get_state() == VMPart::RUNNING);
+
+    if ((address & ~((1ULL << ADDRESS_BITS) - 1)) || address + size < address ||
+        ((address + size)  & ~((1ULL << ADDRESS_BITS) - 1)) ) {
+        throw MachinErrorException();
+    }
+
+    if (!line_20_is_set() && (address >> 20) != ((address + size) >> 20)) {
+        return NULL;
+    }
+
+    page_address_t page = (address & _address_mask) >> GUEST_PAGE_SHIFT;
+
+    MappedMemory& map = (*_memory_map.lower_bound(page)).second;
+
+    uint64_t map_start = map.start_page << GUEST_PAGE_SHIFT;
+    uint64_t map_end = map_start + (map.num_pages << GUEST_PAGE_SHIFT);
+
+    if (map_end < address + size) {
+        return NULL;
+    }
+
+    uint8_t* direct = map.internal.get_direct();
+
+    return direct ? direct + (address - map_start): direct;
 }
 
 
@@ -694,6 +736,11 @@ public:
     bool is_mapped()
     {
         return _mapped;
+    }
+
+    virtual uint8_t* get_direct()
+    {
+        return _ram->get_ptr() + _offset;
     }
 
 private:

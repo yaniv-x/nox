@@ -245,7 +245,7 @@ bool Application::init(int argc, const char** argv)
     const char* vm_name = NULL;
     uint64_t ram_size = 0;
     std::string hard_disk_file;
-    bool ro_hard_disk_file;
+    bool ro_hard_disk_file = true;
     bool cdrom = false;
     const char* cdrom_media = NULL;
     bool boot_from_cd = false;

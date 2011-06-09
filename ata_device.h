@@ -30,7 +30,12 @@
 #include "vm_part.h"
 #include "threads.h"
 
+class DMAState;
 class Wire;
+
+enum {
+    ATADEV_IO_BLOCK_SIZE = 64 * KB,
+};
 
 class ATATask {
 public:
@@ -44,6 +49,8 @@ public:
 
     virtual void start() = 0;
     virtual void cancel() = 0;
+    virtual bool dma_write_start(DMAState& state) { return false;}
+    virtual bool dma_read_start(DMAState& state) { return false;}
 
 protected:
     virtual ~ATATask() {}
@@ -83,6 +90,9 @@ public:
     void set_pio_dest(PIODataDest* pio, bool notify = true);
     void remove_pio_dest(bool done);
 
+    void dma_write_start(DMAState& state);
+    void dma_read_start(DMAState& state);
+
 protected:
     virtual void load(InStream &stream) {}
     virtual void power() {}
@@ -115,6 +125,9 @@ protected:
     void dec_async_count();
     void inc_async_count() { _async_count.inc();}
 
+    uint8_t* get_io_block();
+    void put_io_block(uint8_t*);
+
 private:
     void soft_reset();
     void clear_HOB();
@@ -137,6 +150,10 @@ private:
 
     PIODataSource* _pio_source;
     PIODataDest* _pio_dest;
+
+    Mutex _io_blocks_mutex;
+    uint8_t* _io_blocks_data;
+    std::list<uint8_t*> _free_blocks_list;
 
 protected:
     uint _status;

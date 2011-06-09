@@ -32,6 +32,7 @@
 #include "common.h"
 #include "threads.h"
 
+
 class Block {
 public:
     Block(uint64_t in_address, uint8_t* in_data)
@@ -44,6 +45,34 @@ public:
     uint8_t* data;
 };
 
+class IOVec;
+
+typedef void (*io_vec_cb_t)(void*, IOVec*, uint err);
+
+class IOVec {
+public:
+    IOVec () : vec (NULL) {}
+
+    IOVec(uint64_t in_address, uint in_size, struct iovec* in_vec, uint in_vec_size,
+          io_vec_cb_t in_cb, void* in_opaque)
+        : address(in_address)
+        , size (in_size)
+        , vec (in_vec)
+        , vec_size (in_vec_size)
+        , cb (in_cb)
+        , opaque (in_opaque)
+    {
+    }
+
+    uint64_t address;
+    uint size;
+    struct iovec* vec;
+    uint vec_size;
+    io_vec_cb_t cb;
+    void* opaque;
+};
+
+
 class BlockDeviceCallback {
 public:
     virtual void block_io_done(Block* block) = 0;
@@ -51,69 +80,6 @@ public:
     virtual void sync_done(void*) {}
     virtual void sync_failed(void*, int error) {}
 };
-
-#if 0
-
-class RunLoop;
-struct FDEvent;
-
-class BlockDevice {
-public:
-    BlockDevice(const std::string& file_name, uint block_size, uint n_requests,
-                RunLoop& loop, BlockDeviceCallback& call_back);
-    ~BlockDevice();
-
-    uint64_t get_size() { return _size;}
-    void read(Block* block);
-    void write(Block* buf);
-
-private:
-    enum JobType {
-        READ,
-        WRITE,
-    };
-
-    struct IOJob {
-        struct iocb cb;
-        JobType type;
-        Block* block;
-    };
-
-    struct QueuedReques {
-        QueuedReques(JobType in_type, Block* in_block)
-            : type (in_type)
-            , block (in_block)
-        {
-        }
-
-        JobType type;
-        Block* block;
-    };
-
-    void init_io(RunLoop& loop);
-
-    void handle_io();
-    void push_queued();
-    void clear_eventfd();
-
-private:
-    Mutex _mutex;
-    AutoFD _file;
-    AutoFD _event_fd;
-    FDEvent* _loop_event;
-    uint64_t _size;
-    io_context_t _io_context;
-    uint _block_size;
-    uint _num_requests;
-
-    IOJob* _jobs;
-    std::list<IOJob*> _free_cbs;
-    std::list<QueuedReques> _queue;
-
-    BlockDeviceCallback& _call_back;
-};
-
-#endif
 
 
 class BlockDevice {
@@ -123,6 +89,9 @@ public:
     virtual ~BlockDevice();
 
     uint64_t get_size() { return _size * _block_size;}
+
+    void readv(IOVec* vec);
+    void writev(IOVec* vec);
     void read(Block* block);
     void write(Block* block);
     void sync(void* mark);
@@ -139,6 +108,8 @@ private:
     class Task {
     public:
         enum Type {
+            READV,
+            WRITEV,
             READ,
             WRITE,
             SYNC,
@@ -155,6 +126,8 @@ private:
         void* data;
     };
 
+    void readv(Task& task);
+    void writev(Task& task);
     void read(Task& task);
     void write(Task& task);
     void sync(Task& task);
