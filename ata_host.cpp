@@ -30,6 +30,8 @@
 #include "pci_bus.h"
 #include "ata_device.h"
 #include "pic.h"
+#include "dma_state.h"
+#include "memory_bus.h"
 
 enum {
     ATA_PCI_REVISION = 1,
@@ -47,7 +49,146 @@ enum {
     IO_NUM_PORTS = 8,
 
     RET_VAL_WHILE_NO_DEVICE = 0x7f,
+
+    IO_BUS_MASTER_PRIMERY_COMMAND = 0x00,
+    IO_BUS_MASTER_PRIMERY_STATUS = 0x02,
+    IO_BUS_MASTER_PRIMERY_PRD = 0x04,
+    IO_BUS_MASTER_SECONDARY_COMMAND = 0x08,
+    IO_BUS_MASTER_SECONDARY_STATUS = 0x0a,
+    IO_BUS_MASTER_SECONDARY_PRD = 0x0c,
+
+    IO_BUS_MASTER_SIZE = 16,
+
+    BUS_MASTER_COMMAND_START_MASK = (1 << 0),
+    BUS_MASTER_COMMAND_DIRICTION_MASK = (1 << 3),
+    BUS_MASTER_COMMAND_MASK = BUS_MASTER_COMMAND_START_MASK | BUS_MASTER_COMMAND_DIRICTION_MASK,
+
+    BUS_MASTER_STATUS_ACTIVE_MASK = (1 << 0),
+    BUS_MASTER_STATUS_ERROR_MASK = (1 << 1),
+    BUS_MASTER_STATUS_INTERRUPT_MASK = (1 << 2),
+    BUS_MASTER_STATUS_SIMPLEX_MASK = (1 << 7),
+    BUS_MASTER_STATUS_RESERVED_MASK = (1 << 3) | (1 << 4),
+    BUS_MASTER_STATUS_RO_MASK = BUS_MASTER_STATUS_SIMPLEX_MASK |
+                                BUS_MASTER_STATUS_RESERVED_MASK |
+                                BUS_MASTER_STATUS_ACTIVE_MASK,
+    BUS_MASTER_STATUS_CLEAR_MASK = BUS_MASTER_STATUS_INTERRUPT_MASK |
+                                   BUS_MASTER_STATUS_ERROR_MASK,
+
+
+    END_OF_TABLE_MASK = (1 << 31),
+    MAX_BUF_SIZE = 1 << 16,
 };
+
+
+class ATAHostDMA: public DMAState {
+public:
+    ATAHostDMA(uint8_t* status, uint32_t address)
+        : _status (status)
+        , _address (address)
+    {
+    }
+
+    virtual DirectVector * get_direct_vector(uint size);
+    virtual IndirectVector * get_indirect_vector(uint size);
+
+    virtual void done();
+    virtual void error();
+    virtual void nop();
+
+private:
+    uint8_t* _status;
+    uint32_t _address;
+};
+
+
+DirectVector* ATAHostDMA::get_direct_vector(uint size)
+{
+    std::auto_ptr<DirectVector> vec(new DirectVector());
+    uint32_t dma_PRD = _address;
+
+    for (;; dma_PRD += 8) {
+        uint32_t descriptor[2];
+        memory_bus->read(dma_PRD, sizeof(descriptor), descriptor);
+
+        struct iovec item;
+        uint64_t address = descriptor[0];
+        item.iov_len = descriptor[1] & 0xffff;
+
+        if (!item.iov_len) {
+            item.iov_len = MAX_BUF_SIZE;
+        }
+
+        item.iov_len = MIN(size, item.iov_len);
+        size -= item.iov_len;
+
+        item.iov_base = memory_bus->get_direct(address, item.iov_len);
+
+        if (!item.iov_base) {
+            return NULL;
+        }
+
+        vec->push_back(item);
+
+        if (descriptor[1] & END_OF_TABLE_MASK) {
+           break;
+        }
+    }
+
+    return size ? NULL :vec.release();
+}
+
+
+IndirectVector* ATAHostDMA::get_indirect_vector(uint size)
+{
+    std::auto_ptr<IndirectVector> vec(new IndirectVector());
+    uint32_t dma_PRD = _address;
+
+    for (;; dma_PRD += 8) {
+        uint32_t descriptor[2];
+        memory_bus->read(dma_PRD, sizeof(descriptor), descriptor);
+
+        DMAIndirectInfo item;
+        item.address = descriptor[0];
+        item.size = descriptor[1] & 0xffff;
+
+        if (!item.size) {
+            item.size = MAX_BUF_SIZE;
+        }
+
+        item.size = MIN(size, item.size);
+        size -= item.size;
+
+        vec->push_back(item);
+
+        if (descriptor[1] & END_OF_TABLE_MASK) {
+           break;
+        }
+    }
+
+    return size ? NULL :vec.release();
+}
+
+
+void ATAHostDMA::done()
+{
+    *_status &= ~BUS_MASTER_STATUS_ACTIVE_MASK;
+    *_status |= BUS_MASTER_STATUS_INTERRUPT_MASK;
+    delete this;
+}
+
+
+void ATAHostDMA::error()
+{
+    *_status &= ~BUS_MASTER_STATUS_ACTIVE_MASK;
+    *_status |= BUS_MASTER_STATUS_INTERRUPT_MASK | BUS_MASTER_STATUS_ERROR_MASK;
+    delete this;
+}
+
+
+void ATAHostDMA::nop()
+{
+    delete this;
+}
 
 
 ATAHost::ATAHost()
@@ -81,6 +222,10 @@ ATAHost::ATAHost()
 
     set_io_address(2, ATA1_IO_BASE, true);
     set_io_address(3, ATA1_IO_CONTROL_MAP_BASE, true);
+
+    add_io_region(4, IO_BUS_MASTER_SIZE, this,
+                  (io_read_byte_proc_t)&ATAHost::io_bus_maste_read,
+                  (io_write_byte_proc_t)&ATAHost::io_bus_maste_write);
 
     pci_bus->add_device(*this);
 }
@@ -228,16 +373,100 @@ void ATAHost::io_channel_1_write_word(uint16_t port, uint16_t data)
 }
 
 
+uint8_t ATAHost::io_bus_maste_read(uint16_t port)
+{
+    _bus_master_io_base = get_region_address(4);
+    port -= _bus_master_io_base;
+
+    if (port >= IO_BUS_MASTER_SIZE) {
+        D_MESSAGE("bad io port %u", port + _bus_master_io_base);
+        return ~0;
+    }
+
+    return _bus_master_regs[port];
+}
+
+
+void ATAHost::set_bm_command(uint8_t val, uint8_t* reg, ATADevice* device)
+{
+    uint8_t curr_val = reg[0];
+    reg[0] = val & BUS_MASTER_COMMAND_MASK;
+
+    if (curr_val & BUS_MASTER_COMMAND_START_MASK) {
+        reg[2] |= BUS_MASTER_STATUS_ACTIVE_MASK;
+    } else {
+        reg[2] &= ~BUS_MASTER_STATUS_ACTIVE_MASK;
+    }
+
+    if (device && (val & BUS_MASTER_COMMAND_START_MASK) &&
+                                                !(curr_val & BUS_MASTER_COMMAND_START_MASK)) {
+        uint32_t address = *(uint32_t*)(reg + 4);
+        ATAHostDMA* dma = new ATAHostDMA(reg + 2, address);
+        if ((val & BUS_MASTER_COMMAND_DIRICTION_MASK)) {
+            device->dma_write_start(*dma);
+        } else {
+            device->dma_read_start(*dma);
+        }
+    }
+}
+
+
+void ATAHost::set_bm_status(uint8_t val, uint8_t* reg)
+{
+    *reg &= ~(val & BUS_MASTER_STATUS_CLEAR_MASK);
+    val &= ~(BUS_MASTER_STATUS_RO_MASK | BUS_MASTER_STATUS_CLEAR_MASK);
+    *reg &= (BUS_MASTER_STATUS_RO_MASK | BUS_MASTER_STATUS_CLEAR_MASK);
+    *reg |= val;
+}
+
+
+void ATAHost::io_bus_maste_write(uint16_t port, uint8_t val)
+{
+    _bus_master_io_base = get_region_address(4);
+    port -= _bus_master_io_base;
+
+    switch (port) {
+    case IO_BUS_MASTER_PRIMERY_COMMAND:
+        set_bm_command(val, &_bus_master_regs[port], _channel_0.get());
+        break;
+    case IO_BUS_MASTER_SECONDARY_COMMAND:
+        set_bm_command(val, &_bus_master_regs[port], _channel_1.get());
+        break;
+    case IO_BUS_MASTER_PRIMERY_STATUS:
+    case IO_BUS_MASTER_SECONDARY_STATUS:
+        set_bm_status(val, &_bus_master_regs[port]);
+        break;
+    case IO_BUS_MASTER_SECONDARY_PRD:
+    case IO_BUS_MASTER_PRIMERY_PRD:
+        _bus_master_regs[port] = val & ~0x03;
+        break;
+    case IO_BUS_MASTER_PRIMERY_PRD + 1:
+    case IO_BUS_MASTER_PRIMERY_PRD + 2:
+    case IO_BUS_MASTER_PRIMERY_PRD + 3:
+    case IO_BUS_MASTER_SECONDARY_PRD + 1:
+    case IO_BUS_MASTER_SECONDARY_PRD + 2:
+    case IO_BUS_MASTER_SECONDARY_PRD + 3:
+        _bus_master_regs[port] = val;
+        break;
+    default:
+        D_MESSAGE("unexpected port 0x%x", port);
+    }
+}
+
+
 void ATAHost::on_io_enabled()
 {
     pic->wire(*_channel_0_wire, ATA0_IRQ);
     pic->wire(*_channel_1_wire, ATA1_IRQ);
+    _bus_master_io_base = get_region_address(4);
 }
+
 
 void ATAHost::on_io_disabled()
 {
     _channel_0_wire->dettach_dest();
     _channel_1_wire->dettach_dest();
+    _bus_master_io_base = 0;
 }
 
 
@@ -245,6 +474,8 @@ void ATAHost::reset()
 {
     _channel_0_wire->dettach_dest();
     _channel_1_wire->dettach_dest();
+    memset(_bus_master_regs, 0, sizeof(_bus_master_regs));
+    _bus_master_io_base = 0;
     PCIDevice::reset();
 }
 

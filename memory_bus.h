@@ -49,6 +49,7 @@ public:
 
     void read(uint64_t src, uint64_t length, void* dest);
     void write(const void* src, uint64_t length, uint64_t dest);
+    uint8_t* get_direct(uint64_t address, uint64_t size);
 
 #ifdef USE_C_CALLBACKS
     MMIORegion* register_mmio(page_address_t address, uint64_t num_pages,

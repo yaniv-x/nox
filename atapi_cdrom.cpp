@@ -163,7 +163,7 @@ public:
         set_ata_str(&_identity[ATA_ID_OFFSET_REVISION], ATA_ID_REVISION_NUM_CHARS / 2, "1.0.0");
         set_ata_str(&_identity[ATA_ID_OFFSET_MODEL], ATA_ID_MODEL_NUM_CHARS / 2, "Nox CD");
 
-        _identity[ATA_ID_OFFSET_CAP1] = ATA_ID_CAP1_DMA_MASK |
+        _identity[ATA_ID_OFFSET_CAP1] = /*ATA_ID_CAP1_DMA_MASK |*/
                                     ATAPI_ID_CAP1_MBZ |
                                     ATA_ID_CAP1_IORDY_MASK |
                                     ATA_ID_CAP1_DISABLE_IORDY_MASK;
@@ -173,10 +173,10 @@ public:
         _identity[ATA_ID_OFFSET_FIELD_VALIDITY] = ATA_ID_FIELD_VALIDITY_64_70 |
                                                   ATA_ID_FIELD_VALIDITY_88;
 
-        _identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
+        /*_identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
                                              ATA_ID_NULTI_DMA_MODE1_MASK |
                                              ATA_ID_NULTI_DMA_MODE2_MASK |
-                                             ATA_ID_NULTI_DMA_MODE0_SELECT_MASK;
+                                             ATA_ID_NULTI_DMA_MODE0_SELECT_MASK;*/
 
         _identity[ATA_ID_OFFSET_PIO] = ATA_IO_PIO_MODE3_MASK | ATA_IO_PIO_MODE4_MASK;
 
@@ -198,13 +198,13 @@ public:
         _identity[ATA_ID_OFFSET_CMD_SET_3] = ATA_ID_CMD_SET_3_ONE_MASK;
         _identity[ATA_ID_OFFSET_CMD_SET_3_ENABLE] = _identity[ATA_ID_OFFSET_CMD_SET_3];
 
-        _identity[ATA_ID_OFFSET_UDMA] = ATA_ID_UDMA_MODE0_MASK |
+        /*_identity[ATA_ID_OFFSET_UDMA] = ATA_ID_UDMA_MODE0_MASK |
                                         ATA_ID_UDMA_MODE1_MASK |
                                         ATA_ID_UDMA_MODE2_MASK |
                                         ATA_ID_UDMA_MODE3_MASK |
                                         ATA_ID_UDMA_MODE4_MASK |
                                         ATA_ID_UDMA_MODE5_MASK |
-                                        ATA_ID_UDMA_MODE0_SELECT_MASK;
+                                        ATA_ID_UDMA_MODE0_SELECT_MASK;*/
 
         _identity[ATA_ID_OFFSET_HRESET] = ATA_ID_HRESET_ONE_MASK |
                                           ATA_ID_HRESET_PASS_MASK |
