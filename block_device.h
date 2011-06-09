@@ -90,25 +90,15 @@ public:
 };
 
 
-class BlockDeviceCallback {
-public:
-    virtual void block_io_done(Block* block) = 0;
-    virtual void block_io_error(Block* block, int error) = 0;
-};
-
-
 class BlockDevice {
 public:
-    BlockDevice(const std::string& file_name, uint block_size,
-                 BlockDeviceCallback& call_back, bool read_only);
+    BlockDevice(const std::string& file_name, uint block_size, bool read_only);
     virtual ~BlockDevice();
 
     uint64_t get_size() { return _size * _block_size;}
 
     void readv(IOVec* vec);
     void writev(IOVec* vec);
-    void read(Block* block);
-    void write(Block* block);
     void sync(IOSync* obj);
 
 protected:
@@ -125,8 +115,6 @@ private:
         enum Type {
             READV,
             WRITEV,
-            READ,
-            WRITE,
             SYNC,
             QUIT,
         };
@@ -143,8 +131,6 @@ private:
 
     void readv(Task& task);
     void writev(Task& task);
-    void read(Task& task);
-    void write(Task& task);
     void sync(Task& task);
     void* thread_main();
 
@@ -155,7 +141,6 @@ private:
     Thread* _thread;
     uint64_t _size;
     uint _block_size;
-    BlockDeviceCallback& _call_back;
 
     typedef std::list<Task> TaskList;
     TaskList _tasks;
@@ -164,9 +149,8 @@ private:
 
 class PBlockDevice: public BlockDevice {
 public:
-    PBlockDevice(const std::string& file_name, uint block_size,
-                 BlockDeviceCallback& call_back, bool read_only)
-        : BlockDevice(file_name, block_size, call_back, read_only)
+    PBlockDevice(const std::string& file_name, uint block_size, bool read_only)
+        : BlockDevice(file_name, block_size, read_only)
     {
         start();
     }
@@ -180,8 +164,7 @@ private:
 
 class ROBlockDevice: public BlockDevice {
 public:
-    ROBlockDevice(const std::string& file_name, uint block_size,
-                  BlockDeviceCallback& call_back);
+    ROBlockDevice(const std::string& file_name, uint block_size);
 
 private:
     virtual int get_fd_for_read(uint64_t address);

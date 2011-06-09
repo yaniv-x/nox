@@ -508,7 +508,7 @@ ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
 {
     if (file_name.size()) {
         try {
-            _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
+            _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, true));
         } catch (...) {
             W_MESSAGE("loading media failed");
         }
@@ -2068,7 +2068,7 @@ void ATAPICdrom::set_media(const std::string& file_name)
     }
 
     try {
-        _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, *this, true));
+        _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, true));
     } catch (...) {
         D_MESSAGE("failed");
         return;

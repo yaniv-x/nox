@@ -29,18 +29,13 @@
 #include <sys/uio.h>
 
 #include "block_device.h"
-#include "run_loop.h"
 #include "application.h"
 
-#define BLOCK_DEVICE_COALESCE
 
-
-BlockDevice::BlockDevice(const std::string& file_name, uint block_size,
-                         BlockDeviceCallback& call_back, bool read_only)
+BlockDevice::BlockDevice(const std::string& file_name, uint block_size, bool read_only)
     : _file (open(file_name.c_str(), (read_only) ? O_RDONLY : O_RDWR | O_LARGEFILE))
     , _thread (NULL)
     , _block_size (block_size)
-    , _call_back (call_back)
 {
     if (!_file.is_valid()) {
         THROW("open %s failed", file_name.c_str());
@@ -94,22 +89,6 @@ void BlockDevice::writev(IOVec* vec)
 {
     Lock lock(_mutex);
     _tasks.push_back(Task(Task::WRITEV, vec));
-    _condition.signal();
-}
-
-
-void BlockDevice::read(Block* block)
-{
-    Lock lock(_mutex);
-    _tasks.push_back(Task(Task::READ, block));
-    _condition.signal();
-}
-
-
-void BlockDevice::write(Block* block)
-{
-    Lock lock(_mutex);
-    _tasks.push_back(Task(Task::WRITE, block));
     _condition.signal();
 }
 
@@ -245,154 +224,6 @@ void BlockDevice::writev(Task& task)
 }
 
 
-void BlockDevice::read(Task& task)
-{
-#ifdef BLOCK_DEVICE_COALESCE
-    Block* block = (Block*)task.data;
-    uint64_t address = block->address;
-
-    if (address >= _size) {
-        _call_back.block_io_error(block, 0);
-        return;
-    }
-
-    uint64_t from = address * _block_size;
-
-    if (lseek(get_fd_for_read(address), from, SEEK_SET) != from) {
-        D_MESSAGE("seek failed %d", errno);
-        _call_back.block_io_error(block, 0);
-        return;
-    }
-
-    #define MAX_COALESCE MIN(128, IOV_MAX - 1)
-
-    struct iovec iov[MAX_COALESCE + 1];
-    uint coalesce = 0;
-
-    iov[0].iov_base = block->data;
-    iov[0].iov_len = _block_size;
-
-    Lock lock(_mutex);
-
-    TaskList::iterator iter = _tasks.begin();
-    for (; iter != _tasks.end() && coalesce < MAX_COALESCE; ++iter) {
-
-        if ((*iter).type != Task::READ) {
-            break;
-        }
-
-        Block* block = (Block*)(*iter).data;
-
-        if (block->address != address + coalesce + 1) {
-            break;
-        }
-
-        coalesce++;
-
-        iov[coalesce].iov_base = block->data;
-        iov[coalesce].iov_len = _block_size;
-    }
-
-    lock.unlock();
-
-    for (;;) {
-        ssize_t n = ::readv(get_fd_for_read(address), iov, coalesce + 1);
-
-        if (n <= 0) {
-            if (n == -1 && errno == EINTR) {
-                continue;
-            }
-
-            _call_back.block_io_error(block, n == 0 ? 0 : errno);
-            return;
-        }
-
-        if (n != (coalesce + 1) * _block_size) {
-            D_MESSAGE("not handled, sleep...");
-            for (;;) sleep(3);
-        }
-
-        _call_back.block_io_done(block);
-
-        while (coalesce--) {
-            Lock lock(_mutex);
-            Task task = _tasks.front();
-            _tasks.pop_front();
-            lock.unlock();
-            Block* block = (Block*)task.data;
-            _call_back.block_io_done(block);
-        }
-        break;
-    }
-
-#else
-
-    uint64_t from = address * _block_size;
-    uint8_t* to = block->data;
-    uint size = _block_size;
-
-    for (;;) {
-        ssize_t n = pread64(get_fd_for_read(address), to, size, from);
-
-        if (n <= 0) {
-            if (n == -1 && errno == EINTR) {
-                continue;
-            }
-
-            _call_back.block_io_error(block, n == 0 ? 0 : errno);
-            return;
-        }
-
-        if ((size -= n) == 0) {
-            _call_back.block_io_done(block);
-            return;
-        }
-
-        to += n;
-        from += n;
-    }
-#endif
-}
-
-
-void BlockDevice::write(Task& task)
-{
-    Block* block = (Block*)task.data;
-    uint64_t address = block->address;
-
-    if (address >= _size) {
-        _call_back.block_io_error(block, 0);
-        return;
-    }
-
-    uint64_t to = address * _block_size;
-    uint8_t* from = block->data;
-    uint size = _block_size;
-
-    for (;;) {
-        ssize_t n = pwrite64(get_fd_for_write(), from, size, to);
-
-        if (n <= 0) {
-            if (n == -1 && errno == EINTR) {
-                continue;
-            }
-
-            _call_back.block_io_error(block, n == 0 ? 0 : errno);
-            return;
-        }
-
-        if ((size -= n) == 0) {
-            on_write_done(address);
-            _call_back.block_io_done(block);
-            return;
-        }
-
-        to += n;
-        from += n;
-    }
-}
-
-
 void BlockDevice::sync(Task& task)
 {
     int r = fdatasync(get_fd_for_write());
@@ -422,12 +253,6 @@ void* BlockDevice::thread_main()
         case Task::WRITEV:
             writev(task);
             break;
-        case Task::READ:
-            read(task);
-            break;
-        case Task::WRITE:
-            write(task);
-            break;
         case Task::SYNC:
             sync(task);
             break;
@@ -438,9 +263,8 @@ void* BlockDevice::thread_main()
 }
 
 
-ROBlockDevice::ROBlockDevice(const std::string& file_name, uint block_size,
-                             BlockDeviceCallback& call_back)
-    : BlockDevice(file_name, block_size, call_back, true)
+ROBlockDevice::ROBlockDevice(const std::string& file_name, uint block_size)
+    : BlockDevice(file_name, block_size, true)
 {
     std::string tmp_file;
 

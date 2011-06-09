@@ -29,11 +29,11 @@
 
 #include "ata_device.h"
 #include "ata_host.h"
-#include "block_device.h"
 
 class AdminReplyContext;
+class BlockDevice;
 
-class ATAPICdrom: public ATADevice, public BlockDeviceCallback {
+class ATAPICdrom: public ATADevice {
 public:
     ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name);
     virtual ~ATAPICdrom();
@@ -46,9 +46,6 @@ protected:
     virtual void reset(bool cold);
 
 private:
-    virtual void block_io_done(Block* block) {}
-    virtual void  block_io_error(Block* block, int error) {}
-
     void _packet_cmd_done(uint sense, uint sense_add);
     void packet_cmd_abort(uint sens, uint sens_add);
     void packet_cmd_chk(uint sens, uint sens_add);

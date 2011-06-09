@@ -29,9 +29,10 @@
 
 #include "ata_device.h"
 #include "ata_host.h"
-#include "block_device.h"
 
-class ATADisk: public ATADevice, public BlockDeviceCallback {
+class BlockDevice;
+
+class ATADisk: public ATADevice {
 public:
     ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool read_only);
     virtual ~ATADisk();
@@ -77,9 +78,6 @@ private:
     void do_flush();
     void do_idle_immediate();
     void do_standby_immediate();
-
-    virtual void block_io_done(Block* block) {}
-    virtual void block_io_error(Block* block, int error) {}
 
 private:
     std::auto_ptr<BlockDevice> _block_dev;

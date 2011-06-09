@@ -721,9 +721,9 @@ ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool r
     ASSERT(ATADEV_IO_BLOCK_SIZE == ATADISK_BUNCH_MAX * SECTOR_SIZE);
 
     if (read_only) {
-        _block_dev.reset(new ROBlockDevice(file_name, SECTOR_SIZE, *this));
+        _block_dev.reset(new ROBlockDevice(file_name, SECTOR_SIZE));
     } else {
-        _block_dev.reset(new PBlockDevice(file_name, SECTOR_SIZE, *this, false));
+        _block_dev.reset(new PBlockDevice(file_name, SECTOR_SIZE, false));
     }
 
     uint64_t size = _block_dev->get_size();
