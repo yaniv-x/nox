@@ -52,6 +52,7 @@ private:
     void packet_cmd_sucess();
     void read_formatted_toc(uint8_t* packet);
     void read_raw_toc(uint8_t* packet);
+    void read_multi_session_info(uint8_t* packet);
 
     void handle_packet(uint8_t* packet);
     uint max_pio_transfer_bytes();

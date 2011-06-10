@@ -40,9 +40,11 @@ enum {
     DEFAULT_PACKET_PIO_TRANSFER_SIZE = MAX_PACKET_PIO_TRANSFER_SIZE,
 
     FORMATTED_TOC = 0,
+    MULTI_SESSION_INFO = 1,
     RAW_TOC = 2,
 
     FORMATTED_TOC_SIZE = 20,
+    MULTI_SESSION_SIZE = 12,
     RAW_TOC_SIZE = 48,
 
     REQUEST_SENSE_PEPLY_SIZE = 18,
@@ -1057,14 +1059,8 @@ void ATAPICdrom::read_formatted_toc(uint8_t* packet)
 
     uint start_track = packet[6];
 
-    if (start_track >= MMC_LEADOUT_TRACK_ID) {
+    if (start_track > MMC_LEADOUT_TRACK_ID) {
         D_MESSAGE("invalid start track");
-        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
-        return;
-    }
-
-    if ( start_track > 1) {
-        D_MESSAGE("start_track > 1");
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
     }
@@ -1079,51 +1075,63 @@ void ATAPICdrom::read_formatted_toc(uint8_t* packet)
 
     uint max_transfer = max_pio_transfer_bytes();
 
-    length = MIN(FORMATTED_TOC_SIZE, length);
-
     if (length > max_transfer && (max_transfer & 1)) {
         D_MESSAGE("odd max_transfer (0x%x 0x%x)", max_transfer, length);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         return;
     }
 
-    bool time = !!(packet[1] && (1 << 1));
+    bool time = !!(packet[1] & (1 << 1));
 
-    uint8_t data[FORMATTED_TOC_SIZE];
+    DynamicBuf buf(128);
 
-    ptr16 = (uint16_t*)&data[0];
-    *ptr16 = revers_unit16(18); // toc length
-    data[2] = 1;                             // first track
-    data[3] = 1;                             // last track
+    buf.put_uint16(0); // toc length
+    buf.put_uint8(1);  // first track
+    buf.put_uint8(1);  // last track
 
-    data[4] = 0;     // reservd
-    data[5] = 0x14;  // control = Data track, recorded uninterrupted
-                        // Q Sub-channel encodes current position data
-    data[6] = 1;     // track number
-    data[7] = 0;     // reservd
+    if (start_track <= 1) {
+        buf.put_uint8(0);     // reservd
+        buf.put_uint8(0x14);  // control = Data track, recorded uninterrupted
+                              // Q Sub-channel encodes current position data
+        buf.put_uint8(1);     // track number
+        buf.put_uint8(0);     // reservd
 
-    uint32_t* ptr32;
+        if (time) {
+            uint8_t min, sec, frame;
+            frames_to_time(0, min, sec, frame);
 
-    if (time) {
-        D_MESSAGE("time");
-        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
-        return;
-    } else {
-        ptr32 = (uint32_t*)&data[8];
-        *ptr32 = 0;
+            buf.put_uint8(0);
+            buf.put_uint8(min);
+            buf.put_uint8(sec);
+            buf.put_uint8(frame);
+        } else {
+            buf.put_uint32(0);
+        }
     }
 
-    data[12] = 0;                    // reservd
-    data[13] = 0x14;                 // control = Data track, recorded uninterrupted
-                                        // Q Sub-channel encodes current position data
-    data[14] = MMC_LEADOUT_TRACK_ID; // track number
-    data[15] = 0;     // reservd
-    ptr32 = (uint32_t*)&data[16];
-    *ptr32 = revers_unit32(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE);
+    buf.put_uint8(0);                    // reservd
+    buf.put_uint8(0x16);                 // control = Data track, recorded uninterrupted
+                                         // Q Sub-channel encodes current position data
+    buf.put_uint8(MMC_LEADOUT_TRACK_ID); // track number
+    buf.put_uint8(0);                    // reservd
+    if (time) {
+        uint8_t min, sec, frame;
+        frames_to_time(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE, min, sec, frame);
+        buf.put_uint8(0);
+        buf.put_uint8(min);
+        buf.put_uint8(sec);
+        buf.put_uint8(frame);
+    } else {
+        buf.put_uint32(revers_unit32(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE));
+    }
+
+    ptr16 = (uint16_t*)buf.base();
+    *ptr16 = revers_unit16(buf.position() - 2);
+
+    length = MIN(buf.position(), length);
 
     AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
-    memcpy(task->get_data(), data, length);
-
+    memcpy(task->get_data(), buf.base(), length);
     start_task(task.get());
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
@@ -1150,8 +1158,8 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
 
     ptr16 = (uint16_t*)&data[0];
     *ptr16 = 0;    // row toc length
-    data[2] = 1;                 // first session
-    data[3] = 1;                 // last session
+    data[2] = 1;   // first session
+    data[3] = 1;   // last session
 
     if (start_session > 1) {
         ptr16 = (uint16_t*)&data[0];
@@ -1241,6 +1249,60 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
+
+void ATAPICdrom::read_multi_session_info(uint8_t* packet)
+{
+    if ((packet[9] & 1) /*link bit is set*/) {
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+        return;
+    }
+
+    uint16_t* ptr16 = (uint16_t*)&packet[7];
+    uint length = revers_unit16(*ptr16);
+
+    if (length == 0) {
+        packet_cmd_sucess();
+        return;
+    }
+
+    uint max_transfer = max_pio_transfer_bytes();
+
+    if (length > max_transfer && (max_transfer & 1)) {
+        D_MESSAGE("odd max_transfer (0x%x 0x%x)", max_transfer, length);
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+        return;
+    }
+
+    uint8_t data[MULTI_SESSION_SIZE];
+    memset(data, 0, sizeof(data));
+
+    ptr16 = (uint16_t*)&data[0];
+    *ptr16 = revers_unit16(sizeof(data) - 2);
+    data[2] = 1; // First Complete Session Number
+    data[3] = 1; // Last Complete Session Number
+    data[4] = 0, // Reserved
+    data[5] = 0x14; // // control = Data track, recorded uninterrupted
+    data[6] = 1; // First Track Number In Last Complete Session
+    data[7] = 0; // Reserved
+
+    bool time = !!(packet[1] & (1 << 1));
+
+    if (time) {
+        data[8] = 0;
+        frames_to_time(0, data[9], data[10], data[11]);
+    } else {
+        uint32_t* address = (uint32_t*)&data[8];
+        *address = 0; // Start Address of First Track in Last Session
+    }
+
+    length = MIN(length, sizeof(data));
+    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    memcpy(task->get_data(), data, length);
+    start_task(task.get());
+    set_power_mode(ATADevice::POWER_ACTIVE);
+}
+
+
 void ATAPICdrom::mmc_read_toc(uint8_t* packet)
 {
     if (handle_attention_condition()) {
@@ -1256,11 +1318,14 @@ void ATAPICdrom::mmc_read_toc(uint8_t* packet)
         return;
     }
 
-    uint format = packet[1] & 0x0f;
+    uint format = packet[2] & 0x0f;
 
     switch (format) {
     case FORMATTED_TOC:
         read_formatted_toc(packet);
+        break;
+    case MULTI_SESSION_INFO:
+        read_multi_session_info(packet);
         break;
     case RAW_TOC:
         read_raw_toc(packet);
