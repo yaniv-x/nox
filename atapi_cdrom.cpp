@@ -1454,7 +1454,7 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
         buf.put_uint16(revers_unit16(MMC_FEATURE_CORE));
         buf.put_uint8(0x7); // currenr | persistent, version == 1
         buf.put_uint8(8);  // aditional length
-        buf.put_uint32(0x00000002); //interface ATAPI
+        buf.put_uint32(revers_unit32(0x00000002)); // ATAPI interface
         buf.put_uint8(1);  // DBE is set
         buf.put_uint8(0);  // reserved
         buf.put_uint8(0);  // reserved
@@ -1485,7 +1485,7 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
         buf.put_uint16(revers_unit16(MMC_FEATURE_RANDOM_READABLE));
         buf.put_uint8(media ? 1 :0); // current? | not persistent, version == 0
         buf.put_uint8(8); // aditional length
-        buf.put_uint32(revers_unit16(MMC_CD_SECTOR_SIZE)); // logical block
+        buf.put_uint32(revers_unit32(MMC_CD_SECTOR_SIZE)); // logical block
         buf.put_uint16(revers_unit16(1)); // blocking
         buf.put_uint8(1); // PP is set
         buf.put_uint8(0); // reserved
