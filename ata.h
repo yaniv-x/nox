@@ -68,6 +68,8 @@ enum {
     ATA_REASON_REL_BIT = 2,
     ATA_REASON_TAG_SHIFT = 3,
     ATA_REASON_TAG_MASK = ~((1 << ATA_REASON_TAG_SHIFT) - 1),
+
+    ATA_FEATURES_DMA_MASK = (1 << 0),
 };
 
 enum {
