@@ -269,6 +269,7 @@ public:
 
         D_MESSAGE("unable to obtaine transfer vector");
 
+        AutoRef<ATATask> auto_ref(this->ref());
         dma.error();
         _disk.remove_task(this);
         _disk.command_abort_error();
@@ -503,6 +504,7 @@ public:
 
         D_MESSAGE("unable to obtaine transfer vector");
 
+        AutoRef<ATATask> auto_ref(this->ref());
         dma.error();
         _disk.remove_task(this);
         _disk.command_abort_error();
