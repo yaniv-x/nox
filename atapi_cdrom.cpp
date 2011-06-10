@@ -119,18 +119,10 @@ public:
 };
 
 
-class ATAPITask : public ATATask {
-public:
-    ATAPITask() : ATATask() {}
-
-    virtual void block_changed() {}
-};
-
-
-class CDIdentifyTask: public ATAPITask, public PIODataSource {
+class CDIdentifyTask: public ATATask, public PIODataSource {
 public:
     CDIdentifyTask(ATAPICdrom& cd)
-        : ATAPITask()
+        : ATATask()
         , _cd (cd)
         , _data_now (_identity)
         , _data_end (_data_now + 256)
@@ -374,10 +366,10 @@ private:
 };
 
 
-class CDGenericTransfer: public ATAPITask, public PIODataSource {
+class CDGenericTransfer: public ATATask, public PIODataSource {
 public:
     CDGenericTransfer(ATAPICdrom& cd, uint size, uint max_transfer)
-        : ATAPITask()
+        : ATATask()
         , _cd (cd)
         , _size (size)
         , _transfer_size (max_transfer)
@@ -457,10 +449,10 @@ private:
     uint16_t* _data_end;
 };
 
-class PacketTask: public ATAPITask, public PIODataDest {
+class PacketTask: public ATATask, public PIODataDest {
 public:
     PacketTask(ATAPICdrom& cd)
-        : ATAPITask()
+        : ATATask()
         , _cd (cd)
         , _data_now ((uint16_t*)_packet)
         , _data_end ((uint16_t*)(_packet + sizeof(_packet)))
