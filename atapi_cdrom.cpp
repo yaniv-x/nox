@@ -93,6 +93,7 @@ static void set_scsi_left_str(uint8_t* dest, int len, const char* str)
 
 static void frames_to_time(uint num_frames, uint8_t& min, uint8_t& sec, uint8_t& frame)
 {
+    num_frames += 2 * MMC_CD_FRAMES_PER_SEC;
     frame = num_frames % MMC_CD_FRAMES_PER_SEC;
     uint num_seconds = num_frames / MMC_CD_FRAMES_PER_SEC;
     min = num_seconds / 60;
