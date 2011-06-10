@@ -32,6 +32,8 @@
 #include "malloc.h"
 #include "application.h"
 #include "admin_server.h"
+#include "dma_state.h"
+#include "memory_bus.h"
 
 #define ATA_LOG(format, ...)
 
@@ -160,20 +162,19 @@ public:
         set_ata_str(&_identity[ATA_ID_OFFSET_REVISION], ATA_ID_REVISION_NUM_CHARS / 2, "1.0.0");
         set_ata_str(&_identity[ATA_ID_OFFSET_MODEL], ATA_ID_MODEL_NUM_CHARS / 2, "Nox CD");
 
-        _identity[ATA_ID_OFFSET_CAP1] = /*ATA_ID_CAP1_DMA_MASK |*/
-                                    ATAPI_ID_CAP1_MBZ |
-                                    ATA_ID_CAP1_IORDY_MASK |
-                                    ATA_ID_CAP1_DISABLE_IORDY_MASK;
+        _identity[ATA_ID_OFFSET_CAP1] = ATA_ID_CAP1_DMA_MASK |
+                                        ATAPI_ID_CAP1_MBZ |
+                                        ATA_ID_CAP1_IORDY_MASK |
+                                        ATA_ID_CAP1_DISABLE_IORDY_MASK;
 
         _identity[ATA_ID_OFFSET_CAP2] = ATA_ID_CAP2_MUST_SET;
 
         _identity[ATA_ID_OFFSET_FIELD_VALIDITY] = ATA_ID_FIELD_VALIDITY_64_70 |
                                                   ATA_ID_FIELD_VALIDITY_88;
 
-        /*_identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
+        _identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
                                              ATA_ID_NULTI_DMA_MODE1_MASK |
-                                             ATA_ID_NULTI_DMA_MODE2_MASK |
-                                             ATA_ID_NULTI_DMA_MODE0_SELECT_MASK;*/
+                                             ATA_ID_NULTI_DMA_MODE2_MASK;
 
         _identity[ATA_ID_OFFSET_PIO] = ATA_IO_PIO_MODE3_MASK | ATA_IO_PIO_MODE4_MASK;
 
@@ -195,13 +196,13 @@ public:
         _identity[ATA_ID_OFFSET_CMD_SET_3] = ATA_ID_CMD_SET_3_ONE_MASK;
         _identity[ATA_ID_OFFSET_CMD_SET_3_ENABLE] = _identity[ATA_ID_OFFSET_CMD_SET_3];
 
-        /*_identity[ATA_ID_OFFSET_UDMA] = ATA_ID_UDMA_MODE0_MASK |
+        _identity[ATA_ID_OFFSET_UDMA] = ATA_ID_UDMA_MODE0_MASK |
                                         ATA_ID_UDMA_MODE1_MASK |
                                         ATA_ID_UDMA_MODE2_MASK |
                                         ATA_ID_UDMA_MODE3_MASK |
                                         ATA_ID_UDMA_MODE4_MASK |
                                         ATA_ID_UDMA_MODE5_MASK |
-                                        ATA_ID_UDMA_MODE0_SELECT_MASK;*/
+                                        ATA_ID_UDMA_MODE5_SELECT_MASK;
 
         _identity[ATA_ID_OFFSET_HRESET] = ATA_ID_HRESET_ONE_MASK |
                                           ATA_ID_HRESET_PASS_MASK |
@@ -366,6 +367,136 @@ private:
 };
 
 
+class CDReadDMATask: public ATATask {
+public:
+    CDReadDMATask(ATAPICdrom& cd, uint64_t start, uint64_t end)
+        : ATATask()
+        , _cd (cd)
+        , _start (start)
+        , _end (end)
+        , _dma_started (false)
+        , _dma_state (NULL)
+    {
+        _cd.get_media();
+    }
+
+    virtual void cancel()
+    {
+        if (_dma_state) {
+            _dma_state->nop();
+        }
+        _cd.remove_task(this);
+        _cd.put_media();
+    }
+
+    virtual void start()
+    {
+        _cd._count &= ATA_REASON_TAG_MASK;
+        _cd._count |= (1 << ATA_REASON_IO_BIT);
+    }
+
+    void redv_done_direct(IOVec* vec, int err)
+    {
+        AutoRef<ATATask> auto_ref(this->ref());
+
+        if (err) {
+            _dma_state->error();
+            _dma_state = NULL;
+            _cd.remove_task(this);
+            _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
+                               SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+        } else {
+            _dma_state->done();
+            _dma_state = NULL;
+            _cd.remove_task(this);
+            _cd.packet_cmd_sucess();
+        }
+
+        _cd.put_media();
+        _cd.dec_async_count();
+    }
+
+    void redv_done_indirect(IOVec* vec, int err)
+    {
+        if (err) {
+            redv_done_direct(vec, err);
+            return;
+        }
+
+        IndirectVector::iterator iter = _indirect_vector->begin();
+        uint8_t* src = _buf.get();
+
+        for (; iter != _indirect_vector->end(); iter++) {
+            memory_bus->write(src, (*iter).size, (*iter).address);
+            src += (*iter).size;
+        }
+
+        redv_done_direct(vec, 0);
+    }
+
+    virtual bool dma_write_start(DMAState& dma)
+    {
+        Lock lock(_mutex);
+
+        if (_dma_started) {
+            return false;
+        }
+
+        _dma_started = true;
+
+        uint transfer_size = (_end - _start) * MMC_CD_SECTOR_SIZE;
+
+        _direct_vector.reset(dma.get_direct_vector(transfer_size));
+
+        if (_direct_vector.get()) {
+            _dma_state = &dma;
+            _cd.inc_async_count();
+            new (&_iov) IOVec(_start, transfer_size, &(*_direct_vector)[0], _direct_vector->size(),
+                              (io_vec_cb_t)&CDReadDMATask::redv_done_direct,
+                              this);
+            _cd._mounted_media->readv(&_iov);
+            return true;
+        }
+
+        _indirect_vector.reset(dma.get_indirect_vector(transfer_size));
+
+        if (_indirect_vector.get()) {
+            _cd.inc_async_count();
+            _dma_state = &dma;
+            _buf.set(new uint8_t[transfer_size]);
+            _io_vec.iov_base = _buf.get();
+            _io_vec.iov_len = transfer_size;
+            new (&_iov) IOVec(_start, transfer_size, &_io_vec, 1,
+                              (io_vec_cb_t)&CDReadDMATask::redv_done_indirect,
+                              this);
+            _cd._mounted_media->readv(&_iov);
+            return true;
+        }
+
+        D_MESSAGE("unable to obtaine transfer vector");
+
+        AutoRef<ATATask> auto_ref(this->ref());
+        dma.error();
+        _cd.remove_task(this);
+        _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
+                           SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+        return true;
+    }
+
+private:
+    Mutex _mutex;
+    ATAPICdrom& _cd;
+    uint64_t _start;
+    uint64_t _end;
+    std::auto_ptr<IndirectVector> _indirect_vector;
+    struct iovec _io_vec;
+    std::auto_ptr<DirectVector> _direct_vector;
+    IOVec _iov;
+    bool _dma_started;
+    DMAState* _dma_state;
+    AutoArray<uint8_t> _buf;
+};
+
 class CDGenericTransfer: public ATATask, public PIODataSource {
 public:
     CDGenericTransfer(ATAPICdrom& cd, uint size, uint max_transfer)
@@ -376,6 +507,7 @@ public:
         , _data (new uint8_t[ALIGN(_size, 2)])
         , _data_now ((uint16_t*)_data)
         , _data_end ((uint16_t*)_data)
+        , _dma (!!(_cd._feature & ATA_FEATURES_DMA_MASK))
     {
         ASSERT(max_transfer >= size || !(max_transfer & 1));
     }
@@ -394,6 +526,10 @@ public:
     {
         _cd._count &= ATA_REASON_TAG_MASK;
         _cd._count |= (1 << ATA_REASON_IO_BIT);
+
+        if (_dma) {
+            return;
+        }
 
         _cd.set_pio_source(this);
 
@@ -438,6 +574,41 @@ public:
         return ret;
     }
 
+    void copy(IndirectVector& vec)
+    {
+        IndirectVector::iterator iter = vec.begin();
+        uint8_t* src = _data;
+
+        for (; iter != vec.end(); iter++) {
+            memory_bus->write(src, (*iter).size, (*iter).address);
+            src += (*iter).size;
+        }
+    }
+
+    virtual bool dma_write_start(DMAState& dma)
+    {
+        std::auto_ptr<IndirectVector> vec(dma.get_indirect_vector(_size));
+
+        if (!vec.get()) {
+            D_MESSAGE("unable to obtaine transfer vector");
+
+            dma.error();
+            _cd.remove_task(this);
+            _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
+                               SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+            return true;
+        }
+
+        copy(*vec.get());
+
+        AutoRef<ATATask> auto_ref(this->ref());
+        dma.done();
+        _cd.remove_task(this);
+        _cd.packet_cmd_sucess();
+
+        return true;
+    }
+
     uint8_t* get_data() { return _data;}
 
 private:
@@ -447,6 +618,7 @@ private:
     uint8_t* _data;
     uint16_t* _data_now;
     uint16_t* _data_end;
+    bool _dma;
 };
 
 class PacketTask: public ATATask, public PIODataDest {
@@ -790,20 +962,23 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
 
     //bool force_unit_access = !!(_sector[1] & (1 << 4));
 
-    uint max_transfer = max_pio_transfer_bytes();
+    if ((_feature & ATA_FEATURES_DMA_MASK)) {
+        AutoRef<CDReadDMATask> task(new CDReadDMATask(*this, start, end));
+        start_task(task.get());
+    } else {
+        uint max_transfer = max_pio_transfer_bytes();
+        uint bunch = max_transfer / MMC_CD_SECTOR_SIZE;
 
+        if (!bunch) {
+            D_MESSAGE("invalid  transfer size %u", max_transfer);
+            packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+            return;
+        }
 
-    uint bunch = max_transfer / MMC_CD_SECTOR_SIZE;
-
-    if (!bunch) {
-        D_MESSAGE("invalid  transfer size %u", max_transfer);
-        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
-        return;
+        AutoRef<CDReadTask> task(new CDReadTask(*this, start, end, MIN(bunch, length)));
+        start_task(task.get());
     }
 
-    AutoRef<CDReadTask> task(new CDReadTask(*this, start, end, MIN(bunch, length)));
-
-    start_task(task.get());
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
 

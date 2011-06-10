@@ -103,6 +103,7 @@ private:
     friend class PacketTask;
     friend class CDGenericTransfer;
     friend class CDReadTask;
+    friend class CDReadDMATask;
     friend class DeferSetMedia;
 };
 
