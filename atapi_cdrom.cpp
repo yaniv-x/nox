@@ -991,12 +991,14 @@ void ATAPICdrom::scsi_mode_sense(uint8_t* packet)
 
         // Page
         buf.put_uint8(page_code); // page code and Parameters Savable is not set
-        buf.put_uint8(30); // page length
+        buf.put_uint8(30); // page length conflict with documentation (28). need to test on
+                           //                                              physical machine
         buf.put_uint8(0);  // no read support
         buf.put_uint8(0);  // no write support
         buf.put_uint8(1 | (1 << 6));  // play audio, multi session
         buf.put_uint8(0);
-        buf.put_uint8(1 | (1 << 3) | (1 << 5));  // lock, eject, tray type
+        buf.put_uint8(1 | (1 << 3) | (1 << 5) | ((_cdrom_state & LOCK_STATE_MASK) ? (1 << 1) : 0));
+                                                            // lock, eject, tray type
         buf.put_uint8(0);
         buf.put_uint16(0); // Obsolete
         buf.put_uint16(revers_unit16(2)); // volume levels
