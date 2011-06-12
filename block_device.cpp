@@ -120,8 +120,9 @@ void BlockDevice::readv(Task& task)
 {
     IOVec* vec = (IOVec*)task.data;
     uint64_t address = vec->address;
+    uint64_t end_address = address + vec->num_blocks;
 
-    if (address >= _size) {
+    if (end_address <= address || end_address > _size) {
         vec->cb(vec->opaque, vec, EFAULT);
         return;
     }
@@ -136,17 +137,19 @@ void BlockDevice::readv(Task& task)
 
     uint64_t from = address * _block_size;
 
-    if (lseek(get_fd_for_read(address), from, SEEK_SET) != from) {
+    int fd = get_fd_for_read(address);
+
+    if (lseek(fd, from, SEEK_SET) != from) {
         D_MESSAGE("seek failed %d", errno);
         vec->cb(vec->opaque, vec, EFAULT);
         return;
     }
 
-    uint size = vec->size;
+    uint size = vec->num_blocks * _block_size;
     struct iovec* io_vec = vec->vec;
 
     for (;;) {
-        ssize_t n = ::readv(get_fd_for_read(address), io_vec, vec_size);
+        ssize_t n = ::readv(fd, io_vec, vec_size);
 
         if (n <= 0) {
             if (n == -1 && errno == EINTR) {
@@ -163,8 +166,11 @@ void BlockDevice::readv(Task& task)
             continue;
         }
 
-        vec->cb(vec->opaque, vec, 0);
+        for (; address < end_address; address++) {
+            on_write_done(address);
+        }
 
+        vec->cb(vec->opaque, vec, 0);
         break;
     }
 }
@@ -174,8 +180,9 @@ void BlockDevice::writev(Task& task)
 {
     IOVec* vec = (IOVec*)task.data;
     uint64_t address = vec->address;
+    uint64_t end_address = address + vec->num_blocks;
 
-    if (address >= _size) {
+    if (end_address <= address || end_address > _size) {
         vec->cb(vec->opaque, vec, EFAULT);
         return;
     }
@@ -190,17 +197,19 @@ void BlockDevice::writev(Task& task)
 
     uint64_t from = address * _block_size;
 
-    if (lseek(get_fd_for_write(), from, SEEK_SET) != from) {
+    int fd = get_fd_for_write();
+
+    if (lseek(fd, from, SEEK_SET) != from) {
         D_MESSAGE("seek failed %d", errno);
         vec->cb(vec->opaque, vec, EFAULT);
         return;
     }
 
-    uint size = vec->size;
+    uint size = vec->num_blocks * _block_size;
     struct iovec* io_vec = vec->vec;
 
     for (;;) {
-        ssize_t n = ::writev(get_fd_for_write(), io_vec, vec_size);
+        ssize_t n = ::writev(fd, io_vec, vec_size);
 
         if (n <= 0) {
             if (n == -1 && errno == EINTR) {
@@ -289,7 +298,7 @@ ROBlockDevice::ROBlockDevice(const std::string& file_name, uint block_size)
 
 int ROBlockDevice::get_fd_for_read(uint64_t address)
 {
-     return (_tmp_blocks.find(address) != _tmp_blocks.end()) ? _tmp.get() : get_file();
+     return (_modified_blocks.find(address) != _modified_blocks.end()) ? _tmp.get() : get_file();
 }
 
 
@@ -301,6 +310,6 @@ int ROBlockDevice::get_fd_for_write()
 
 void ROBlockDevice::on_write_done(uint64_t address)
 {
-    _tmp_blocks.insert(address);
+    _modified_blocks.insert(address);
 }
 
