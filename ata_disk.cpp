@@ -189,6 +189,7 @@ public:
 
     virtual void start()
     {
+        _disk.dma_wait();
     }
 
     void redv_done_direct(IOVec* vec, int err)
@@ -428,6 +429,7 @@ public:
 
     virtual void start()
     {
+        _disk.dma_wait();
     }
 
     void writev_done(IOVec*, int err)

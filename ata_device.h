@@ -90,6 +90,7 @@ public:
     void set_pio_dest(PIODataDest* pio, bool notify = true);
     void remove_pio_dest(bool done);
 
+    void dma_wait();
     void dma_write_start(DMAState& state);
     void dma_read_start(DMAState& state);
 
@@ -134,7 +135,6 @@ private:
     uint8_t byte_by_HOB(uint16_t val);
 
 private:
-    Mutex _mutex;
     Wire& _irq_wire;
 
     Atomic _async_count;
@@ -156,6 +156,8 @@ private:
     std::list<uint8_t*> _free_blocks_list;
 
 protected:
+    RecursiveMutex _mutex;
+
     uint _status;
     uint _count;
     uint _control;
