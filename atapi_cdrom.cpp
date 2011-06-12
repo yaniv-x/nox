@@ -393,6 +393,8 @@ public:
     {
         _cd._count &= ATA_REASON_TAG_MASK;
         _cd._count |= (1 << ATA_REASON_IO_BIT);
+
+        _cd.dma_wait();
     }
 
     void redv_done_direct(IOVec* vec, int err)
@@ -528,6 +530,7 @@ public:
         _cd._count |= (1 << ATA_REASON_IO_BIT);
 
         if (_dma) {
+            _cd.dma_wait();
             return;
         }
 
@@ -656,7 +659,7 @@ public:
         if (++_data_now == _data_end) {
             AutoRef<ATATask> auto_ref(this->ref());
             _cd.remove_task(this);
-            _cd.remove_pio_dest(true);
+            _cd.remove_pio_dest(false);
             _cd.handle_packet(_packet);
         }
     }
@@ -806,15 +809,19 @@ void ATAPICdrom::_packet_cmd_done(uint sense, uint sense_add)
 
 void ATAPICdrom::packet_cmd_abort(uint sens, uint sens_add)
 {
+    Lock lock(_mutex);
+
     ATA_LOG("packet_abort: 0x%x 0x%x", sens, sens_add);
     _status |= ATA_STATUS_CHK_MASK;
     _error = ATA_ERROR_ABORT | (sens << SCSI_SENSE_SHIFT);
-    _packet_cmd_done(SCSI_SENSE_NO_SENSE, SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION);
+    _packet_cmd_done(sens, sens_add);
 }
 
 
 void ATAPICdrom::packet_cmd_chk(uint sens, uint sens_add)
 {
+    Lock lock(_mutex);
+
     ATA_LOG("packet_chk: 0x%x 0x%x", sens, sens_add);
     _status |= ATA_STATUS_CHK_MASK;
     _error = (sens << SCSI_SENSE_SHIFT);
@@ -824,6 +831,8 @@ void ATAPICdrom::packet_cmd_chk(uint sens, uint sens_add)
 
 void ATAPICdrom::packet_cmd_sucess()
 {
+    Lock lock(_mutex);
+
     _packet_cmd_done(SCSI_SENSE_NO_SENSE, SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION);
 }
 
@@ -1199,6 +1208,30 @@ void ATAPICdrom::scsi_mode_sense(uint8_t* packet)
         AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
         memcpy(task->get_data(), buf.base(), length);
 
+        start_task(task.get());
+        break;
+    }
+    case 0x0e: { //CD Audio Control Page
+        if (subpage_code) {
+            D_MESSAGE("abort on subpage_code 0x%x",subpage_code);
+            packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+            return;
+        }
+
+        uint16_t* ptr16 = (uint16_t*)&packet[7];
+        uint length = revers_unit16(*ptr16);
+        uint max_transfer = max_pio_transfer_bytes();
+
+        if (length > max_transfer && (max_transfer & 1)) {
+            D_MESSAGE("odd max_transfer 0x%x 0x%x",max_transfer, length);
+            packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+            return;
+        }
+
+        AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, 16, max_transfer));
+        task->get_data()[0] = 0x0e; //page code
+        task->get_data()[1] = 0x0e; //page length
+        memset(task->get_data() + 2, 0, 14);
         start_task(task.get());
         break;
     }
@@ -1921,8 +1954,6 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     // Initiator, the logical unit shall not perform the command and shall report CHECK CONDITION
     // status unless a higher priority status as defined by the logical unit is also pending.
 
-    drop();
-
     switch (packet[0]) {
     case MMC_CMD_READ:
         mmc_read(packet);
@@ -1962,6 +1993,8 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
         //break;
     case MMC_CMD_GET_PERFORMANCE:
     case MMC_CMD_READ_DISC_INFORMATION:
+    case MMC_CMD_REPORT_KEY:
+    case MMC_CMD_READ_SUBCHANNEL:
         D_MESSAGE("abort command 0x%x", packet[0]);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
         break;

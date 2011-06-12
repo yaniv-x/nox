@@ -269,11 +269,20 @@ void ATADevice::drop()
 
 void ATADevice::command_abort_error()
 {
-    ATA_LOG("abort");
-    _status |= ATA_STATUS_ERROR_MASK;
-    _error = ATA_ERROR_ABORT;
+    Lock lock(_mutex);
 
+    ATA_LOG("abort");
+    _error = ATA_ERROR_ABORT;
+    _status |= ATA_STATUS_ERROR_MASK;
     raise();
+}
+
+
+void ATADevice::dma_wait()
+{
+    uint new_state = (_status | ATA_STATUS_DATA_REQUEST_MASK) & ~ATA_STATUS_BUSY_MASK;
+    _status = new_state;
+    // DMARQ=A ?
 }
 
 
@@ -329,8 +338,7 @@ void ATADevice::io_control(uint8_t val)
     }
 
     if (_status & ATA_INTERNAL_STATUS_RESET_MASK) {
-        _status &= ~(ATA_STATUS_BUSY_MASK | ATA_INTERNAL_STATUS_RESET_MASK);
-        _status |= ATA_STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
+        _status = ATA_STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
         ATA_LOG("reset done");
     }
 
@@ -482,6 +490,7 @@ void ATADevice::io_write(uint16_t port, uint8_t val)
 uint16_t ATADevice::io_read_word(uint16_t port)
 {
     Lock lock(_mutex);
+
     if (!_pio_source) {
         W_MESSAGE("unexpected read: no data source 0x%x", _status);
         return ~0;
@@ -493,6 +502,8 @@ uint16_t ATADevice::io_read_word(uint16_t port)
 
 void ATADevice::notify_command_done()
 {
+    Lock lock(_mutex);
+
     _status &= ~(ATA_STATUS_BUSY_MASK | ATA_STATUS_DATA_REQUEST_MASK);
     raise();
 }
@@ -500,6 +511,8 @@ void ATADevice::notify_command_done()
 
 void ATADevice::set_pio_source(PIODataSource* pio)
 {
+    Lock lock(_mutex);
+
     _pio_source = pio;
 
     uint new_state = (_status | ATA_STATUS_DATA_REQUEST_MASK) & ~ATA_STATUS_BUSY_MASK;
@@ -510,6 +523,8 @@ void ATADevice::set_pio_source(PIODataSource* pio)
 
 void ATADevice::remove_pio_source(bool done)
 {
+    Lock lock(_mutex);
+
     _pio_source = NULL;
 
     if (!done) {
@@ -523,6 +538,8 @@ void ATADevice::remove_pio_source(bool done)
 
 void ATADevice::set_pio_dest(PIODataDest* pio, bool notify)
 {
+    Lock lock(_mutex);
+
     _pio_dest = pio;
 
     uint new_state = (_status | ATA_STATUS_DATA_REQUEST_MASK) & ~ATA_STATUS_BUSY_MASK;
@@ -536,20 +553,25 @@ void ATADevice::set_pio_dest(PIODataDest* pio, bool notify)
 
 void ATADevice::remove_pio_dest(bool done)
 {
+    Lock lock(_mutex);
+
     _pio_dest = NULL;
 
-    if (!done) {
-        uint new_state = (_status | ATA_STATUS_BUSY_MASK) & ~ATA_STATUS_DATA_REQUEST_MASK;
-        _status = new_state;
-    } else {
+    if (done) {
         notify_command_done();
+        return;
     }
+
+    drop();
+    uint new_state = (_status | ATA_STATUS_BUSY_MASK) & ~ATA_STATUS_DATA_REQUEST_MASK;
+    _status = new_state;
 }
 
 
 void ATADevice::io_write_word(uint16_t port, uint16_t val)
 {
     Lock lock(_mutex);
+
     if (!_pio_dest) {
         W_MESSAGE("unexpected read: no data source 0x%x", _status);
         return;

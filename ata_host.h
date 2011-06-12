@@ -74,6 +74,7 @@ private:
     std::auto_ptr<ATADevice> _channel_0;
     std::auto_ptr<ATADevice> _channel_1;
 
+    Mutex _bm_mutex;
     uint16_t _bus_master_io_base;
     uint8_t _bus_master_regs[16];
 };
