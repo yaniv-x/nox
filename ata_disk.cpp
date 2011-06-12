@@ -128,8 +128,7 @@ public:
 
         _io_vec.iov_base = _io_block;
         _io_vec.iov_len = _bunch * SECTOR_SIZE;
-        new (&_iov) IOVec(_now, _io_vec.iov_len, &_io_vec, 1,(io_vec_cb_t)&ReadTask::redv_done,
-                          this);
+        new (&_iov) IOVec(_now, _bunch, &_io_vec, 1,(io_vec_cb_t)&ReadTask::redv_done, this);
         _disk._block_dev->readv(&_iov);
     }
 
@@ -239,16 +238,16 @@ public:
 
         _dma_started = true;
 
-        uint transfer_size = (_end - _start) * SECTOR_SIZE;
+        uint num_blocks = _end - _start;
+        uint transfer_size = num_blocks * SECTOR_SIZE;
 
         _direct_vector.reset(dma.get_direct_vector(transfer_size));
 
         if (_direct_vector.get()) {
             _dma_state = &dma;
             _disk.inc_async_count();
-            new (&_iov) IOVec(_start, transfer_size, &(*_direct_vector)[0], _direct_vector->size(),
-                              (io_vec_cb_t)&ReadDMATask::redv_done_direct,
-                              this);
+            new (&_iov) IOVec(_start, num_blocks, &(*_direct_vector)[0], _direct_vector->size(),
+                              (io_vec_cb_t)&ReadDMATask::redv_done_direct, this);
             _disk._block_dev->readv(&_iov);
             return true;
         }
@@ -261,9 +260,8 @@ public:
             _buf.set(new uint8_t[transfer_size]);
             _io_vec.iov_base = _buf.get();
             _io_vec.iov_len = transfer_size;
-            new (&_iov) IOVec(_start, transfer_size, &_io_vec, 1,
-                              (io_vec_cb_t)&ReadDMATask::redv_done_indirect,
-                              this);
+            new (&_iov) IOVec(_start, num_blocks, &_io_vec, 1,
+                              (io_vec_cb_t)&ReadDMATask::redv_done_indirect, this);
             _disk._block_dev->readv(&_iov);
             return true;
         }
@@ -374,9 +372,7 @@ public:
 
         _io_vec.iov_base = _io_block;
         _io_vec.iov_len = _bunch * SECTOR_SIZE;
-        new (&_iov) IOVec(_now, _io_vec.iov_len, &_io_vec, 1,
-                              (io_vec_cb_t)&WriteTask::writev_done,
-                              this);
+        new (&_iov) IOVec(_now, _bunch, &_io_vec, 1, (io_vec_cb_t)&WriteTask::writev_done, this);
         _disk._block_dev->writev(&_iov);
     }
 
@@ -474,16 +470,16 @@ public:
 
         _dma_started = true;
 
-        uint transfer_size = (_end - _start) * SECTOR_SIZE;
+        uint num_blocks = _end - _start;
+        uint transfer_size = num_blocks * SECTOR_SIZE;
 
         _direct_vector.reset(dma.get_direct_vector(transfer_size));
 
         if (_direct_vector.get()) {
             _dma_state = &dma;
             _disk.inc_async_count();
-            new (&_iov) IOVec(_start, transfer_size, &(*_direct_vector)[0], _direct_vector->size(),
-                              (io_vec_cb_t)&WriteDMATask::writev_done,
-                              this);
+            new (&_iov) IOVec(_start, num_blocks, &(*_direct_vector)[0], _direct_vector->size(),
+                              (io_vec_cb_t)&WriteDMATask::writev_done, this);
             _disk._block_dev->writev(&_iov);
             return true;
         }
@@ -497,7 +493,7 @@ public:
             copy();
             _io_vec.iov_base = _buf.get();
             _io_vec.iov_len = transfer_size;
-            new (&_iov) IOVec(_start, transfer_size, &_io_vec, 1,
+            new (&_iov) IOVec(_start, num_blocks, &_io_vec, 1,
                               (io_vec_cb_t)&WriteDMATask::writev_done,
                               this);
             _disk._block_dev->writev(&_iov);
@@ -628,7 +624,8 @@ public:
 
         _identity[ATA_ID_OFFSET_CAP2] = ATA_ID_CAP2_MUST_SET;
         _identity[ATA_ID_OFFSET_FIELD_VALIDITY] = ATA_ID_FIELD_VALIDITY_64_70 |
-                                                  ATA_ID_FIELD_VALIDITY_88;
+                                                  ATA_ID_FIELD_VALIDITY_88 |
+                                                  ATA_COMPAT_ID_FIELD_VALIDITY_54_58;
 
         sectors = MIN(_disk.get_size() / SECTOR_SIZE, (1 << 28) - 1);
 
@@ -663,7 +660,9 @@ public:
                                              ATA_ID_CMD_SET_2_POWERUP_IN_STANDBY_MASK |
                                              ATA_ID_CMD_SET_2_ADVANCE_POWR_MANAG_MASK |
                                              ATA_ID_CMD_SET_2_QUAD_MASK*/;
-        _identity[ATA_ID_OFFSET_CMD_SET_2_ENABLE] = ATA_ID_CMD_SET_2_48BIT_MASK;
+        _identity[ATA_ID_OFFSET_CMD_SET_2_ENABLE] = ATA_ID_CMD_SET_2_48BIT_MASK |
+                                                    ATA_ID_CMD_SET_2_FLUSH_EXT_MASK |
+                                                    ATA_ID_CMD_SET_2_FLUSH_MASK;
 
         _identity[ATA_ID_OFFSET_CMD_SET_3] = ATA_ID_CMD_SET_3_ONE_MASK;
         _identity[ATA_ID_OFFSET_CMD_SET_3_ENABLE] = _identity[ATA_ID_OFFSET_CMD_SET_3];

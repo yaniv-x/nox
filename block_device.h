@@ -53,10 +53,10 @@ class IOVec {
 public:
     IOVec () : vec (NULL) {}
 
-    IOVec(uint64_t in_address, uint in_size, struct iovec* in_vec, uint in_vec_size,
+    IOVec(uint64_t in_address, uint in_num_blocks, struct iovec* in_vec, uint in_vec_size,
           io_vec_cb_t in_cb, void* in_opaque)
         : address(in_address)
-        , size (in_size)
+        , num_blocks (in_num_blocks)
         , vec (in_vec)
         , vec_size (in_vec_size)
         , cb (in_cb)
@@ -65,7 +65,7 @@ public:
     }
 
     uint64_t address;
-    uint size;
+    uint num_blocks;
     struct iovec* vec;
     uint vec_size;
     io_vec_cb_t cb;
@@ -175,7 +175,7 @@ private:
     AutoFD _tmp;
 
     typedef std::set<uint64_t> BlocksSet;
-    BlocksSet _tmp_blocks;
+    BlocksSet _modified_blocks;
 };
 
 

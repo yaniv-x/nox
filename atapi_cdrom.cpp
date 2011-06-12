@@ -328,8 +328,7 @@ public:
 
         _io_vec.iov_base = _io_block;
         _io_vec.iov_len = _bunch * MMC_CD_SECTOR_SIZE;
-        new (&_iov) IOVec(_now, _io_vec.iov_len, &_io_vec, 1,(io_vec_cb_t)&CDReadTask::redv_done,
-                          this);
+        new (&_iov) IOVec(_now, _bunch, &_io_vec, 1,(io_vec_cb_t)&CDReadTask::redv_done, this);
         _cd._mounted_media->readv(&_iov);
     }
 
@@ -446,16 +445,16 @@ public:
 
         _dma_started = true;
 
-        uint transfer_size = (_end - _start) * MMC_CD_SECTOR_SIZE;
+        uint num_blocks = _end - _start;
+        uint transfer_size = num_blocks * MMC_CD_SECTOR_SIZE;
 
         _direct_vector.reset(dma.get_direct_vector(transfer_size));
 
         if (_direct_vector.get()) {
             _dma_state = &dma;
             _cd.inc_async_count();
-            new (&_iov) IOVec(_start, transfer_size, &(*_direct_vector)[0], _direct_vector->size(),
-                              (io_vec_cb_t)&CDReadDMATask::redv_done_direct,
-                              this);
+            new (&_iov) IOVec(_start, num_blocks, &(*_direct_vector)[0], _direct_vector->size(),
+                              (io_vec_cb_t)&CDReadDMATask::redv_done_direct, this);
             _cd._mounted_media->readv(&_iov);
             return true;
         }
@@ -468,7 +467,7 @@ public:
             _buf.set(new uint8_t[transfer_size]);
             _io_vec.iov_base = _buf.get();
             _io_vec.iov_len = transfer_size;
-            new (&_iov) IOVec(_start, transfer_size, &_io_vec, 1,
+            new (&_iov) IOVec(_start, num_blocks, &_io_vec, 1,
                               (io_vec_cb_t)&CDReadDMATask::redv_done_indirect,
                               this);
             _cd._mounted_media->readv(&_iov);
