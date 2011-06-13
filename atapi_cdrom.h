@@ -46,10 +46,10 @@ protected:
     virtual void reset(bool cold);
 
 private:
-    void _packet_cmd_done(uint sense, uint sense_add);
+    void _packet_cmd_done(uint status, uint sense, uint sense_add, DMAState* dma = NULL);
     void packet_cmd_abort(uint sens, uint sens_add);
-    void packet_cmd_chk(uint sens, uint sens_add);
-    void packet_cmd_sucess();
+    void packet_cmd_chk(uint sens, uint sens_add, DMAState* dma = NULL);
+    void packet_cmd_sucess(DMAState* dma = NULL);
     void read_formatted_toc(uint8_t* packet);
     void read_raw_toc(uint8_t* packet);
     void read_multi_session_info(uint8_t* packet);

@@ -195,17 +195,15 @@ public:
     {
         AutoRef<ATATask> auto_ref(this->ref());
 
+        _disk.remove_task(this);
+
         if (err) {
-            _dma_state->error();
-            _dma_state = NULL;
-            _disk.remove_task(this);
-            _disk.command_abort_error();
+            _disk.command_abort_error(*_dma_state);
         } else {
-            _dma_state->done();
-            _dma_state = NULL;
-            _disk.remove_task(this);
-            _disk.notify_command_done();
+            _disk.notify_command_done(*_dma_state);
         }
+
+        _dma_state = NULL;
 
         _disk.dec_async_count();
     }
@@ -268,10 +266,8 @@ public:
 
         D_MESSAGE("unable to obtaine transfer vector");
 
-        AutoRef<ATATask> auto_ref(this->ref());
-        dma.error();
         _disk.remove_task(this);
-        _disk.command_abort_error();
+        _disk.command_abort_error(dma); //todo: dma error
 
         return true;
     }
@@ -432,17 +428,14 @@ public:
     {
         AutoRef<ATATask> auto_ref(this->ref());
 
+        _disk.remove_task(this);
+
         if (err) {
-            _dma_state->error();
-            _dma_state = NULL;
-            _disk.remove_task(this);
-            _disk.command_abort_error();
+            _disk.command_abort_error(*_dma_state);
         } else {
-            _dma_state->done();
-            _dma_state = NULL;
-            _disk.remove_task(this);
-            _disk.notify_command_done();
+            _disk.notify_command_done(*_dma_state);
         }
+        _dma_state = NULL;
 
         _disk.dec_async_count();
     }
@@ -502,10 +495,8 @@ public:
 
         D_MESSAGE("unable to obtaine transfer vector");
 
-        AutoRef<ATATask> auto_ref(this->ref());
-        dma.error();
         _disk.remove_task(this);
-        _disk.command_abort_error();
+        _disk.command_abort_error(dma); //todo: dma error
 
         return true;
     }

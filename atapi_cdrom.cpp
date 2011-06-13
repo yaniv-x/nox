@@ -400,18 +400,17 @@ public:
     {
         AutoRef<ATATask> auto_ref(this->ref());
 
+        _cd.remove_task(this);
+
         if (err) {
-            _dma_state->error();
-            _dma_state = NULL;
-            _cd.remove_task(this);
             _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
-                               SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+                               SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE,
+                               _dma_state);
         } else {
-            _dma_state->done();
-            _dma_state = NULL;
-            _cd.remove_task(this);
-            _cd.packet_cmd_sucess();
+            _cd.packet_cmd_sucess(_dma_state);
         }
+
+        _dma_state = NULL;
 
         _cd.put_media();
         _cd.dec_async_count();
@@ -477,10 +476,11 @@ public:
         D_MESSAGE("unable to obtaine transfer vector");
 
         AutoRef<ATATask> auto_ref(this->ref());
-        dma.error();
+
         _cd.remove_task(this);
         _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
-                           SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+                           SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE, &dma); // todo: dma
+                                                                                     //       error
         return true;
     }
 
@@ -594,19 +594,17 @@ public:
         if (!vec.get()) {
             D_MESSAGE("unable to obtaine transfer vector");
 
-            dma.error();
             _cd.remove_task(this);
             _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
-                               SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE);
+                               SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE,
+                               &dma); // todo: dma error
             return true;
         }
 
         copy(*vec.get());
 
-        AutoRef<ATATask> auto_ref(this->ref());
-        dma.done();
         _cd.remove_task(this);
-        _cd.packet_cmd_sucess();
+        _cd.packet_cmd_sucess(&dma);
 
         return true;
     }
@@ -796,43 +794,43 @@ void ATAPICdrom::set_signature()
 }
 
 
-void ATAPICdrom::_packet_cmd_done(uint sense, uint sense_add)
+void ATAPICdrom::_packet_cmd_done(uint status, uint sense, uint sense_add, DMAState* dma)
 {
     _count &= ATA_REASON_TAG_MASK;
     _count |= (1 << ATA_REASON_CD_BIT) | (1 << ATA_REASON_IO_BIT);
     _sense = sense;
     _sense_add = sense_add;
-    notify_command_done();
+
+    if (dma) {
+        set_state_and_notify(status & ~(ATA_STATUS_BUSY_MASK | ATA_STATUS_DATA_REQUEST_MASK), *dma);
+    } else {
+        set_state_and_notify(status & ~(ATA_STATUS_BUSY_MASK | ATA_STATUS_DATA_REQUEST_MASK));
+    }
 }
 
 
 void ATAPICdrom::packet_cmd_abort(uint sens, uint sens_add)
 {
-    Lock lock(_mutex);
-
     ATA_LOG("packet_abort: 0x%x 0x%x", sens, sens_add);
-    _status |= ATA_STATUS_CHK_MASK;
     _error = ATA_ERROR_ABORT | (sens << SCSI_SENSE_SHIFT);
-    _packet_cmd_done(sens, sens_add);
+    _packet_cmd_done(_status | ATA_STATUS_CHK_MASK, sens, sens_add);
 }
 
 
-void ATAPICdrom::packet_cmd_chk(uint sens, uint sens_add)
+void ATAPICdrom::packet_cmd_chk(uint sens, uint sens_add, DMAState* dma)
 {
-    Lock lock(_mutex);
-
     ATA_LOG("packet_chk: 0x%x 0x%x", sens, sens_add);
-    _status |= ATA_STATUS_CHK_MASK;
     _error = (sens << SCSI_SENSE_SHIFT);
-    _packet_cmd_done(sens, sens_add);
+    _packet_cmd_done(_status | ATA_STATUS_CHK_MASK, sens, sens_add, dma);
 }
 
 
-void ATAPICdrom::packet_cmd_sucess()
+void ATAPICdrom::packet_cmd_sucess(DMAState* dma)
 {
-    Lock lock(_mutex);
-
-    _packet_cmd_done(SCSI_SENSE_NO_SENSE, SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION);
+    _packet_cmd_done(_status,
+                     SCSI_SENSE_NO_SENSE,
+                     SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION,
+                     dma);
 }
 
 

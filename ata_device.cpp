@@ -269,12 +269,17 @@ void ATADevice::drop()
 
 void ATADevice::command_abort_error()
 {
-    Lock lock(_mutex);
-
     ATA_LOG("abort");
     _error = ATA_ERROR_ABORT;
-    _status |= ATA_STATUS_ERROR_MASK;
-    raise();
+    set_state_and_notify(_status | ATA_STATUS_ERROR_MASK);
+}
+
+
+void ATADevice::command_abort_error(DMAState& dma)
+{
+    ATA_LOG("abort");
+    _error = ATA_ERROR_ABORT;
+    set_state_and_notify(_status | ATA_STATUS_ERROR_MASK, dma);
 }
 
 
@@ -292,7 +297,7 @@ void ATADevice::dma_write_start(DMAState& state)
 
     if (!task.get() || !task->dma_write_start(state)) {
         D_MESSAGE("no active dma client");
-        state.nop();
+        state.done();
     }
 }
 
@@ -303,7 +308,7 @@ void ATADevice::dma_read_start(DMAState& state)
 
     if (!task.get() || !task->dma_read_start(state)) {
         D_MESSAGE("no active dma client");
-        state.nop();
+        state.done();
     }
 }
 
@@ -502,29 +507,27 @@ uint16_t ATADevice::io_read_word(uint16_t port)
 
 void ATADevice::notify_command_done()
 {
-    Lock lock(_mutex);
+    set_state_and_notify(_status & ~(ATA_STATUS_BUSY_MASK | ATA_STATUS_DATA_REQUEST_MASK));
+}
 
-    _status &= ~(ATA_STATUS_BUSY_MASK | ATA_STATUS_DATA_REQUEST_MASK);
-    raise();
+
+void ATADevice::notify_command_done(DMAState& dma)
+{
+    set_state_and_notify(_status & ~(ATA_STATUS_BUSY_MASK | ATA_STATUS_DATA_REQUEST_MASK), dma);
 }
 
 
 void ATADevice::set_pio_source(PIODataSource* pio)
 {
-    Lock lock(_mutex);
-
     _pio_source = pio;
 
     uint new_state = (_status | ATA_STATUS_DATA_REQUEST_MASK) & ~ATA_STATUS_BUSY_MASK;
-    _status = new_state;
-    raise();
+    set_state_and_notify(new_state);
 }
 
 
 void ATADevice::remove_pio_source(bool done)
 {
-    Lock lock(_mutex);
-
     _pio_source = NULL;
 
     if (!done) {
@@ -538,23 +541,20 @@ void ATADevice::remove_pio_source(bool done)
 
 void ATADevice::set_pio_dest(PIODataDest* pio, bool notify)
 {
-    Lock lock(_mutex);
-
     _pio_dest = pio;
 
     uint new_state = (_status | ATA_STATUS_DATA_REQUEST_MASK) & ~ATA_STATUS_BUSY_MASK;
-    _status = new_state;
 
     if (notify) {
-        raise();
+        set_state_and_notify(new_state);
+    } else {
+        _status = new_state;
     }
 }
 
 
 void ATADevice::remove_pio_dest(bool done)
 {
-    Lock lock(_mutex);
-
     _pio_dest = NULL;
 
     if (done) {

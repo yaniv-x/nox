@@ -29,6 +29,7 @@
 
 #include "vm_part.h"
 #include "threads.h"
+#include "dma_state.h"
 
 class DMAState;
 class Wire;
@@ -82,8 +83,6 @@ public:
     uint16_t io_read_word(uint16_t port);
     void io_write_word(uint16_t port, uint16_t val);
 
-    void notify_command_done();
-
     void set_pio_source(PIODataSource* pio);
     void remove_pio_source(bool done);
 
@@ -119,7 +118,13 @@ protected:
 
     PowerState get_power_mode() { return _power_mode;}
     void set_power_mode(PowerState mode) { _power_mode = mode;}
+    void set_state_and_notify(uint state);
+    void notify_command_done();
     void command_abort_error();
+    void set_state_and_notify(uint state, DMAState& dma);
+    void command_abort_error(DMAState& dma);
+    void notify_command_done(DMAState& dma);
+
     void start_task(ATATask* task);
     void remove_task(ATATask* task);
     ATATask* get_task();
@@ -135,6 +140,7 @@ private:
     uint8_t byte_by_HOB(uint16_t val);
 
 private:
+    RecursiveMutex _mutex;
     Wire& _irq_wire;
 
     Atomic _async_count;
@@ -156,8 +162,6 @@ private:
     std::list<uint8_t*> _free_blocks_list;
 
 protected:
-    RecursiveMutex _mutex;
-
     uint _status;
     uint _count;
     uint _control;
@@ -170,6 +174,23 @@ protected:
 
     bool _reverting_to_power_on_default;
 };
+
+
+inline void ATADevice::set_state_and_notify(uint state)
+{
+    Lock lock(_mutex);
+    _status = state;
+    raise();
+}
+
+
+inline void ATADevice::set_state_and_notify(uint state, DMAState& dma)
+{
+    Lock lock(_mutex);
+    dma.done();
+    _status = state;
+    raise();
+}
 
 
 void set_ata_str(uint16_t* start, int len, const char* str);
