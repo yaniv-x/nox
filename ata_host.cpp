@@ -172,8 +172,9 @@ IndirectVector* ATAHostDMA::get_indirect_vector(uint size)
 void ATAHostDMA::done()
 {
     // cleare command active bit ?
-    *_status &= ~BUS_MASTER_STATUS_ACTIVE_MASK;
-    *_status |= BUS_MASTER_STATUS_INTERRUPT_MASK;
+    uint8_t status = *_status & ~BUS_MASTER_STATUS_ACTIVE_MASK;
+    status |= BUS_MASTER_STATUS_INTERRUPT_MASK;
+    *_status = status;
     delete this;
 }
 
@@ -181,15 +182,16 @@ void ATAHostDMA::done()
 void ATAHostDMA::error()
 {
     // cleare command active bit ?
-    *_status &= ~BUS_MASTER_STATUS_ACTIVE_MASK;
-    *_status |= BUS_MASTER_STATUS_INTERRUPT_MASK | BUS_MASTER_STATUS_ERROR_MASK;
+    uint8_t status = *_status & ~BUS_MASTER_STATUS_ACTIVE_MASK;
+    status |= BUS_MASTER_STATUS_INTERRUPT_MASK | BUS_MASTER_STATUS_ERROR_MASK;
+    *_status = status;
     delete this;
 }
 
 
 void ATAHostDMA::nop()
 {
-    done();
+    delete this;
 }
 
 
@@ -377,9 +379,9 @@ void ATAHost::io_channel_1_write_word(uint16_t port, uint16_t data)
 
 uint8_t ATAHost::io_bus_maste_read(uint16_t port)
 {
-    Lock lock(_bm_mutex);
-
-    _bus_master_io_base = get_region_address(4);
+    _bus_master_io_base = get_region_address(4); // todo:   add pci map unmap notifiction
+                                                 //         and update _bus_master_io_base in
+                                                 //         notifiction handler
     port -= _bus_master_io_base;
 
     if (port >= IO_BUS_MASTER_SIZE) {
@@ -408,6 +410,9 @@ void ATAHost::set_bm_command(uint8_t val, uint8_t* reg, ATADevice* device)
             //if (dma transfer is active) W_MESSAGE("unhandeld stop");
         } else {
             uint32_t address = *(uint32_t*)(reg + 4);
+
+            Lock lock(_bm_mutex);
+
             ATAHostDMA* dma = new ATAHostDMA(reg + 2, address); //todo: alloc once in constructor
                                                                 //      and keep active state
             if ((val & BUS_MASTER_COMMAND_DIRICTION_MASK)) {
@@ -422,18 +427,18 @@ void ATAHost::set_bm_command(uint8_t val, uint8_t* reg, ATADevice* device)
 
 void ATAHost::set_bm_status(uint8_t val, uint8_t* reg)
 {
-    *reg &= ~(val & BUS_MASTER_STATUS_CLEAR_MASK);
+    uint8_t curren_val = *reg;
+
+    curren_val &= ~(val & BUS_MASTER_STATUS_CLEAR_MASK);
     val &= ~(BUS_MASTER_STATUS_RO_MASK | BUS_MASTER_STATUS_CLEAR_MASK);
-    *reg &= (BUS_MASTER_STATUS_RO_MASK | BUS_MASTER_STATUS_CLEAR_MASK);
-    *reg |= val;
+    curren_val &= (BUS_MASTER_STATUS_RO_MASK | BUS_MASTER_STATUS_CLEAR_MASK);
+    *reg = curren_val| val;
 }
 
 
 void ATAHost::io_bus_maste_write(uint16_t port, uint8_t val)
 {
-    Lock lock(_bm_mutex);
-
-    _bus_master_io_base = get_region_address(4);
+    _bus_master_io_base = get_region_address(4); // todo: see ATAHost::io_bus_maste_read
     port -= _bus_master_io_base;
 
     switch (port) {
@@ -469,7 +474,6 @@ void ATAHost::on_io_enabled()
 {
     pic->wire(*_channel_0_wire, ATA0_IRQ);
     pic->wire(*_channel_1_wire, ATA1_IRQ);
-    _bus_master_io_base = get_region_address(4);
 }
 
 
