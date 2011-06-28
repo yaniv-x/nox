@@ -50,6 +50,7 @@ enum {
 };
 
 #define NOX_PCI_DEV_HOST_BRIDGE_REV 1
+#define NOX_PCI_DEV_ISA_BRIDGE_REV 1
 
 PCIBus::PCIBus(NoxVM& nox)
     : VMPart ("pci", nox)
@@ -77,6 +78,12 @@ PCIBus::PCIBus(NoxVM& nox)
                                 NOX_PCI_DEV_ID_HOST_BRIDGE,
                                 NOX_PCI_DEV_HOST_BRIDGE_REV,
                                 mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_HOST, 0),
+                                false);
+
+    _devices[1] = new PCIDevice("eisa-bridge", *this , NOX_PCI_VENDOR_ID,
+                                NOX_PCI_DEV_ID_ISA_BRIDGE,
+                                NOX_PCI_DEV_ISA_BRIDGE_REV,
+                                mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_ISA, 0),
                                 false);
     pci_bus = this;
 }
