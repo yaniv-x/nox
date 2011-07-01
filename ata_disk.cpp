@@ -586,7 +586,8 @@ public:
                                                          // subcommand to spin-up after power-up
                                                          // and IDENTIFY DEVICE response is complete
 
-        set_ata_str(&_identity[ATA_ID_OFFSET_SERIAL], ATA_ID_SERIAL_NUM_CHARS / 2, "0");
+        set_ata_str(&_identity[ATA_ID_OFFSET_SERIAL], ATA_ID_SERIAL_NUM_CHARS / 2,
+                    "NOXHD000000000000001");
         set_ata_str(&_identity[ATA_ID_OFFSET_REVISION], ATA_ID_REVISION_NUM_CHARS / 2, "1.0.0");
         set_ata_str(&_identity[ATA_ID_OFFSET_MODEL], ATA_ID_MODEL_NUM_CHARS / 2, "Nox HD");
 
@@ -608,8 +609,8 @@ public:
         _identity[ATA_ID_OFFSET_MAX_SECTORS_PER_BLOCK] = 0x8000 | ATADISK_BUNCH_MAX;
         _identity[ATA_ID_OFFSET_CAP1] = ATA_ID_CAP1_DMA_MASK |
                                         ATA_ID_CAP1_LBA_MASK |
-                                        ATA_ID_CAP1_IORDY_MASK |
-                                        ATA_ID_CAP1_DISABLE_IORDY_MASK;
+                                        ATA_ID_CAP1_IORDY_MASK/* |
+                                        ATA_ID_CAP1_DISABLE_IORDY_MASK*/;
 
         _identity[ATA_ID_OFFSET_MULTIPLE_SETTING] = _disk._multi_mode;
 
@@ -623,9 +624,12 @@ public:
         _identity[ATA_ID_OFFSET_ADDRESABEL_SECTORS] = sectors;
         _identity[ATA_ID_OFFSET_ADDRESABEL_SECTORS + 1] = sectors >> 16;
 
-        _identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
-                                            ATA_ID_NULTI_DMA_MODE1_MASK |
-                                            ATA_ID_NULTI_DMA_MODE2_MASK;
+        uint mwdma_select = (_disk.get_multiword_mode() == ~0) ? 0 :
+                                                            (1 << (_disk.get_multiword_mode() + 8));
+        _identity[ATA_ID_OFFSET_MULTI_DMA] = ATA_ID_MULTI_DMA_MODE0_MASK |
+                                             ATA_ID_MULTI_DMA_MODE1_MASK |
+                                             ATA_ID_MULTI_DMA_MODE2_MASK |
+                                             mwdma_select;
 
         _identity[ATA_ID_OFFSET_PIO] = ATA_IO_PIO_MODE3_MASK | ATA_IO_PIO_MODE4_MASK;
 
@@ -658,13 +662,14 @@ public:
         _identity[ATA_ID_OFFSET_CMD_SET_3] = ATA_ID_CMD_SET_3_ONE_MASK;
         _identity[ATA_ID_OFFSET_CMD_SET_3_ENABLE] = _identity[ATA_ID_OFFSET_CMD_SET_3];
 
+        uint udma_select = (_disk.get_ultra_mode() == ~0) ? 0 : (1 << (_disk.get_ultra_mode() + 8));
         _identity[ATA_ID_OFFSET_UDMA] = ATA_ID_UDMA_MODE0_MASK |
                                         ATA_ID_UDMA_MODE1_MASK |
                                         ATA_ID_UDMA_MODE2_MASK |
                                         ATA_ID_UDMA_MODE3_MASK |
                                         ATA_ID_UDMA_MODE4_MASK |
                                         ATA_ID_UDMA_MODE5_MASK |
-                                        ATA_ID_UDMA_MODE5_SELECT_MASK;
+                                        udma_select;
 
         //_identity[ATA_ID_OFFSET_ADVANCE_POWR_MANAG] = ATA_ID_ADVANCE_POWR_MANAG_MAX_PERFORMANCE;
 
@@ -712,7 +717,7 @@ private:
 ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool read_only)
     : ATADevice("ata-disk", owner, wire)
 {
-    ASSERT(ATADEV_IO_BLOCK_SIZE == ATADISK_BUNCH_MAX * SECTOR_SIZE);
+    ASSERT(ATADEV_IO_BLOCK_SIZE >= ATADISK_BUNCH_MAX * SECTOR_SIZE);
 
     if (read_only) {
         _block_dev.reset(new ROBlockDevice(file_name, SECTOR_SIZE));
@@ -751,7 +756,7 @@ void ATADisk::reset(bool cold)
 {
     ATADevice::reset(cold);
 
-    if (_reverting_to_power_on_default) {
+    if (revert_to_default()) {
         _sync_mode = true;
         _heads_per_cylinder = ATA3_MAX_HEAD;
         _sectors_per_track = ATA3_MAX_SEC;
@@ -1061,23 +1066,13 @@ void ATADisk::do_set_features()
         _sync_mode = true;
         raise();
         break;
-#if 0
-    case 0x05: // Enable advanced power management
-        //D_MESSAGE("new power mode is 0x%x", _count & 0xff);
-        raise();
+    case ATA_FEATURE_ENABLE_LOOK_AHEAD:
+    case ATA_FEATURE_DISABLE_LOOK_AHEAD:
+        D_MESSAGE("abbort on 0x%x", _feature);
+        command_abort_error();
         break;
-#endif
-    case ATA_FEATURE_DISABLE_REVERT_TO_DEFAULT:
-        _reverting_to_power_on_default = false;
-        raise();
-        break;
-    case ATA_FEATURE_ENABLE_REVERT_TO_DEFAULT:
-        _reverting_to_power_on_default = true;
-        raise();
-
     default:
-        D_MESSAGE("unhandled 0x%x. sleeping... ", _feature);
-        for (;;) sleep(2);
+        ATADevice::do_set_features();
     }
 }
 
@@ -1282,6 +1277,8 @@ void ATADisk::do_command(uint8_t command)
     case ATA_CMOMPAT_CMD_INITIALIZE_DEVICE_PARAMETERS:
         do_initialize_device_parameters();
         break;
+    case ATA_CMD_READ_NATIVE_MAX_ADDRESS_EXT:
+    case ATA_CMD_READ_NATIVE_MAX_ADDRESS:
     case ATA_CMD_PACKET:
         command_abort_error();
         break;

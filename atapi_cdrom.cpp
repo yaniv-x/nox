@@ -172,9 +172,12 @@ public:
         _identity[ATA_ID_OFFSET_FIELD_VALIDITY] = ATA_ID_FIELD_VALIDITY_64_70 |
                                                   ATA_ID_FIELD_VALIDITY_88;
 
-        _identity[ATA_ID_OFFSET_NULTI_DMA] = ATA_ID_NULTI_DMA_MODE0_MASK |
-                                             ATA_ID_NULTI_DMA_MODE1_MASK |
-                                             ATA_ID_NULTI_DMA_MODE2_MASK;
+        uint mwdma_select = (_cd.get_multiword_mode() == ~0) ? 0 :
+                                                            (1 << (_cd.get_multiword_mode() + 8));
+        _identity[ATA_ID_OFFSET_MULTI_DMA] = ATA_ID_MULTI_DMA_MODE0_MASK |
+                                             ATA_ID_MULTI_DMA_MODE1_MASK |
+                                             ATA_ID_MULTI_DMA_MODE2_MASK |
+                                             mwdma_select;
 
         _identity[ATA_ID_OFFSET_PIO] = ATA_IO_PIO_MODE3_MASK | ATA_IO_PIO_MODE4_MASK;
 
@@ -196,13 +199,14 @@ public:
         _identity[ATA_ID_OFFSET_CMD_SET_3] = ATA_ID_CMD_SET_3_ONE_MASK;
         _identity[ATA_ID_OFFSET_CMD_SET_3_ENABLE] = _identity[ATA_ID_OFFSET_CMD_SET_3];
 
+        uint udma_select = (_cd.get_ultra_mode() == ~0) ? 0 : (1 << (_cd.get_ultra_mode() + 8));
         _identity[ATA_ID_OFFSET_UDMA] = ATA_ID_UDMA_MODE0_MASK |
                                         ATA_ID_UDMA_MODE1_MASK |
                                         ATA_ID_UDMA_MODE2_MASK |
                                         ATA_ID_UDMA_MODE3_MASK |
                                         ATA_ID_UDMA_MODE4_MASK |
                                         ATA_ID_UDMA_MODE5_MASK |
-                                        ATA_ID_UDMA_MODE5_SELECT_MASK;
+                                        udma_select;
 
         _identity[ATA_ID_OFFSET_HRESET] = ATA_ID_HRESET_ONE_MASK |
                                           ATA_ID_HRESET_PASS_MASK |
@@ -2014,20 +2018,6 @@ void ATAPICdrom::do_packet_command()
 {
     AutoRef<PacketTask> autoref(new PacketTask(*this));
     start_task(autoref.get());
-}
-
-
-void ATAPICdrom::do_set_features()
-{
-    switch (_feature) {
-    case ATA_FEATURE_DISABLE_REVERT_TO_DEFAULT:
-        _reverting_to_power_on_default = false;
-        raise();
-        break;
-    default:
-        D_MESSAGE("unhandled 0x%x. sleeping... ", _feature);
-        for (;;) sleep(2);
-    }
 }
 
 

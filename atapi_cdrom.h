@@ -70,7 +70,6 @@ private:
     void scsi_inquiry(uint8_t* packet);
     void scsi_mode_sense(uint8_t* packet);
     void do_packet_command();
-    void do_set_features();
     void do_identify_packet_device();
     void do_device_reset();
 

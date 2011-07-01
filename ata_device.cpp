@@ -33,6 +33,9 @@
 
 enum {
     ATA_DEV_NUM_IO_BLOCKS = 1,
+
+    MULTIWORD_DMA_MODE_MAX = 2,
+    ULTRA_DMA_MODE_MAX = 5,
 };
 
 
@@ -137,6 +140,11 @@ void ATADevice::reset(bool cold)
     _pio_source = NULL;
 
     _power_mode = POWER_ACTIVE;
+
+    if (_reverting_to_power_on_default) {
+        _multiword_mode = ~0;
+        _ultra_mode = ULTRA_DMA_MODE_MAX;
+    }
 }
 
 
@@ -502,6 +510,77 @@ uint16_t ATADevice::io_read_word(uint16_t port)
     }
 
     return _pio_source->get_word();
+}
+
+
+void ATADevice::set_transfer_mode()
+{
+    uint mode = _count & 0x07;
+    uint type = (_count & 0xff) >> 3;
+
+    switch (type) {
+    case 0:
+        if (mode != 0 && mode != 1) {
+            D_MESSAGE("invalid type 0x%x mode 0x%x", type, mode);
+            command_abort_error();
+            return;
+        }
+        //_pio_mode = default pio mode;
+        break;
+    case 1:
+        if (mode != 3 &&  mode != 4) {
+            D_MESSAGE("invalid type 0x%x mode 0x%x", type, mode);
+            //command_abort_error();
+        }
+        //_pio_mode = mode;
+        break;
+    case 4:
+        if (mode > MULTIWORD_DMA_MODE_MAX) {
+            D_MESSAGE("invalid type 0x%x mode 0x%x", type, mode);
+            command_abort_error();
+            return;
+        }
+        _multiword_mode = mode;
+        _ultra_mode = ~0;
+        break;
+    case 8:
+        if (mode > ULTRA_DMA_MODE_MAX) {
+            D_MESSAGE("invalid type 0x%x mode 0x%x", type, mode);
+            command_abort_error();
+            return;
+        }
+
+        _multiword_mode = ~0;
+        _ultra_mode = mode;
+        break;
+    default:
+        D_MESSAGE("invalid type 0x%x mode 0x%x", type, mode);
+        command_abort_error();
+        return;
+    }
+
+    raise();
+}
+
+
+void ATADevice::do_set_features()
+{
+    switch (_feature) {
+    case ATA_FEATURE_DISABLE_REVERT_TO_DEFAULT:
+        _reverting_to_power_on_default = false;
+        raise();
+        break;
+    case ATA_FEATURE_ENABLE_REVERT_TO_DEFAULT:
+        _reverting_to_power_on_default = true;
+        raise();
+        break;
+    case ATA_FEATURE_SET_TRANSFER_MODE:
+        set_transfer_mode();
+        break;
+    default:
+        D_MESSAGE("unhandled 0x%x. sleeping... ", _feature);
+        for (;;) sleep(2);
+    }
 }
 
 
