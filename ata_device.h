@@ -102,6 +102,8 @@ protected:
     virtual bool stop();
 
     virtual void set_signature() = 0;
+    void set_transfer_mode();
+    virtual void do_set_features();
     virtual void do_command(uint8_t command) = 0;
     virtual void reset(bool cold);
 
@@ -124,6 +126,9 @@ protected:
     void set_state_and_notify(uint state, DMAState& dma);
     void command_abort_error(DMAState& dma);
     void notify_command_done(DMAState& dma);
+    uint get_multiword_mode() { return _multiword_mode;}
+    uint get_ultra_mode() { return _ultra_mode;}
+    bool revert_to_default() { return _reverting_to_power_on_default;}
 
     void start_task(ATATask* task);
     void remove_task(ATATask* task);
@@ -161,6 +166,10 @@ private:
     uint8_t* _io_blocks_data;
     std::list<uint8_t*> _free_blocks_list;
 
+    uint _multiword_mode;
+    uint _ultra_mode;
+    bool _reverting_to_power_on_default;
+
 protected:
     uint _status;
     uint _count;
@@ -171,8 +180,6 @@ protected:
     uint _lba_low;
     uint _lba_mid;
     uint _lba_high;
-
-    bool _reverting_to_power_on_default;
 };
 
 

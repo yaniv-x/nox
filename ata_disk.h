@@ -73,7 +73,7 @@ private:
     void do_write_dma_ext();
     void do_identify_device();
     void do_set_multi_mode();
-    void do_set_features();
+    virtual void do_set_features();
     void do_initialize_device_parameters();
     void do_flush();
     void do_idle_immediate();
