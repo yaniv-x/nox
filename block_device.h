@@ -105,6 +105,9 @@ protected:
     virtual int get_fd_for_read(uint64_t address) = 0;
     virtual void on_write_done(uint64_t address) = 0;
     virtual int get_fd_for_write() = 0;
+    virtual void read_vector(IOVec& vec) = 0;
+    uint64_t get_num_blocks() { return _size;}
+    uint64_t get_block_size() { return _block_size;}
 
     int get_file() { return _file.get();}
     void start();
@@ -129,8 +132,7 @@ private:
         void* data;
     };
 
-    void readv(Task& task);
-    void writev(Task& task);
+    void write_vector(IOVec& vec);
     void sync(Task& task);
     void* thread_main();
 
@@ -149,16 +151,14 @@ private:
 
 class PBlockDevice: public BlockDevice {
 public:
-    PBlockDevice(const std::string& file_name, uint block_size, bool read_only)
-        : BlockDevice(file_name, block_size, read_only)
-    {
-        start();
-    }
+    PBlockDevice(const std::string& file_name, uint block_size, bool read_only);
 
 private:
     virtual int get_fd_for_read(uint64_t address) { return get_file();}
     virtual void on_write_done(uint64_t address) {}
     virtual int get_fd_for_write() { return get_file();}
+
+    virtual void read_vector(IOVec& vec);
 };
 
 
@@ -170,6 +170,9 @@ private:
     virtual int get_fd_for_read(uint64_t address);
     virtual void on_write_done(uint64_t address);
     virtual int get_fd_for_write();
+
+
+    virtual void read_vector(IOVec& vec);
 
 private:
     AutoFD _tmp;
