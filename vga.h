@@ -100,6 +100,7 @@ private:
     void hide_caret();
     void update_caret();
     void update();
+    void update_vga();
     void reset_io();
     void reset_fb();
     void blank_screen();
@@ -123,7 +124,7 @@ private:
     void vram_write_one(uint64_t dest, uint8_t val);
     void vram_write(const uint8_t* src, uint64_t length, uint64_t dest);
 
-    bool font_bit(uint8_t ch, int i, int j, uint char_w, uint char_h);
+    bool font_bit(uint8_t ch, uint line, uint pos);
     void draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uint char_h);
 
     enum {

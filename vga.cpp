@@ -349,12 +349,12 @@ VGA::~VGA()
 }
 
 
-bool VGA::font_bit(uint8_t ch, int i, int j, uint char_w, uint char_h)
+bool VGA::font_bit(uint8_t ch, uint line, uint pos)
 {
     // no font select support (SR03 Character Font)
-    uint offset = uint(ch) * 32 + i;
+    uint offset = uint(ch) * 32 + line;
     uint8_t c = _vram[(offset << 2) + 2];
-    return !!(c & (0x80 >> j));
+    return !!(c & (0x80 >> pos));
 }
 
 
@@ -386,7 +386,7 @@ void VGA::draw_char(uint8_t ch, uint8_t attrib, uint32_t* dest, uint char_w, uin
     for (int i= 0; i < char_h; i++) {
         for (int j= 0; j < char_w; j++) {
 
-            if (font_bit(ch, i, j, char_w, char_h)) {
+            if (font_bit(ch, i, j)) {
                 *(dest + j) = text_color(attrib & 0xf);
             } else {
                 *(dest + j) = text_color(attrib >> 4);
@@ -472,14 +472,22 @@ void VGA::show_caret()
     uint line_size = _width / char_w;
     uint lines = _height / char_h;
 
-
     uint pos = (uint(_crt_regs[CRT_REG_CURSOR_LOCATION_HIGH]) << 8) |
                _crt_regs[CRT_REG_CURSOR_LOCATION_LOW];
 
-    uint32_t color = foreground_color_at(pos);
+    if (pos > VGA_VRAM_SIZE) {
+        D_MESSAGE("invalid position");
+        return;
+    }
 
     uint32_t fb_offset = (uint32_t(_crt_regs[CRT_REG_START_ADDRESS_HIGH]) << 8) +
                          _crt_regs[CRT_REG_START_ADDRESS_LOW];
+
+    if (fb_offset > pos) {
+        return;
+    }
+
+    uint32_t color = foreground_color_at(pos);
 
     pos -= fb_offset;
 
@@ -514,6 +522,11 @@ void VGA::hide_caret()
     uint cursor_pos = (uint(_crt_regs[CRT_REG_CURSOR_LOCATION_HIGH]) << 8) |
                       _crt_regs[CRT_REG_CURSOR_LOCATION_LOW];
 
+    if (cursor_pos > VGA_VRAM_SIZE) {
+        D_MESSAGE("invalid position");
+        return;
+    }
+
     uint char_w;
     uint char_h;
 
@@ -524,6 +537,10 @@ void VGA::hide_caret()
 
     uint fb_offset = (uint(_crt_regs[CRT_REG_START_ADDRESS_HIGH]) << 8) +
                       _crt_regs[CRT_REG_START_ADDRESS_LOW];
+
+    if (fb_offset > cursor_pos) {
+        return;
+    }
 
     uint pos = cursor_pos - fb_offset;
 
@@ -574,6 +591,7 @@ static inline uint32_t rgb565_to_rgb888(uint32_t color)
     return ret;
 }
 
+
 static inline uint32_t rgb555_to_rgb888(uint32_t color)
 {
     uint32_t ret;
@@ -585,92 +603,114 @@ static inline uint32_t rgb555_to_rgb888(uint32_t color)
     return ret;
 }
 
+
 void VGA::update()
 {
     Lock lock(_mutex);
 
-    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
-        if (_vbe_regs[VBE_REG_DEPTH] == 24) {
-            //todo: verifay access vaiolation
-            uint8_t* dest = (uint8_t*)_fb->get();
-            uint32_t dest_stride = _width * sizeof(uint32_t);
-            uint8_t* end = dest + dest_stride * _height;
-            uint32_t src_stride = _vbe_regs[VBE_REG_VIRT_WIDTH] * 3;
-            uint8_t* src = _vram + _vbe_regs[VBE_REG_X_OFFSET] * 3 +
-                            src_stride * _vbe_regs[VBE_REG_Y_OFFSET];
-
-            uint32_t src_skip = src_stride - _width * 3;
-
-            while (dest < end) {
-                uint8_t* line_end = dest + dest_stride;
-
-                for (; dest < line_end; dest += 4, src += 3) {
-                    dest[0] = src[0];
-                    dest[1] = src[1];
-                    dest[2] = src[2];
-                    dest[3] = 0;
-                }
-
-                src += src_skip;
-            }
-        } else if (_vbe_regs[VBE_REG_DEPTH] == 16) {
-            //todo: verifay access vaiolation
-            uint32_t* dest = (uint32_t*)_fb->get();
-            uint32_t* end = dest + _width * _height;
-            uint16_t* src = (uint16_t*)_vram + _vbe_regs[VBE_REG_X_OFFSET] +
-                            _vbe_regs[VBE_REG_VIRT_WIDTH] * _vbe_regs[VBE_REG_Y_OFFSET];
-
-            uint32_t src_skip = _vbe_regs[VBE_REG_VIRT_WIDTH] - _width;
-
-            while (dest < end) {
-                uint32_t* line_end = dest + _width;
-
-                for (; dest < line_end; dest++, src++) {
-                    *dest = rgb565_to_rgb888(*src);
-                }
-
-                src += src_skip;
-            }
-        } else if (_vbe_regs[VBE_REG_DEPTH] == 15) {
-            //todo: verifay access vaiolation
-            uint32_t* dest = (uint32_t*)_fb->get();
-            uint32_t* end = dest + _width * _height;
-            uint16_t* src = (uint16_t*)_vram + _vbe_regs[VBE_REG_X_OFFSET] +
-                            _vbe_regs[VBE_REG_VIRT_WIDTH] * _vbe_regs[VBE_REG_Y_OFFSET];
-
-            uint32_t src_skip = _vbe_regs[VBE_REG_VIRT_WIDTH] - _width;
-
-            while (dest < end) {
-                uint32_t* line_end = dest + _width;
-
-                for (; dest < line_end; dest++, src++) {
-                    *dest = rgb555_to_rgb888(*src);
-                }
-
-                src += src_skip;
-            }
-        } else if (_vbe_regs[VBE_REG_DEPTH] == 8) {
-            //todo: verifay access vaiolation
-            uint32_t* dest = (uint32_t*)_fb->get();
-            uint32_t* end = dest + _width * _height;
-            uint8_t* src = _vram + _vbe_regs[VBE_REG_X_OFFSET] +
-                           _vbe_regs[VBE_REG_VIRT_WIDTH] * _vbe_regs[VBE_REG_Y_OFFSET];
-
-            uint32_t src_skip = _vbe_regs[VBE_REG_VIRT_WIDTH] - _width;
-
-            while (dest < end) {
-                uint32_t* line_end = dest + _width;
-
-                for (; dest < line_end; dest++, src++) {
-                    *dest = _effective_palette[*src].color;
-                }
-
-                src += src_skip;
-            }
-        }
+    if (!is_vbe_active()) {
+        update_vga();
         return;
     }
 
+    if (_vbe_regs[VBE_REG_DEPTH] == 32) {
+        return;
+    }
+
+    uint32_t* dest = (uint32_t*)_fb->get();
+    uint32_t* dest_end = dest + _width * _height;
+
+    ASSERT(dest < dest_end && (uint8_t*)dest_end <= (uint8_t*)dest + _fb->size());
+
+    uint src_pixel_bytes;
+
+    switch (_vbe_regs[VBE_REG_DEPTH]) {
+    case 24:
+        src_pixel_bytes = 3;
+        break;
+    case 16:
+    case 15:
+        src_pixel_bytes = 2;
+        break;
+    default:
+        src_pixel_bytes = 1;
+    }
+
+    uint32_t src_stride = _vbe_regs[VBE_REG_VIRT_WIDTH] * src_pixel_bytes;
+    uint8_t* src = _vram + _vbe_regs[VBE_REG_X_OFFSET] * src_pixel_bytes +
+                   src_stride * _vbe_regs[VBE_REG_Y_OFFSET];
+
+    if (src > _vbe_vram_end || src < _vram) {
+        D_MESSAGE("invalid vram src");
+        return;
+    }
+
+    uint8_t* src_end = src + src_stride * _height;
+
+    if (src_end < src || src_end > _vbe_vram_end) {
+        D_MESSAGE("invalid vram src_end");
+        return;
+    }
+
+    switch (_vbe_regs[VBE_REG_DEPTH]) {
+    case 24: {
+        uint32_t src_skip = src_stride - _width * 3;
+
+        while (src < src_end) {
+            uint32_t* line_end = dest + _width;
+
+            for (; dest < line_end; ++dest, src += 3) {
+                *dest = *(uint32_t*)src;
+                ((uint8_t*)dest)[3] = 0;
+            }
+
+            src += src_skip;
+        }
+        break;
+    }
+    case 16:
+        while (src < src_end) {
+            uint32_t* line_end = dest + _width;
+            uint16_t* now = (uint16_t*)src;
+
+            for (; dest < line_end; ++dest, ++now) {
+                *dest = rgb565_to_rgb888(*now);
+            }
+
+            src += src_stride;
+        }
+        break;
+    case 15:
+        while (src < src_end) {
+            uint32_t* line_end = dest + _width;
+            uint16_t* now = (uint16_t*)src;
+
+            for (; dest < line_end; ++dest, ++now) {
+                *dest = rgb555_to_rgb888(*now);
+            }
+
+            src += src_stride;
+        }
+        break;
+    default:
+        uint32_t src_skip = src_stride - _width;
+
+        while (src < src_end) {
+            uint32_t* line_end = dest + _width;
+
+            for (; dest < line_end; ++dest, ++src) {
+                *dest = _effective_palette[*src].color;
+            }
+
+            src += src_skip;
+        }
+        break;
+    }
+}
+
+
+void VGA::update_vga()
+{
     if (!_vga_draw_logic) {
         return;
     }
@@ -796,8 +836,6 @@ void VGA::update()
             dest[i] = _effective_palette[pal_index & _color_index_mask].color;
         }
     }
-
-    lock.unlock();
 }
 
 
@@ -1263,7 +1301,7 @@ inline void VGA::vram_read_mode_1(uint32_t src, uint8_t& dest)
 {
     uint8_t* quad = _vram + (src << 2);
 
-    if (quad < _vram || quad + 4 > _vga_vram_end) {
+    if (quad + 4 < _vram || quad + 4 > _vga_vram_end) {
         D_MESSAGE("out of bounds");
         dest = 0xff;
         return;
@@ -1379,7 +1417,7 @@ void VGA::conditional_mode_change()
 
 inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 {
-    if (_vram + offset >= _vga_vram_end) {
+    if (_vram + offset < _vram || _vram + offset >= _vga_vram_end) {
         D_MESSAGE("out of bounds");
         dest = 0xff;
         return;
@@ -1415,9 +1453,12 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
     }
 
     if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
-        ASSERT(length <= 64 * KB);
-        // verify access
         src += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
+
+        ASSERT(_vram + src >= _vram && _vram + src + length >= _vram + src &&
+               _vram + src + length <= _vbe_vram_end);
+
+        // protected by limit on _vbe_regs[VBE_REG_BANK] + membus imp
         memcpy(dest, _vram + src, length);
         return;
     }
@@ -1436,7 +1477,7 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 
 inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
 {
-    if (_vram + offset >= _vga_vram_end) {
+    if (_vram + offset < _vram || _vram + offset >= _vga_vram_end) {
         return;
     }
 
@@ -1555,9 +1596,13 @@ void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
     }
 
     if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
-        ASSERT(length <= 64 * KB);
 
         dest += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
+
+        ASSERT(_vram + dest >= _vram && _vram + dest + length >= _vram + dest &&
+               _vram + dest + length <= _vbe_vram_end);
+
+        // protected by limit on _vbe_regs[VBE_REG_BANK] + membus imp
         memcpy(_vram + dest, src, length);
         _dirty = true;
         return;
@@ -1601,11 +1646,12 @@ uint16_t VGA::io_vbe_read(uint16_t port)
             case VBE_REG_X_RES:
                 return VBE_MAX_X_RES;
             case VBE_REG_Y_RES:
-                return VBE_MAX_X_RES;
+                return VBE_MAX_Y_RES;
             case VBE_REG_DEPTH:
                 return VBE_MAX_DEPTH;
             default:
                 D_MESSAGE("unhendled get caps for reg %u");
+                return 0;
             }
         }
 
@@ -1726,6 +1772,7 @@ void VGA::update_one_effective_palette(uint index)
     _effective_palette[index].components[2] = _palette[index].components[0] << _palette_shift;
 }
 
+
 void VGA::io_vbe_write(uint16_t port, uint16_t val)
 {
     Lock lock(_mutex);
@@ -1787,7 +1834,7 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             _vbe_regs[VBE_REG_DEPTH] = val;
             break;
         case VBE_REG_BANK:
-            if (val > _vbe_regs[VBE_REG_VIDEO_MEMORY_64K]) {
+            if (val >= _vbe_regs[VBE_REG_VIDEO_MEMORY_64K]) {
                 D_MESSAGE("ignore out of bound bank %u", val);
                 break;
             }
@@ -1809,8 +1856,9 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             nofify_vbe_fb_config();
             break;
         case VBE_REG_VIRT_WIDTH:
-            if (val != _vbe_regs[VBE_REG_X_RES]) {
+            if (val < _vbe_regs[VBE_REG_X_RES]) {
                 D_MESSAGE("ignoring virtual width %u (%u)", val, _vbe_regs[VBE_REG_X_RES]);
+                return;
             }
             _vbe_regs[VBE_REG_VIRT_WIDTH] = val;
             nofify_vbe_fb_config();
