@@ -214,6 +214,18 @@ bool ATADevice::stop()
 }
 
 
+void ATADevice::down()
+{
+    AutoRef<ATATask> task(get_task());
+
+    if (!task.get()) {
+        return;
+    }
+
+    task->cancel();
+}
+
+
 void ATADevice::reset()
 {
     reset(true);

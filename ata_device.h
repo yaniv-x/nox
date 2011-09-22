@@ -100,6 +100,7 @@ protected:
     virtual void save(OutStream &stream) {}
     virtual bool start() { return true;}
     virtual bool stop();
+    virtual void down();
 
     virtual void set_signature() = 0;
     void set_transfer_mode();

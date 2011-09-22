@@ -119,13 +119,15 @@ void VMPart::reset_all()
 
 void VMPart::down_all()
 {
-    _state = DOWN;
-
     VMParts::iterator iter = _parts.begin();
 
     for (; iter != _parts.end(); iter++) {
         (*iter)->down_all();
     }
+
+    down();
+
+    _state = DOWN;
 }
 
 
