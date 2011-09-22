@@ -92,6 +92,7 @@ PCIBus::PCIBus(NoxVM& nox)
 PCIBus::~PCIBus()
 {
     delete _devices[0];
+    delete _devices[1];
 
     for (uint i = 1; i < PCI_MAX_DEVICES; i++) {
         if (_devices[i]) {
