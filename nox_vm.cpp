@@ -46,6 +46,7 @@
 #include "vga.h"
 #include "display.h"
 #include "admin_server.h"
+#include "pci.h"
 
 enum {
     IO_PORT_MISC = 0x61,
@@ -63,6 +64,39 @@ enum {
     MID_RAM_START = 768 * KB,
     MID_RAM_MAX_ADDRESS = 0xc0000000, // is hardcoded in bios
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
+};
+
+#define NOX_PCI_DEV_HOST_BRIDGE_REV 1
+#define NOX_PCI_DEV_ISA_BRIDGE_REV 1
+
+class PCIHost: public PCIDevice {
+public:
+    PCIHost(PCIBus& bus)
+        : PCIDevice("host-bridge", bus , NOX_PCI_VENDOR_ID, NOX_PCI_DEV_ID_HOST_BRIDGE,
+                NOX_PCI_DEV_HOST_BRIDGE_REV, mk_pci_class_code(PCI_CLASS_BRIDGE,
+                                                                 PCI_SUBCLASS_BRIDGE_HOST, 0),
+                false)
+    {
+        bus.add_device(*this);
+    }
+
+    virtual uint get_hard_id() { return 0;}
+};
+
+
+class EISABridge : public PCIDevice {
+public:
+    EISABridge(PCIBus& bus)
+        : PCIDevice("eisa-bridge", bus, NOX_PCI_VENDOR_ID,
+                                NOX_PCI_DEV_ID_ISA_BRIDGE,
+                                NOX_PCI_DEV_ISA_BRIDGE_REV,
+                                mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_ISA, 0),
+                                false)
+    {
+        bus.add_device(*this);
+    }
+
+    virtual uint get_hard_id() { return 1;}
 };
 
 
@@ -122,6 +156,8 @@ NoxVM::NoxVM()
     , _holder (new PlaceHolder(*this))
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
+    , _pci_host (new PCIHost(*_pci.get()))
+    , _eisa_bridge (new EISABridge(*_pci.get()))
     , _cmos (new CMOS(*this))
     , _dma (new DMA(*this))
     , _pit (new PIT(*this))
@@ -449,7 +485,7 @@ void NoxVM::terminate_command(AdminReplyContext* context)
 
 void NoxVM::a20_port_write(uint16_t port, uint8_t val)
 {
-    ASSERT(port == 0x92);
+    ASSERT(port == IO_PORT_A20);
     if (val & 1) {
         throw ResetException();
     }
@@ -535,7 +571,7 @@ void NoxVM::init_ram()
 {
     _low_ram = _mem_bus->alloc_physical_ram(*this, LOW_RAM_SIZE >> GUEST_PAGE_SHIFT, "low ram");
 
-    uint64_t ram_size = _ram_size -MB; // "lost" 128K (vga fb hole @ 0xa0000-0xc0000)
+    uint64_t ram_size = _ram_size - MB; // "lost" 128K (vga fb hole @ 0xa0000-0xc0000)
 
     uint64_t uma_ram_size = MB - MID_RAM_START;
     uint64_t mid_range_size = MIN(ram_size, MID_RAM_MAX_ADDRESS - MB) + uma_ram_size;
