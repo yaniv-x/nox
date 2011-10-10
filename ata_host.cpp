@@ -266,7 +266,7 @@ uint8_t ATAHost::io_channel_0_alt_status(uint16_t port)
 void ATAHost::io_channel_0_control(uint16_t port, uint8_t val)
 {
     if (port != ATA0_IO_CONTROL_BASE || !_channel_0.get()) {
-        return;;
+        return;
     }
 
     return _channel_0->io_control(val);
@@ -330,7 +330,7 @@ uint8_t ATAHost::io_channel_1_alt_status(uint16_t port)
 void ATAHost::io_channel_1_control(uint16_t port, uint8_t val)
 {
     if (port != ATA1_IO_CONTROL_BASE || !_channel_1.get()) {
-        return;;
+        return;
     }
 
     return _channel_1->io_control(val);
