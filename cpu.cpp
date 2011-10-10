@@ -256,9 +256,9 @@ void CPU::setup_cpuid()
     }
 
     for (int i = 0;  i < cpuid_info.cpuid2.nent; i++) {
-
-        if (cpuid_info.cpuid2.entries[i].function == 1) {
-            _version_information = cpuid_info.cpuid2.entries[i].eax;
+        struct kvm_cpuid_entry2* entries = cpuid_info.cpuid2.entries;
+        if (entries[i].function == 1) {
+            _version_information = entries[i].eax;
             break;
         }
     }
