@@ -49,8 +49,6 @@ enum {
 
 };
 
-#define NOX_PCI_DEV_HOST_BRIDGE_REV 1
-#define NOX_PCI_DEV_ISA_BRIDGE_REV 1
 
 PCIBus::PCIBus(NoxVM& nox)
     : VMPart ("pci", nox)
@@ -74,17 +72,6 @@ PCIBus::PCIBus(NoxVM& nox)
 
     memset(_devices, 0, sizeof(_devices));
 
-    _devices[0] = new PCIDevice("host-bridge", *this , NOX_PCI_VENDOR_ID,
-                                NOX_PCI_DEV_ID_HOST_BRIDGE,
-                                NOX_PCI_DEV_HOST_BRIDGE_REV,
-                                mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_HOST, 0),
-                                false);
-
-    _devices[1] = new PCIDevice("eisa-bridge", *this , NOX_PCI_VENDOR_ID,
-                                NOX_PCI_DEV_ID_ISA_BRIDGE,
-                                NOX_PCI_DEV_ISA_BRIDGE_REV,
-                                mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_ISA, 0),
-                                false);
     pci_bus = this;
 }
 
@@ -230,8 +217,8 @@ void PCIBus::io_write_config_dword(uint16_t port, uint32_t val)
 static inline bool is_reserved_slot(uint id)
 {
     // reserving some slots
-    // 0 is the host bridge others are reservd for futcher usus
-    return id < 3 || id > 29;
+    // 0 is the host-bridge, 1 is eisa-bridge, others are reservd for future usus
+    return id == 2 || id > 29;
 }
 
 
