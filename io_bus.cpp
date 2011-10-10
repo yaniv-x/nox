@@ -142,7 +142,7 @@ public:
         : _part (part)
     {
         start = in_start;
-        size = in_size;
+        end = start + in_size;
         read_byte = rb ? rb : default_read_byte;
         read_word = rw ? rw : default_read_word;
         read_dword = rd ? rd : default_read_dword;
@@ -157,7 +157,7 @@ public:
         : _part (part)
     {
         start = in_start;
-        size = in_size;
+        end = start + in_size;
         read_byte = default_read_byte;
         read_word = default_read_word;
         read_dword = default_read_dword;
@@ -209,7 +209,7 @@ IOBus::MapItem& IOBus::find_mapping(uint16_t port)
 {
     IOMap::iterator iter = _io_map.lower_bound(port);
 
-    ASSERT((*iter).second.start <= port && (*iter).second.start + (*iter).second.size > port);
+    ASSERT((*iter).second.start <= port && (*iter).second.end > port);
     return (*iter).second;
 }
 
@@ -231,13 +231,12 @@ IOBus::RegionList::iterator IOBus::find_region(IORegion* region)
 void IOBus::read_byte(uint16_t port, uint8_t* dest, uint32_t n)
 {
     MapItem& map = find_mapping(port);
-    port -= map.start;
     uint8_t* end = dest + n;
 
     ASSERT(get_state() == VMPart::RUNNING);
 
     for (; dest < end; dest++) {
-        *dest = map.read_byte(map.opaque, port + map.start);
+        *dest = map.read_byte(map.opaque, port);
     }
 }
 
@@ -245,24 +244,23 @@ void IOBus::read_byte(uint16_t port, uint8_t* dest, uint32_t n)
 void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
 {
     MapItem& map = find_mapping(port);
-    port -= map.start;
+    uint16_t* end = dest + n;
 
     ASSERT(get_state() == VMPart::RUNNING);
 
-    if ((map.size - port) < 2) {
+    if (map.end - port < 2) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
-                  port + map.start, map.start, map.size);
-
-        read_byte(port, (uint8_t*)dest, 1);
-        read_byte(port + 1, (uint8_t*)dest + 1, 1);
+                  port + map.start, map.start, map.end - map.start);
+        for (; dest < end; dest++) {
+            read_byte(port, (uint8_t*)dest, 1);
+            read_byte(port + 1, (uint8_t*)dest + 1, 1);
+        }
 
         return;
     }
 
-    uint16_t* end = dest + n;
-
     for (; dest < end; dest++) {
-        *dest = map.read_word(map.opaque, port + map.start);
+        *dest = map.read_word(map.opaque, port);
     }
 }
 
@@ -270,24 +268,24 @@ void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
 void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
 {
     MapItem& map = find_mapping(port);
-    port -= map.start;
+    uint32_t* end = dest + n;
 
     ASSERT(get_state() == VMPart::RUNNING);
 
-    if ((map.size - port) < 4) {
+    if (map.end - port < 4) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
-                  port + map.start, map.start, map.size);
+                  port + map.start, map.start, map.end - map.start);
 
-        read_word(port, (uint16_t*)dest, 1);
-        read_word(port + 2, (uint16_t*)dest + 1, 1);
+        for (; dest < end; dest++) {
+            read_word(port, (uint16_t*)dest, 1);
+            read_word(port + 2, (uint16_t*)dest + 1, 1);
+        }
 
         return;
     }
 
-    uint32_t* end = dest + n;
-
     for (; dest < end; dest++) {
-        *dest = map.read_dword(map.opaque, port + map.start);
+        *dest = map.read_dword(map.opaque, port);
     }
 }
 
@@ -295,13 +293,12 @@ void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
 void IOBus::write_byte(uint16_t port, uint8_t* src, uint32_t n)
 {
     MapItem& map = find_mapping(port);
-    port -= map.start;
     uint8_t* end = src + n;
 
     ASSERT(get_state() == VMPart::RUNNING);
 
     for (; src < end; src++) {
-         map.write_byte(map.opaque, port + map.start, *src);
+         map.write_byte(map.opaque, port, *src);
     }
 }
 
@@ -309,24 +306,24 @@ void IOBus::write_byte(uint16_t port, uint8_t* src, uint32_t n)
 void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
 {
     MapItem& map = find_mapping(port);
-    port -= map.start;
+    uint16_t* end = src + n;
 
     ASSERT(get_state() == VMPart::RUNNING);
 
-    if ((map.size - port) < 2) {
+    if (map.end - port < 2) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
-                  port + map.start, map.start, map.size);
+                  port + map.start, map.start, map.end - map.start);
 
-        write_byte(port, (uint8_t*)src, 1);
-        write_byte(port + 1, (uint8_t*)src + 1, 1);
+        for (; src < end; src++) {
+            write_byte(port, (uint8_t*)src, 1);
+            write_byte(port + 1, (uint8_t*)src + 1, 1);
+        }
 
         return;
     }
 
-    uint16_t* end = src + n;
-
     for (; src < end; src++) {
-         map.write_word(map.opaque, port + map.start, *src);
+         map.write_word(map.opaque, port, *src);
     }
 }
 
@@ -334,24 +331,24 @@ void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
 void IOBus::write_dword(uint16_t port, uint32_t* src, uint32_t n)
 {
     MapItem& map = find_mapping(port);
-    port -= map.start;
+    uint32_t* end = src + n;
 
     ASSERT(get_state() == VMPart::RUNNING);
 
-    if ((map.size - port) < 4) {
+    if (map.end - port < 4) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
-                  port + map.start, map.start, map.size);
+                  port + map.start, map.start, map.end - map.start);
 
-        write_word(port, (uint16_t*)src, 1);
-        write_word(port + 2, (uint16_t*)src + 1, 1);
+        for (; src < end; src++) {
+            write_word(port, (uint16_t*)src, 1);
+            write_word(port + 2, (uint16_t*)src + 1, 1);
+        }
 
         return;
     }
 
-    uint32_t* end = src + n;
-
     for (; src < end; src++) {
-         map.write_dword(map.opaque, port + map.start, *src);
+         map.write_dword(map.opaque, port, *src);
     }
 }
 
@@ -365,7 +362,6 @@ void IOBus::fill_gap(uint32_t from, uint32_t n)
 void IOBus::fill_gaps()
 {
     uint32_t from = 0;
-    uint32_t n = num_ports;
 
     IOMap::iterator now = _io_map.begin();
 
@@ -376,13 +372,12 @@ void IOBus::fill_gaps()
             fill_gap(from, gap_size);
         }
 
-        uint32_t skip = gap_size + (*now).second.size;
-        from += skip;
-        n -= skip;
+        from = (*now).second.end;
     }
 
-    if (n) {
-        fill_gap(from, n);
+    ASSERT(from <= num_ports)
+    if (from < num_ports) {
+        fill_gap(from, num_ports - from);
     }
 }
 
@@ -392,7 +387,8 @@ void IOBus::unmap_range(uint32_t from, uint32_t n)
     do {
         IOMap::iterator now = _io_map.lower_bound(from);
         uint32_t offset = from - (*now).second.start;
-        uint32_t in_range = MIN((*now).second.size - offset, n);
+        uint32_t size = (*now).second.end - (*now).second.start;
+        uint32_t in_range = MIN(size - offset, n);
         n -= in_range;
         from += in_range;
         _io_map.erase(now);
@@ -430,8 +426,8 @@ void IOBus::remap_region(IORegion* region)
         PANIC("not found");
     }
 
-    unmap_range(region->start, region->size);
-    _io_map.insert(IOMapPair(region->start + region->size - 1, *region));
+    unmap_range(region->start, region->end - region->start);
+    _io_map.insert(IOMapPair(region->end - 1, *region));
     fill_gaps();
 }
 
@@ -454,8 +450,9 @@ void IOBus::unregister_region(IORegion* region)
 
     for (; now != _io_map.end(); ++now) {
         if ((*now).second.region == region) {
-            unmap_range((*now).second.start, (*now).second.size);
-            fill_gap((*now).second.start, (*now).second.size);
+            uint32_t size = (*now).second.end - (*now).second.start;
+            unmap_range((*now).second.start, size);
+            fill_gap((*now).second.start, size);
             break;
         }
     }
