@@ -62,7 +62,7 @@ public:
 
     struct MapItem {
         uint32_t start;
-        uint32_t size;
+        uint32_t end;
 
         void* opaque;
         io_read_byte_proc_t read_byte;
