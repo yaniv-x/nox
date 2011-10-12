@@ -71,6 +71,23 @@ enum {
 #define NOX_PCI_DEV_HOST_BRIDGE_REV 1
 #define NOX_PCI_DEV_ISA_BRIDGE_REV 1
 
+enum {
+    PLATFORM_IO_LOCK = 0x00,
+    PLATFORM_IO_INDEX = 0x01,
+    PLATFORM_IO_ERROR = 0x04,
+    PLATFORM_IO_DATA = 0x08,
+    PLATFORM_IO_END = 0x0c,
+};
+
+enum {
+    PLATFORM_REG_BELOW_1M_USED_PAGES,
+    PLATFORM_REG_ABOVE_1M_PAGES,
+    PLATFORM_REG_BELOW_4G_PAGES,
+    PLATFORM_REG_BELOW_4G_USED_PAGES,
+    PLATFORM_REG_ABOVE_4G_PAGES,
+};
+
+
 class PCIHost: public PCIDevice {
 public:
     PCIHost(PCIBus& bus)
@@ -79,10 +96,36 @@ public:
                                                                  PCI_SUBCLASS_BRIDGE_HOST, 0),
                 false)
     {
+        add_io_region(0, PLATFORM_IO_END, this, (io_read_byte_proc_t)&PCIHost::io_read_byte,
+                      (io_write_byte_proc_t)&PCIHost::io_write_byte,
+                      NULL, NULL,
+                      (io_read_dword_proc_t)&PCIHost::io_read_dword,
+                      (io_write_dword_proc_t)&PCIHost::io_write_dword);
         bus.add_device(*this);
     }
 
     virtual uint get_hard_id() { return 0;}
+
+private:
+    uint8_t io_read_byte(uint16_t port)
+    {
+        return get_nox().platform_port_read_byte(port - get_region_address(0));
+    }
+
+    void io_write_byte(uint16_t port, uint8_t val)
+    {
+        get_nox().platform_port_write_byte(port - get_region_address(0), val);
+    }
+
+    uint32_t io_read_dword(uint16_t port)
+    {
+        return get_nox().platform_port_read_dword(port - get_region_address(0));
+    }
+
+    void io_write_dword(uint16_t port, uint32_t val)
+    {
+        get_nox().platform_port_write_dword(port - get_region_address(0), val);
+    }
 };
 
 
@@ -171,6 +214,7 @@ NoxVM::NoxVM()
     , _high_bios (NULL)
     , _high_ram (NULL)
     , _ram_size (MB)
+    , _free_high_bios_pages (0)
     , _num_cpus (1)
     , _ro_hard_disk_file (false)
     , _hard_disk_size (0)
@@ -384,6 +428,8 @@ void NoxVM::reset()
 
     _a20_port_val = 0;
     _misc_port  = 0x01;
+    _platform_lock = 0;
+    _platform_reg_index = 0;
     _nmi_mask = false;
 
     _mem_bus->map_physical_ram(_low_ram, 0, false);
@@ -569,6 +615,84 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 }
 
 
+uint8_t NoxVM::platform_port_read_byte(uint16_t port)
+{
+    switch (port) {
+    case PLATFORM_IO_LOCK:
+        return _platform_lock;
+    default:
+        D_MESSAGE("unexpected port 0x%x", port);
+        return 0xff;
+    }
+}
+
+
+void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
+{
+    switch (port) {
+    case PLATFORM_IO_LOCK:
+        _platform_lock = 1;
+        break;
+    case PLATFORM_IO_INDEX:
+        _platform_reg_index = val;
+        break;
+    default:
+        D_MESSAGE("unexpected port 0x%x val %u", port, val);
+    }
+}
+
+
+uint32_t NoxVM::platform_port_read_dword(uint16_t port)
+{
+    switch (port) {
+    case PLATFORM_IO_DATA:
+        switch (_platform_reg_index) {
+        case PLATFORM_REG_BELOW_1M_USED_PAGES:
+            return _bios_pages;
+        case PLATFORM_REG_ABOVE_1M_PAGES: {
+            uint64_t uma_ram = (MB - MID_RAM_START);
+            return (_mem_bus->get_physical_ram_size(_mid_ram) - uma_ram) >> GUEST_PAGE_SHIFT;
+        }
+        case PLATFORM_REG_BELOW_4G_PAGES:
+            return _mem_bus->get_physical_ram_size(_high_bios) >> GUEST_PAGE_SHIFT;
+        case PLATFORM_REG_BELOW_4G_USED_PAGES: {
+            uint32_t pages = _mem_bus->get_physical_ram_size(_high_bios) >> GUEST_PAGE_SHIFT;
+            return pages - _free_high_bios_pages;
+        }
+        case PLATFORM_REG_ABOVE_4G_PAGES:
+            return _high_ram ? _mem_bus->get_physical_ram_size(_high_ram) >> GUEST_PAGE_SHIFT : 0;
+        default:
+            return 0;
+        }
+    default:
+        D_MESSAGE("unexpected port 0x%x", port);
+        return 0xffffffff;
+    }
+}
+
+
+void NoxVM::platform_port_write_dword(uint16_t port, uint32_t val)
+{
+    switch (port) {
+    case PLATFORM_IO_ERROR:
+        D_MESSAGE("platform error code 0x%x", val);
+        return;
+    default:
+        D_MESSAGE("unexpected port 0x%x val %u", port, val);
+    }
+}
+
+
+void NoxVM::alloc_high_bios_pages(uint num_pages/*, uint8_t** ptr, page_address_t* address*/)
+{
+    if (_free_high_bios_pages < num_pages) {
+        THROW("bios pages oom");
+    }
+
+    _free_high_bios_pages--;
+}
+
+
 void NoxVM::init_ram()
 {
     _low_ram = _mem_bus->alloc_physical_ram(*this, LOW_RAM_SIZE >> GUEST_PAGE_SHIFT, "low ram");
@@ -587,6 +711,9 @@ void NoxVM::init_ram()
     }
 
     _high_bios = _mem_bus->alloc_physical_ram(*this, MB >> GUEST_PAGE_SHIFT, "high bios");
+    _free_high_bios_pages = MB >> GUEST_PAGE_SHIFT;
+
+    alloc_high_bios_pages(1);
 }
 
 
@@ -624,6 +751,7 @@ void NoxVM::load_bios()
         THROW("bad bios size");
     }
 
+    _bios_pages = ALIGN(stat.st_size, GUEST_PAGE_SIZE) >> GUEST_PAGE_SHIFT;
     ptr -= stat.st_size;
 
     if (read(_bios_fd.get(), ptr, stat.st_size) != stat.st_size) {

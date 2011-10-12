@@ -100,12 +100,18 @@ private:
     void vgabios_port_write(uint16_t port, uint8_t val);
     void bochs_port_write(uint16_t port, uint8_t val);
     void post_diagnostic(uint16_t port, uint8_t val);
+    uint8_t platform_port_read_byte(uint16_t port);
+    void platform_port_write_byte(uint16_t port, uint8_t val);
+    uint32_t platform_port_read_dword(uint16_t port);
+    void platform_port_write_dword(uint16_t port, uint32_t val);
 
     void register_admin_commands();
     void suspend_command(AdminReplyContext* context);
     void resume_command(AdminReplyContext* context);
     void restart_command(AdminReplyContext* context);
     void terminate_command(AdminReplyContext* context);
+
+    void alloc_high_bios_pages(uint num_pages/*, uint8_t** ptr, page_address_t* address*/);
 
 private:
     Mutex _vm_state_mutex;
@@ -130,6 +136,8 @@ private:
     PhysicalRam* _high_ram;
     uint8_t _a20_port_val;
     uint64_t _ram_size;
+    uint32_t _free_high_bios_pages;
+    uint32_t _bios_pages;
     uint _num_cpus;
     std::string _hard_disk_file_name;
     bool _ro_hard_disk_file;
@@ -140,6 +148,8 @@ private:
 
     bool _nmi_mask;
     uint8_t _misc_port;
+    uint8_t _platform_lock;
+    uint8_t _platform_reg_index;
 
     std::list<StateChangeRequest*> _stat_change_req_list;
 
@@ -147,19 +157,18 @@ private:
     friend class StartRequest;
     friend class ResetRequest;
     friend class DownRequest;
+    friend class PCIHost;
 };
 
 
 class MachinErrorException: public std::exception {
 public:
     virtual const char* what() const throw () {return "machin error exception: implement me!!!";}
-
 };
 
 class ResetException: public std::exception {
 public:
     virtual const char* what() const throw () {return "reset exception: implement me!!!";}
-
 };
 
 #endif
