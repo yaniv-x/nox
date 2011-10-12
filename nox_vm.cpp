@@ -64,6 +64,8 @@ enum {
     MID_RAM_START = 768 * KB,
     MID_RAM_MAX_ADDRESS = 0xc0000000, // is hardcoded in bios
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
+
+    BIOS_FOOTER_SIZE = 16,
 };
 
 #define NOX_PCI_DEV_HOST_BRIDGE_REV 1
@@ -602,14 +604,7 @@ void NoxVM::load_bios()
     //   2         ROM length in 512-byte blocks
     //   3         ROM initialization entry point (FAR CALL)
 
-    uint8_t jump[] = {0xea, 0x5b, 0xe0, 0x00, 0xf0};
-    uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_high_bios);
-    ptr += MB;
-    ptr -= 16;
-
-    memcpy(ptr, jump, sizeof(jump));
-
-    ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
+    uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
     ptr += MB - MID_RAM_START;
 
     std::string pc_bios_file = application->get_nox_dir() + "/firmware/pc-bios.bin";
@@ -625,11 +620,21 @@ void NoxVM::load_bios()
         THROW("fstat failed");
     }
 
+    if (stat.st_size > MB - MID_RAM_START) {
+        THROW("bad bios size");
+    }
+
     ptr -= stat.st_size;
 
     if (read(_bios_fd.get(), ptr, stat.st_size) != stat.st_size) {
         THROW("read failed");
     }
+
+    uint8_t* footer_ptr = _mem_bus->get_physical_ram_ptr(_high_bios);
+    footer_ptr += _mem_bus->get_physical_ram_size(_high_bios);
+    footer_ptr -= BIOS_FOOTER_SIZE;
+
+    memcpy(footer_ptr, ptr + stat.st_size - BIOS_FOOTER_SIZE, BIOS_FOOTER_SIZE);
 
     std::string vga_bios_file = application->get_nox_dir() + "/firmware/vga-bios.bin";
 
