@@ -197,7 +197,9 @@ void ATAHostDMA::nop()
 
 ATAHost::ATAHost()
     : PCIDevice("ide-pci", *pci_bus, NOX_PCI_VENDOR_ID, NOX_PCI_DEV_ID_IDE, ATA_PCI_REVISION,
-                mk_pci_class_code(PCI_CLASS_MASS_STORAGE, PCI_MASS_STORAGE_SUBCLASS_IDE, 0), false)
+                mk_pci_class_code(PCI_CLASS_MASS_STORAGE, PCI_MASS_STORAGE_SUBCLASS_IDE,
+                                  (1 << PCI_IDE_PROGIF_BUS_MASTER_BIT)),
+                false)
     , _channel_0_wire (new Wire(*this))
     , _channel_1_wire (new Wire(*this))
 {
