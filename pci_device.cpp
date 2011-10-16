@@ -712,6 +712,8 @@ void PCIDevice::map_io()
         }
 
         _regions[i]->map(*this, start);
+        D_MESSAGE("%s: 0x%lx 0x%lx", get_name().c_str(), _regions[i]->get_address(),
+                  ~_regions[i]->get_mask() + 1);
     }
 }
 
@@ -752,6 +754,8 @@ void PCIDevice::map_mem()
         }
 
         _regions[i]->map(*this, start);
+        D_MESSAGE("%s: 0x%lx 0x%lx", get_name().c_str(), _regions[i]->get_address(),
+                  ~_regions[i]->get_mask() + 1);
     }
 }
 
