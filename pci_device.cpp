@@ -99,6 +99,13 @@ enum {
     PCI_BAR_MEM_TYPE_64BITS = 2,
     PCI_BAR_MEM_TYPE_SHIFT = 1,
 
+    PCI_ROM_MAX_SIZE = 16 * MB,
+    PCI_ROM_MIN_SIZE = GUEST_PAGE_SIZE, // PCI spec min is (1 << 11)
+    PCI_ROM_ENABLE_MASK = 0x1,
+    PCI_ROM_FIRST_ADDRESS_BIT = 11,
+    PCI_ROM_ADDRESS_MASK = ~((1 << PCI_ROM_FIRST_ADDRESS_BIT) - 1),
+    PCI_ROM_MASK = PCI_ROM_ADDRESS_MASK | PCI_ROM_ENABLE_MASK,
+
     PCI_INTTERUPT_PIN_A = 1,
 };
 
@@ -526,10 +533,35 @@ private:
 };
 
 
+static uint32_t generate_rom_size()
+{
+#if 1
+    return 0;
+#else
+    static bool flip = true;
+    static uint shift = 0;
+    uint32_t size;
+
+    D_MESSAGE("implement me");
+
+    if (!(flip = !flip)) {
+        return 0;
+    }
+
+    size = 4096 << shift++;
+
+    ASSERT(size <= PCI_ROM_MAX_SIZE && size >=  PCI_ROM_MIN_SIZE);
+
+    return size;
+#endif
+}
+
+
 PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t device,
                      uint8_t revision, uint32_t class_code, bool with_interrupt)
     : VMPart(name, bus)
     , _interrupt_line (*this)
+    , _rom_size (generate_rom_size())
 {
     if (vendor == 0 || vendor == ~0) {
         THROW("invalid vendor id");
@@ -829,8 +861,10 @@ void PCIDevice::write_command(uint16_t val)
 
         if (val & PCI_COMMAND_ENABLE_MEM) {
             map_mem();
+            map_rom();
         } else {
             unmap_mem();
+            unmap_rom();
         }
     }
 
@@ -1002,6 +1036,47 @@ void PCIDevice::write_bar(uint reg_index, uint32_t val)
 }
 
 
+void PCIDevice::unmap_rom()
+{
+    D_MESSAGE("implement me");
+}
+
+
+void PCIDevice::map_rom()
+{
+    if (!(*reg16(PCI_CONF_COMMAND) & PCI_COMMAND_ENABLE_MEM) ||
+        !((_config_space[PCI_CONF_ROM_ADDRESS >> 2]) & PCI_ROM_ENABLE_MASK)) {
+        return;
+    }
+
+    D_MESSAGE("implement me");
+
+    D_MESSAGE("%s: 0x%lx 0x%lx", get_name().c_str(),
+              _config_space[PCI_CONF_ROM_ADDRESS >> 2] & ~PCI_ROM_ENABLE_MASK,
+              get_rom_size());
+}
+
+
+uint32_t PCIDevice::get_rom_size()
+{
+    return _rom_size;
+}
+
+
+void PCIDevice::write_rom(uint32_t val)
+{
+    unmap_rom();
+
+    if (val == ~1) {
+        _config_space[PCI_CONF_ROM_ADDRESS >> 2] = ~(get_rom_size() - 1);
+        return;
+    }
+
+    _config_space[PCI_CONF_ROM_ADDRESS >> 2] = val & PCI_ROM_MASK;
+    map_rom();
+}
+
+
 void PCIDevice::write_config_dword(uint index, uint32_t val)
 {
     switch (index << 2) {
@@ -1012,6 +1087,9 @@ void PCIDevice::write_config_dword(uint index, uint32_t val)
     case PCI_CONF_BAR_4:
     case PCI_CONF_BAR_5:
         write_bar(index, val);
+        break;
+    case PCI_CONF_ROM_ADDRESS:
+        write_rom(val);
         break;
     default:
         write_config_word(index, 0, val);
@@ -1073,6 +1151,8 @@ void PCIDevice::reset()
 
         region->reset();
     }
+
+    D_MESSAGE("todo: reset rom");
 
     _interrupt_line.reset();
 }

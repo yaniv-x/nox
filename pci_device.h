@@ -87,6 +87,11 @@ private:
     void write_config_dword(uint index, uint32_t val);
     void write_bar(uint reg_index, uint32_t val);
 
+    uint32_t get_rom_size();
+    void unmap_rom();
+    void map_rom();
+    void write_rom(uint32_t val);
+
     void reset_config_space();
     void map_io();
     void unmap_io();
@@ -113,6 +118,7 @@ private:
     uint32_t _config_space[CONFIG_SPACE_SIZE];
     Region* _regions[NUM_BARS];
     Wire _interrupt_line;
+    uint32_t _rom_size;
 
     friend class PCIBus;
 };
