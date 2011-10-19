@@ -69,12 +69,13 @@ enum {
     PM_MASK = (1 << 7),
 
     REG_A_UPDATE_IN_PROGRESS_MASK = (1 << 7),
-    REG_A_DIVIDER_MASK = (0x7 << 4),
+    REG_A_DIVIDER_SHIFT = 4,
+    REG_A_DIVIDER_MASK = (0x7 << REG_A_DIVIDER_SHIFT),
     REG_A_RATE_MASK = 0x0f,
 
-    REG_A_DIVIDER_128 = (0x0 << 4),
-    REG_A_DIVIDER_32 = (0x3 << 4),
-    REG_A_DIVIDER_NORMAL = (0x2 << 4),
+    REG_A_DIVIDER_NORMAL = 0x2,
+    REG_A_DIVIDER_32 = 0x3,
+    REG_A_DIVIDER_128 = 0x0,
 
     REG_A_RATE_DEFAULT = 6,
 
@@ -138,7 +139,7 @@ CMOS::CMOS(NoxVM& vm)
     gmtime_r(&t, &_date);
     _date_base_time = get_monolitic_time();
 
-    _reg_a = REG_A_DIVIDER_NORMAL | REG_A_RATE_DEFAULT,
+    _reg_a = (REG_A_DIVIDER_NORMAL << REG_A_DIVIDER_SHIFT) | REG_A_RATE_DEFAULT,
     _reg_b = 0;
 
     pic->wire(_irq_wire, RTC_IRQ);
@@ -237,6 +238,10 @@ void CMOS::set_reg_a(uint8_t val)
         _period_timer->arm(rates_table[val & REG_A_RATE_MASK], true);
     } else {
         _period_timer->disarm();
+    }
+
+    if (((_reg_a & REG_A_DIVIDER_MASK) >> REG_A_DIVIDER_SHIFT) != REG_A_DIVIDER_NORMAL) {
+        W_MESSAGE("ignoring REG A divider");
     }
 
     _reg_a = val;
