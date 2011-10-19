@@ -74,9 +74,13 @@ enum {
 enum {
     PLATFORM_IO_LOCK = 0x00,
     PLATFORM_IO_INDEX = 0x01,
+    PLATFORM_IO_LOG = 0x02,
     PLATFORM_IO_ERROR = 0x04,
     PLATFORM_IO_DATA = 0x08,
     PLATFORM_IO_END = 0x0c,
+
+    PLATFORM_RAM_PAGES = 1,
+    PLATFORM_LOG_BUF_SIZE = 1024,
 };
 
 enum {
@@ -95,16 +99,29 @@ public:
                 NOX_PCI_DEV_HOST_BRIDGE_REV, mk_pci_class_code(PCI_CLASS_BRIDGE,
                                                                  PCI_SUBCLASS_BRIDGE_HOST, 0),
                 false)
+        , _ram (memory_bus->alloc_physical_ram(*this, PLATFORM_RAM_PAGES, "platform ram"))
     {
+        ASSERT(PLATFORM_LOG_BUF_SIZE <= (PLATFORM_RAM_PAGES << GUEST_PAGE_SHIFT));
         add_io_region(0, PLATFORM_IO_END, this, (io_read_byte_proc_t)&PCIHost::io_read_byte,
                       (io_write_byte_proc_t)&PCIHost::io_write_byte,
                       NULL, NULL,
                       (io_read_dword_proc_t)&PCIHost::io_read_dword,
                       (io_write_dword_proc_t)&PCIHost::io_write_dword);
+
+        add_mem_region(1, _ram, false);
+
         bus.add_device(*this);
     }
 
+    ~PCIHost()
+    {
+        memory_bus->release_physical_ram(_ram);
+    }
+
     virtual uint get_hard_id() { return 0;}
+
+
+    uint8_t* get_ram_ptr() { return memory_bus->get_physical_ram_ptr(_ram);}
 
 private:
     uint8_t io_read_byte(uint16_t port)
@@ -126,6 +143,9 @@ private:
     {
         get_nox().platform_port_write_dword(port - get_region_address(0), val);
     }
+
+private:
+    PhysicalRam* _ram;
 };
 
 
@@ -626,6 +646,15 @@ uint8_t NoxVM::platform_port_read_byte(uint16_t port)
     }
 }
 
+static void replace_none_printable(char* str)
+{
+    for (; *str; str++) {
+        if (!isprint(*str)) {
+            *str = '?';
+        }
+    }
+}
+
 
 void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
 {
@@ -636,6 +665,14 @@ void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
     case PLATFORM_IO_INDEX:
         _platform_reg_index = val;
         break;
+    case PLATFORM_IO_LOG: {
+        AutoArray<uint8_t> str_copy(new uint8_t[PLATFORM_LOG_BUF_SIZE]);
+        strncpy((char*)str_copy.get(), (char*)_pci_host->get_ram_ptr(), PLATFORM_LOG_BUF_SIZE - 1);
+        replace_none_printable((char*)str_copy.get());
+        str_copy[PLATFORM_LOG_BUF_SIZE - 1] = 0;
+        D_MESSAGE("guest: %s", str_copy.get());
+        break;
+    }
     default:
         D_MESSAGE("unexpected port 0x%x val %u", port, val);
     }
