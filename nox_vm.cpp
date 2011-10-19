@@ -149,10 +149,10 @@ private:
 };
 
 
-class EISABridge : public PCIDevice {
+class ISABridge : public PCIDevice {
 public:
-    EISABridge(PCIBus& bus)
-        : PCIDevice("eisa-bridge", bus, NOX_PCI_VENDOR_ID,
+    ISABridge(PCIBus& bus)
+        : PCIDevice("isa-bridge", bus, NOX_PCI_VENDOR_ID,
                                 NOX_PCI_DEV_ID_ISA_BRIDGE,
                                 NOX_PCI_DEV_ISA_BRIDGE_REV,
                                 mk_pci_class_code(PCI_CLASS_BRIDGE, PCI_SUBCLASS_BRIDGE_ISA, 0),
@@ -222,7 +222,7 @@ NoxVM::NoxVM()
     , _pic (new PIC(*this))
     , _pci (new PCIBus(*this))
     , _pci_host (new PCIHost(*_pci.get()))
-    , _eisa_bridge (new EISABridge(*_pci.get()))
+    , _eisa_bridge (new ISABridge(*_pci.get()))
     , _cmos (new CMOS(*this))
     , _dma (new DMA(*this))
     , _pit (new PIT(*this))
