@@ -450,7 +450,7 @@ void NoxVM::reset()
     _misc_port  = 0x01;
     _platform_lock = 0;
     _platform_reg_index = 0;
-    _nmi_mask = false;
+    _nmi_mask = true;
 
     _mem_bus->map_physical_ram(_low_ram, 0, false);
     _mem_bus->map_physical_ram(_mid_ram, MID_RAM_START >> GUEST_PAGE_SHIFT, false);
