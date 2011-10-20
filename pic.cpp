@@ -221,6 +221,10 @@ void PIC::intilization_cont(Chip& chip, uint8_t val)
             }
         }
     }
+
+    if (chip.intilization_mask) {
+        update_IRR(chip);
+    }
 }
 
 
