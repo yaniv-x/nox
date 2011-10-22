@@ -278,7 +278,7 @@ void KbdController::reset_mouse(bool cold)
 
 void KbdController::set_command_byte(uint8_t command_byte)
 {
-    if (_command_byte & COMMAND_BYTE_SYS_MASK) {
+    if (command_byte & COMMAND_BYTE_SYS_MASK) {
         _state |= CTRL_STATUS_SELF_TEST_MASK;
     } else {
         _state &= ~CTRL_STATUS_SELF_TEST_MASK;
@@ -367,7 +367,7 @@ void KbdController::write_to_mouse(uint8_t val)
             break;
         case MOUSE_CMD_SAMPLE_RATE:
             put_mouse_data(KBD_ACK);
-             _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
+            _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
             break;
         case MOUSE_CMD_ENABLE_DATA_REPORTING:
             put_mouse_data(KBD_ACK);
