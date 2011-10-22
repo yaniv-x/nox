@@ -91,6 +91,7 @@ private:
     void io_write_port_a(uint16_t port, uint8_t val);
     uint8_t io_read_status(uint16_t port);
     void io_write_command(uint16_t port, uint8_t val);
+    void write_to_keyboard(uint8_t val);
     void put_mouse_data(uint8_t data);
     void put_data(uint8_t data);
     void restore_keyboard_defaults();
@@ -127,6 +128,7 @@ private:
     bool _kbd_enabled;
     uint8_t _kbd_leds;
     uint8_t _kbd_rate;
+    int _kbd_write_state;
 
     KBCOutput _mouse_output;
     bool _mouse_scaling;

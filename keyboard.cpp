@@ -135,10 +135,16 @@ enum {
     WRITE_STATE_MOUSE,
     WRITE_STATE_MOUSE_OUTPUT,
     WRITE_STATE_COMMAND_BYTE,
-    WRITE_STATE_COMMAND_OUTPUT_PORT,
-    WRITE_STATE_KBD_LEDS,
-    WRITE_STATE_KBD_RATE,
+    WRITE_STATE_OUTPUT_PORT,
 };
+
+
+enum {
+    KBD_WRITE_STATE_CMD,
+    KBD_WRITE_STATE_LEDS,
+    KBD_WRITE_STATE_RATE,
+};
+
 
 enum {
     MOUSE_WRITE_STATE_CMD,
@@ -227,6 +233,7 @@ void KbdController::restore_keyboard_defaults()
 
 void KbdController::reset_keyboard(bool cold)
 {
+    _kbd_write_state = KBD_WRITE_STATE_CMD;
     restore_keyboard_defaults();
     _keyboard_output.buf.reset();
 
@@ -420,23 +427,21 @@ void KbdController::write_to_mouse(uint8_t val)
 }
 
 
-void KbdController::io_write_port_a(uint16_t port, uint8_t val)
+void KbdController::write_to_keyboard(uint8_t val)
 {
-    Lock lock(_mutex);
+    if (!keyboard_is_active()) {
+        return;
+    }
 
-    _state &= ~CTRL_STATUS_LAST_INPUT_COMMAND_MASK;
-    int write_state = _write_state;
-    _write_state = WRITE_STATE_KBD_CMD;
+    int write_state = _kbd_write_state;
+    _kbd_write_state = KBD_WRITE_STATE_CMD;
 
     switch (write_state) {
-    case WRITE_STATE_KBD_CMD:
-        if (!keyboard_is_active()) {
-            return;
-        }
+    case KBD_WRITE_STATE_CMD:
         switch (val) {
         case KBD_CMD_LED:
             put_data(KBD_ACK);
-            _write_state = WRITE_STATE_KBD_LEDS;
+            _kbd_write_state = KBD_WRITE_STATE_LEDS;
             break;
         case KBD_CMD_DISABLE_SCANNING_AND_SET_DEFAULTS:
             _kbd_enabled = false;
@@ -461,11 +466,11 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
             break;
         case KBD_CMD_REPEAT_RATE:
             put_data(KBD_ACK);
-            _write_state = WRITE_STATE_KBD_RATE;
+            _kbd_write_state = KBD_WRITE_STATE_RATE;
             break;
         case KBD_CMD_RESEND:
             put_data(KBD_ACK);
-            D_MESSAGE("todo: resend last mouse packet");
+            D_MESSAGE("todo: resend last keyboard packet");
             break;
         default:
             if (!(val >= KBD_CMD_NOP2_FIRST && val <= KBD_CMD_NOP2_LAST) &&
@@ -474,6 +479,36 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
             }
             put_data(KBD_ACK);
         }
+        break;
+    case KBD_WRITE_STATE_LEDS:
+        if (!keyboard_is_active()) {
+            return;
+        }
+        put_data(KBD_ACK);
+        _kbd_leds = val;
+        break;
+    case KBD_WRITE_STATE_RATE:
+        if (!keyboard_is_active()) {
+            return;
+        }
+        put_data(KBD_ACK);
+        _kbd_rate = val;
+        break;
+    }
+}
+
+
+void KbdController::io_write_port_a(uint16_t port, uint8_t val)
+{
+    Lock lock(_mutex);
+
+    _state &= ~CTRL_STATUS_LAST_INPUT_COMMAND_MASK;
+    int write_state = _write_state;
+    _write_state = WRITE_STATE_KBD_CMD;
+
+    switch (write_state) {
+    case WRITE_STATE_KBD_CMD:
+        write_to_keyboard(val);
         break;
     case WRITE_STATE_MOUSE_OUTPUT:
         put_mouse_data(val);
@@ -484,22 +519,8 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
     case WRITE_STATE_COMMAND_BYTE:
         set_command_byte(val);
         break;
-    case WRITE_STATE_COMMAND_OUTPUT_PORT:
+    case WRITE_STATE_OUTPUT_PORT:
         write_output_port(val);
-        break;
-    case WRITE_STATE_KBD_LEDS:
-        if (!keyboard_is_active()) {
-            return;
-        }
-        put_data(KBD_ACK);
-        _kbd_leds = val;
-        break;
-    case WRITE_STATE_KBD_RATE:
-        if (!keyboard_is_active()) {
-            return;
-        }
-        put_data(KBD_ACK);
-        _kbd_rate = val;
         break;
     }
 }
@@ -613,7 +634,7 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
          _write_state = WRITE_STATE_MOUSE_OUTPUT;
         break;
     case CTRL_CMD_WRITE_OUTPUT_PORT:
-        _write_state = WRITE_STATE_COMMAND_OUTPUT_PORT;
+        _write_state = WRITE_STATE_OUTPUT_PORT;
         break;
     case CTRL_CMD_READ_INPUT_PORT:
         if (!_keyboard_output.buf.is_empty()) {
