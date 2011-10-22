@@ -57,7 +57,8 @@ enum {
     CTRL_CMD_READ_INPUT_PORT = 0xc0,
     CTRL_CMD_READ_OUTPUT_PORT = 0xd0,
     CTRL_CMD_WRITE_OUTPUT_PORT = 0xd1,
-    CTRL_CMD_WRITE_TO_MOUSE_OUTPUT = 0xd3,
+    CTRL_CMD_WRITE_KBD_OUTPUT = 0xd2,
+    CTRL_CMD_WRITE_MOUSE_OUTPUT = 0xd3,
     CTRL_CMD_WRITE_TO_MOUSE = 0xd4,
     CTRL_CMD_DISABLE_A20 = 0xdd,
     CTRL_CMD_ENABLE_A20 = 0xdf,
@@ -133,6 +134,7 @@ enum {
 enum {
     WRITE_STATE_KBD_CMD,
     WRITE_STATE_MOUSE,
+    WRITE_STATE_KBD_OUTPUT,
     WRITE_STATE_MOUSE_OUTPUT,
     WRITE_STATE_COMMAND_BYTE,
     WRITE_STATE_OUTPUT_PORT,
@@ -510,8 +512,13 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
     case WRITE_STATE_KBD_CMD:
         write_to_keyboard(val);
         break;
+    case WRITE_STATE_KBD_OUTPUT:
+        put_data(val); // Write the keyboard controllers output buffer with the byte next
+                       // written to port 0x60, and act as if this was keyboard data.
+        break;
     case WRITE_STATE_MOUSE_OUTPUT:
-        put_mouse_data(val);
+        put_mouse_data(val); // Write the keyboard controllers output buffer with the byte next
+                             // written to port 0x60, and act as if this was mouse data.
         break;
     case WRITE_STATE_MOUSE:
         write_to_mouse(val);
@@ -630,7 +637,10 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
     case CTRL_CMD_WRITE_TO_MOUSE:
          _write_state = WRITE_STATE_MOUSE;
         break;
-    case CTRL_CMD_WRITE_TO_MOUSE_OUTPUT:
+    case CTRL_CMD_WRITE_KBD_OUTPUT:
+         _write_state = WRITE_STATE_KBD_OUTPUT;
+         break;
+    case CTRL_CMD_WRITE_MOUSE_OUTPUT:
          _write_state = WRITE_STATE_MOUSE_OUTPUT;
         break;
     case CTRL_CMD_WRITE_OUTPUT_PORT:
