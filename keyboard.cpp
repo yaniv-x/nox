@@ -616,9 +616,6 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         }
         put_data(CTRL_MOUSE_INTERFACE_TEST_REPLY_NO_ERROR);
         break;
-    case CTRL_CMD_DIAGNOSTIC_DUMP:
-        PANIC("CTRL_CMD_DIAGNOSTIC_DUMP: what?");
-        break;
     case CTRL_CMD_DISABLE_MOUSE:
         _command_byte |= COMMAND_BYTE_DISABLE_MOUSE_MASK;
         break;
