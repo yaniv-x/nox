@@ -347,8 +347,7 @@ void NoxVM::reset_bios_stuff()
 
     //extended memory
     uint64_t ram_size_kb = _ram_size / 1024;
-    ram_size_kb -= 1024;
-    ram_size_kb = (ram_size_kb > ((1 << 16) - 1)) ? ((1 << 16) - 1) : ram_size_kb;
+    ram_size_kb = MIN(ram_size_kb - 1024, 63 * 1024);
     _cmos->host_write(0x17, ram_size_kb);
     _cmos->host_write(0x18, ram_size_kb >> 8);
     _cmos->host_write(0x30, ram_size_kb);
