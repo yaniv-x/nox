@@ -152,6 +152,7 @@ private:
     uint8_t _misc_port;
     uint8_t _platform_lock;
     uint8_t _platform_reg_index;
+    uint32_t _platform_write_pos;
 
     std::list<StateChangeRequest*> _stat_change_req_list;
 
