@@ -98,7 +98,9 @@ private:
     void misc_port_write(uint16_t port, uint8_t val);
     uint8_t misc_port_read(uint16_t port);
     void vgabios_port_write(uint16_t port, uint8_t val);
+#ifdef WITH_BOCHS_BIOS
     void bochs_port_write(uint16_t port, uint8_t val);
+#endif
     void post_diagnostic(uint16_t port, uint8_t val);
     uint8_t platform_port_read_byte(uint16_t port);
     void platform_port_write_byte(uint16_t port, uint8_t val);
