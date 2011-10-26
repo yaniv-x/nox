@@ -75,10 +75,11 @@ enum {
 
 enum {
     PLATFORM_IO_LOCK = 0x00,
-    PLATFORM_IO_INDEX = 0x01,
+    PLATFORM_IO_SELECT = 0x01,
     PLATFORM_IO_LOG = 0x02,
+    PLATFORM_IO_PUT_BYTE = 0x03,
     PLATFORM_IO_ERROR = 0x04,
-    PLATFORM_IO_DATA = 0x08,
+    PLATFORM_IO_REGISTER = 0x08,
     PLATFORM_IO_END = 0x0c,
 
     PLATFORM_RAM_PAGES = 1,
@@ -91,6 +92,7 @@ enum {
     PLATFORM_REG_BELOW_4G_PAGES,
     PLATFORM_REG_BELOW_4G_USED_PAGES,
     PLATFORM_REG_ABOVE_4G_PAGES,
+    PLATFORM_REG_WRITE_POS,
 };
 
 
@@ -452,6 +454,7 @@ void NoxVM::reset()
     _misc_port  = 0x01;
     _platform_lock = 0;
     _platform_reg_index = 0;
+    _platform_write_pos = 0;
     _nmi_mask = true;
 
     _mem_bus->map_physical_ram(_low_ram, 0, false);
@@ -661,10 +664,17 @@ static void replace_none_printable(char* str)
 void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
 {
     switch (port) {
+    case PLATFORM_IO_PUT_BYTE:
+        if (_platform_write_pos >= PLATFORM_RAM_PAGES << GUEST_PAGE_SHIFT) {
+            W_MESSAGE_SOME(10, "write position is out of bound 0x%x", val);
+            break;
+        }
+        _pci_host->get_ram_ptr()[_platform_write_pos++] = val;
+        break;
     case PLATFORM_IO_LOCK:
         _platform_lock = 1;
         break;
-    case PLATFORM_IO_INDEX:
+    case PLATFORM_IO_SELECT:
         _platform_reg_index = val;
         break;
     case PLATFORM_IO_LOG: {
@@ -684,7 +694,7 @@ void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
 uint32_t NoxVM::platform_port_read_dword(uint16_t port)
 {
     switch (port) {
-    case PLATFORM_IO_DATA:
+    case PLATFORM_IO_REGISTER:
         switch (_platform_reg_index) {
         case PLATFORM_REG_BELOW_1M_USED_PAGES:
             return _bios_pages;
@@ -701,6 +711,7 @@ uint32_t NoxVM::platform_port_read_dword(uint16_t port)
         case PLATFORM_REG_ABOVE_4G_PAGES:
             return _high_ram ? _mem_bus->get_physical_ram_size(_high_ram) >> GUEST_PAGE_SHIFT : 0;
         default:
+            D_MESSAGE("unexpected register 0x%x", _platform_reg_index);
             return 0;
         }
     default:
@@ -715,7 +726,20 @@ void NoxVM::platform_port_write_dword(uint16_t port, uint32_t val)
     switch (port) {
     case PLATFORM_IO_ERROR:
         D_MESSAGE("platform error code 0x%x", val);
-        return;
+        break;
+    case PLATFORM_IO_REGISTER:
+        switch(_platform_reg_index) {
+        case PLATFORM_REG_WRITE_POS:
+            if (val >= PLATFORM_RAM_PAGES << GUEST_PAGE_SHIFT) {
+                W_MESSAGE_SOME(10, "write position is out of bound 0x%x", val);
+            }
+
+            _platform_write_pos = val;
+            break;
+        default:
+            D_MESSAGE("unexpected register 0x%x", _platform_reg_index);
+        }
+        break;
     default:
         D_MESSAGE("unexpected port 0x%x val %u", port, val);
     }
