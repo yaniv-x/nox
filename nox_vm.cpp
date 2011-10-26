@@ -52,17 +52,19 @@ enum {
     IO_PORT_MISC = 0x61,
     IO_PORT_POST_DIAGNOSTIC = 0x80,
     IO_PORT_A20 = 0x92,
+#ifdef WITH_BOCHS_BIOS
     IO_PORT_BOCHS_PANIC_1 = 0x400,
     IO_PORT_BOCHS_PANIC_2 = 0x401,
     IO_PORT_BOCHS_INFO = 0x402,
     IO_PORT_BOCHS_DEBUG = 0x403,
     IO_PORT_BOCHS_MY_TEST = 0x404,
-
+#endif
     IO_PORT_VGA_BIOS_MESSAGE = 0x500,
 
     LOW_RAM_SIZE = 640 * KB,
     MID_RAM_START = 768 * KB,
-    MID_RAM_MAX_ADDRESS = 0xc0000000, // is hardcoded in bios
+    MID_RAM_MAX_ADDRESS = 0xc0000000, // is hardcoded in bochs bios, is dynamic in case of
+                                      // nox bios
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
 
     BIOS_FOOTER_SIZE = 16,
@@ -244,11 +246,11 @@ NoxVM::NoxVM()
     add_io_region(_io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                            (io_read_byte_proc_t)&NoxVM::a20_port_read,
                                            (io_write_byte_proc_t)&NoxVM::a20_port_write));
-
+#ifdef WITH_BOCHS_BIOS
     add_io_region(_io_bus->register_region(*this, IO_PORT_BOCHS_PANIC_1, 5, this,
                                            NULL,
                                            (io_write_byte_proc_t)&NoxVM::bochs_port_write));
-
+#endif
     add_io_region(_io_bus->register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
                                            NULL,
                                            (io_write_byte_proc_t)&NoxVM::post_diagnostic));
@@ -340,6 +342,7 @@ void NoxVM::reset_bios_stuff()
     _cmos->host_write(0x32, 0x20); // IBM
     _cmos->host_write(0x37, 0x20); // PS2
 
+#ifdef WITH_BOCHS_BIOS
     /****************************************** mem ***********************************************/
     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
@@ -382,7 +385,7 @@ void NoxVM::reset_bios_stuff()
     _cmos->host_write(0x5d, above_4G >> 32);
 
     /****************************************** mem end *******************************************/
-
+#endif
     if (_boot_from_cdrom) {
         _cmos->host_write(0x3d, 0x03); //first boot device is CD
     } else {
@@ -588,7 +591,7 @@ uint8_t NoxVM::misc_port_read(uint16_t port)
     return _misc_port | (_pit->get_output_level(2) ? 0x20 : 0);
 }
 
-
+#ifdef WITH_BOCHS_BIOS
 void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
 {
     switch (port) {
@@ -610,7 +613,7 @@ void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
         D_MESSAGE("my %u", val);
     };
 }
-
+#endif
 
 void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
 {
