@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
+#include "nox.h"
 #include "cpu.h"
 #include "application.h"
 #include "nox_vm.h"
@@ -70,30 +71,8 @@ enum {
     BIOS_FOOTER_SIZE = 16,
 };
 
-#define NOX_PCI_DEV_HOST_BRIDGE_REV 1
+
 #define NOX_PCI_DEV_ISA_BRIDGE_REV 1
-
-enum {
-    PLATFORM_IO_LOCK = 0x00,
-    PLATFORM_IO_SELECT = 0x01,
-    PLATFORM_IO_LOG = 0x02,
-    PLATFORM_IO_PUT_BYTE = 0x03,
-    PLATFORM_IO_ERROR = 0x04,
-    PLATFORM_IO_REGISTER = 0x08,
-    PLATFORM_IO_END = 0x0c,
-
-    PLATFORM_RAM_PAGES = 1,
-    PLATFORM_LOG_BUF_SIZE = 1024,
-};
-
-enum {
-    PLATFORM_REG_BELOW_1M_USED_PAGES,
-    PLATFORM_REG_ABOVE_1M_PAGES,
-    PLATFORM_REG_BELOW_4G_PAGES,
-    PLATFORM_REG_BELOW_4G_USED_PAGES,
-    PLATFORM_REG_ABOVE_4G_PAGES,
-    PLATFORM_REG_WRITE_POS,
-};
 
 
 class PCIHost: public PCIDevice {
@@ -103,9 +82,9 @@ public:
                 NOX_PCI_DEV_HOST_BRIDGE_REV, mk_pci_class_code(PCI_CLASS_BRIDGE,
                                                                  PCI_SUBCLASS_BRIDGE_HOST, 0),
                 false)
-        , _ram (memory_bus->alloc_physical_ram(*this, PLATFORM_RAM_PAGES, "platform ram"))
+        , _ram (memory_bus->alloc_physical_ram(*this, PLATFORM_MEM_PAGES, "platform ram"))
     {
-        ASSERT(PLATFORM_LOG_BUF_SIZE <= (PLATFORM_RAM_PAGES << GUEST_PAGE_SHIFT));
+        ASSERT(PLATFORM_LOG_BUF_SIZE <= (PLATFORM_MEM_PAGES << GUEST_PAGE_SHIFT));
         add_io_region(0, PLATFORM_IO_END, this, (io_read_byte_proc_t)&PCIHost::io_read_byte,
                       (io_write_byte_proc_t)&PCIHost::io_write_byte,
                       NULL, NULL,
@@ -665,7 +644,7 @@ void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
 {
     switch (port) {
     case PLATFORM_IO_PUT_BYTE:
-        if (_platform_write_pos >= PLATFORM_RAM_PAGES << GUEST_PAGE_SHIFT) {
+        if (_platform_write_pos >= (PLATFORM_MEM_PAGES << GUEST_PAGE_SHIFT)) {
             W_MESSAGE_SOME(10, "write position is out of bound 0x%x", val);
             break;
         }
@@ -730,7 +709,7 @@ void NoxVM::platform_port_write_dword(uint16_t port, uint32_t val)
     case PLATFORM_IO_REGISTER:
         switch(_platform_reg_index) {
         case PLATFORM_REG_WRITE_POS:
-            if (val >= PLATFORM_RAM_PAGES << GUEST_PAGE_SHIFT) {
+            if (val >= (PLATFORM_MEM_PAGES << GUEST_PAGE_SHIFT)) {
                 W_MESSAGE_SOME(10, "write position is out of bound 0x%x", val);
             }
 
