@@ -615,7 +615,7 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 {
     ASSERT(port == IO_PORT_POST_DIAGNOSTIC);
 
-    //printf("POST 0x%x\n", val);
+    D_MESSAGE("POST 0x%x", val);
 }
 
 
@@ -659,8 +659,8 @@ void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
     case PLATFORM_IO_LOG: {
         AutoArray<uint8_t> str_copy(new uint8_t[PLATFORM_LOG_BUF_SIZE]);
         strncpy((char*)str_copy.get(), (char*)_pci_host->get_ram_ptr(), PLATFORM_LOG_BUF_SIZE - 1);
-        replace_none_printable((char*)str_copy.get());
         str_copy[PLATFORM_LOG_BUF_SIZE - 1] = 0;
+        replace_none_printable((char*)str_copy.get());
         D_MESSAGE("guest: %s", str_copy.get());
         break;
     }
