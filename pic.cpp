@@ -144,6 +144,7 @@ uint8_t PIC::io_read_port_0(uint16_t port)
 void PIC::reset_chip(Chip& chip)
 {
     chip.mode = MODE_FULLY_NESTED;
+    chip.revert_mode = chip.mode;
     memset(chip.regs, 0, sizeof(chip.regs));
     chip.vector_base = is_slave(chip) ? PIC1_DEFAULT_ADDRESS : PIC0_DEFAULT_ADDRESS;
     chip.read_index = REG_INDEX_IRR;
@@ -218,6 +219,7 @@ void PIC::intilization_cont(Chip& chip, uint8_t val)
         if (val & ICW4_SPECIAL_FULLY_NESTED_MASK) {
             if (is_master(chip)) {
                 chip.mode = MODE_SPECIAL_FULLY_NESTED;
+                chip.revert_mode = chip.mode;
             }
         }
     }
@@ -230,14 +232,13 @@ void PIC::intilization_cont(Chip& chip, uint8_t val)
 
 void PIC::set_mask_mode(Chip& chip)
 {
-    chip.saved_mode = chip.mode;
     chip.mode = MODE_MASK;
 }
 
 
 void PIC::clear_mask_mode(Chip& chip)
 {
-    chip.mode = chip.saved_mode;
+    chip.mode = chip.revert_mode;
 }
 
 

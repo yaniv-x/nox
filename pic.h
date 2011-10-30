@@ -81,7 +81,7 @@ private:
         uint8_t highst_priority;
 
         uint8_t cascade_pin;
-        uint8_t saved_mode;
+        uint8_t revert_mode;
     };
 
     void intilization_start(Chip& chip, uint8_t val);
