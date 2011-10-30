@@ -287,7 +287,7 @@ void CMOS::set_reg_b(uint8_t val)
     }
 
     if ((_reg_a & REG_A_RATE_MASK) && (val & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
-        _period_timer->arm(rates_table[val & REG_A_RATE_MASK], true);
+        _period_timer->arm(rates_table[_reg_a & REG_A_RATE_MASK], true);
     } else {
         _period_timer->disarm();
     }
