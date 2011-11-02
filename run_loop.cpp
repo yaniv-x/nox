@@ -163,8 +163,8 @@ public:
         }
     }
 
-    virtual void arm(nox_time_t delte, bool auto_arm);
-    virtual void modifay(nox_time_t delte) { _interval = delte;}
+    virtual void arm(nox_time_t delta, bool auto_arm);
+    virtual void modify(nox_time_t delta) { ASSERT(int64_t(delta) > 0); _interval = delta;}
 
     virtual void disarm(bool sync = false)
     {
@@ -280,7 +280,7 @@ void IntervalTimer::rearm()
 }
 
 
-void IntervalTimer::arm(nox_time_t delte, bool auto_arm)
+void IntervalTimer::arm(nox_time_t delta, bool auto_arm)
 {
     Lock lock(_loop._timers_mutex);
 
@@ -288,8 +288,10 @@ void IntervalTimer::arm(nox_time_t delte, bool auto_arm)
         _loop._timers.remove(_link);
     }
 
-    _interval = (auto_arm) ? delte : 0;
-    _next_time = get_monolitic_time() + delte;
+    ASSERT(int64_t(delta) > 0);
+
+    _interval = (auto_arm) ? delta : 0;
+    _next_time = get_monolitic_time() + delta;
     push();
 
     if (_loop._timers.head() == &_link && !pthread_equal(pthread_self(), _loop._run_loop_thread)) {

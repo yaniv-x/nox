@@ -100,6 +100,11 @@ enum {
     REG_D_POWER_STABLE_MASK = (1 << 7),
 };
 
+enum {
+    NANO_PER_MICRO = 1000,
+    NANO_PER_MILI = NANO_PER_MICRO * 1000,
+    NANO_PER_SEC = NANO_PER_MILI * 1000,
+};
 
 static uint32_t rates_table[] = {
     0,
@@ -126,18 +131,18 @@ CMOS::CMOS(NoxVM& vm)
     , _irq_wire (*this)
     , _period_timer (application->create_timer((void_callback_t)&CMOS::period_timer_proc, this))
     , _alarm_timer (application->create_timer((void_callback_t)&CMOS::alarm_timer_proc, this))
-    , _update_timer (application->create_timer((void_callback_t)&CMOS::update_timer_proc, this))
+    , _update_timer (application->create_timer((void_callback_t)&CMOS::update_cycle, this))
     , _index (0)
 {
     memset(_user_ares, 0, sizeof(_user_ares));
     add_io_region(io_bus->register_region(*this, 0x70, 2, this,
                                           (io_read_byte_proc_t)&CMOS::read_byte,
                                           (io_write_byte_proc_t)&CMOS::write_byte));
-
-
     time_t t = time(NULL);
     gmtime_r(&t, &_date);
     _date_base_time = get_monolitic_time();
+    _suspend_time = _date_base_time;
+    _next_update_time = _suspend_time + NANO_PER_SEC;
 
     _reg_a = (REG_A_DIVIDER_NORMAL << REG_A_DIVIDER_SHIFT) | REG_A_RATE_DEFAULT,
     _reg_b = 0;
@@ -163,7 +168,24 @@ void CMOS::reset()
     _reg_b &= ~REG_B_CLEAR_ON_RESET_MASK;
     _reg_c = 0;
     remap_io_regions();
-    _alarm_on_resume = false;
+}
+
+
+inline bool CMOS::is_lazy_mode()
+{
+    return !(_reg_b & REG_B_ENABLE_UPDATE_INTERRUPT_MASK);
+}
+
+
+inline bool CMOS::is_clock_halted()
+{
+    return !!(_reg_b & REG_B_HALT_CLOCK_MASK);
+}
+
+
+inline bool CMOS::is_alarm_on()
+{
+    return !!(_reg_b & REG_B_ENABLE_ALARM_INTERRUPT_MASK);
 }
 
 
@@ -182,51 +204,106 @@ void CMOS::period_timer_proc()
 
 void CMOS::alarm_timer_proc()
 {
-    if (get_state() == VMPart::STOPPING || get_state() == VMPart::STOPPED) {
-        _alarm_on_resume = true;
-        return;
-    }
+    Lock lock(_mutex);
 
     ASSERT(get_state() == VMPart::RUNNING);
 
-    Lock lock(_mutex);
-
-    if ((_reg_b & REG_B_HALT_CLOCK_MASK) || !(_reg_b & REG_B_ENABLE_ALARM_INTERRUPT_MASK)) {
+    if (is_clock_halted() || !is_alarm_on() || !is_lazy_mode()) {
         return;
     }
 
-    _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
-    _irq_wire.spike();
+    if (lazy_update()) {
+        return;
+    }
+
+    D_MESSAGE("unexpected too early. rescheduling");
+    reschedule_alarm();
 }
 
 
-void CMOS::update_timer_proc()
+bool CMOS::lazy_update()
 {
-    ASSERT(get_state() == VMPart::RUNNING);
+    if (is_clock_halted() || !is_lazy_mode()) {
+        return false;
+    }
 
+    ASSERT(_next_update_time);
+
+    uint64_t now = get_monolitic_time();
+
+    if (now < _next_update_time) {
+        return false;
+    }
+
+    uint64_t delta = 1 + (now - _next_update_time) / NANO_PER_SEC;
+    time_t time = timegm(&_date);
+
+    if (is_alarm_on() && _alarm_time <= time + delta) {
+        if (_alarm_time < time + delta) {
+            time_t shift = time + delta - _alarm_time;
+            W_MESSAGE("too late guest time shift backword %lusec", shift);
+            ASSERT(delta - shift > 0);
+            time += delta - shift;
+        } else {
+            time += delta;
+        }
+
+        gmtime_r(&time, &_date);
+        _next_update_time += delta * NANO_PER_SEC;
+
+        _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
+        _irq_wire.spike();
+
+        reschedule_alarm();
+        return true;
+    } else {
+        time += delta;
+        gmtime_r(&time, &_date);
+        _next_update_time += delta * NANO_PER_SEC;
+        return false;
+    }
+}
+
+
+void CMOS::update_cycle()
+{
     Lock lock(_mutex);
 
-    if ((_reg_b & REG_B_HALT_CLOCK_MASK) || !(_reg_b & REG_B_ENABLE_UPDATE_INTERRUPT_MASK)) {
+    ASSERT(get_state() == VMPart::RUNNING);
+
+    if (is_clock_halted() || is_lazy_mode()) {
         return;
+    }
+
+    uint64_t now = get_monolitic_time();
+
+    ASSERT(_next_update_time);
+
+    if (now < _next_update_time) {
+        D_MESSAGE("too early");
+        _update_timer->modify(_next_update_time - now);
+        return;
+    }
+
+    if (now - _next_update_time > NANO_PER_SEC) {
+       nox_time_t shift = (now - _next_update_time) / NANO_PER_SEC;
+        W_MESSAGE("too late. guest time shift backword %lusec", shift);
+        _next_update_time += shift * NANO_PER_SEC;
+    }
+
+    time_t time = timegm(&_date) + 1;
+    gmtime_r(&time, &_date);
+
+    _next_update_time += NANO_PER_SEC;
+    _update_timer->modify(_next_update_time - now);
+
+    if (is_alarm_on() && _date.tm_hour == _hours_alarm && _date.tm_min == _minutes_alarm &&
+                                                          _date.tm_sec == _seconds_alarm) {
+        _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
     }
 
     _reg_c |= REG_C_INTERRUPT_MASK | REG_C_UPDATE_INTERRUPT_MASK;
     _irq_wire.spike();
-}
-
-
-void CMOS::update_date()
-{
-    if (_reg_b & REG_B_HALT_CLOCK_MASK) {
-        return;
-    }
-
-    uint64_t delta = get_monolitic_time() - _date_base_time;
-
-    time_t time = timegm(&_date);
-    time += delta / (1000 * 1000 * 1000);
-    gmtime_r(&time, &_date);
-    _date_base_time += delta - delta % (1000 * 1000 * 1000);
 }
 
 
@@ -247,10 +324,11 @@ void CMOS::set_reg_a(uint8_t val)
     _reg_a = val;
 }
 
+
 // called after time is up to date
 void CMOS::reschedule_alarm()
 {
-    if ((_reg_b & REG_B_HALT_CLOCK_MASK) || !(_reg_b & REG_B_ENABLE_ALARM_INTERRUPT_MASK)) {
+    if (is_clock_halted() || !is_alarm_on() || !is_lazy_mode()) {
         _alarm_timer->disarm();
         return;
     }
@@ -266,25 +344,31 @@ void CMOS::reschedule_alarm()
         dest = 24 * 60 * 60;
     }
 
-    _alarm_timer->arm(nox_time_t(dest) * 1000 * 1000 * 1000, false);
+    _alarm_time = timegm(&_date) + dest;
+
+    nox_time_t next_update = _next_update_time - get_monolitic_time();
+    _alarm_timer->arm(nox_time_t(dest -1) * NANO_PER_SEC + next_update , true);
 }
 
 
 void CMOS::set_reg_b(uint8_t val)
 {
+    nox_time_t now = get_monolitic_time();
+    lazy_update();
+
     if ((val & REG_B_HALT_CLOCK_MASK) != (_reg_b & REG_B_HALT_CLOCK_MASK)) {
         if (val & REG_B_HALT_CLOCK_MASK) {
             _update_timer->disarm();
             _alarm_timer->disarm();
-            update_date();
+            _suspend_time = now;
         } else {
-            _date_base_time = get_monolitic_time();
+            ASSERT(_suspend_time);
+            _next_update_time = now + MAX(0, int64_t(_next_update_time - _suspend_time));
+            _suspend_time = 0;
         }
     }
 
-    if (!(val & REG_B_HALT_CLOCK_MASK) && (val & REG_B_ENABLE_UPDATE_INTERRUPT_MASK)) {
-        _update_timer->arm(1000 * 1000 * 1000, true);
-    }
+    _reg_b = val;
 
     if ((_reg_a & REG_A_RATE_MASK) && (val & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
         _period_timer->arm(rates_table[_reg_a & REG_A_RATE_MASK], true);
@@ -292,9 +376,12 @@ void CMOS::set_reg_b(uint8_t val)
         _period_timer->disarm();
     }
 
-    _reg_b = val;
+    if (!is_clock_halted() && !is_lazy_mode()) {
+        _update_timer->arm(_next_update_time - now, true);
+    } else {
+        _update_timer->disarm();
+    }
 
-    update_date();
     reschedule_alarm();
 }
 
@@ -329,51 +416,51 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
     } else if (port == 0x71) {
         switch (_index) {
         case SECONDS:
+            lazy_update();
             val = localize(val);
-            update_date();
             _date.tm_sec = val % 60;
             break;
         case SECONDS_ALARM:
-            update_date();
+            lazy_update();
             _seconds_alarm = localize(val) % 60;
             break;
         case MINUTES:
+            lazy_update();
             val = localize(val);
-            update_date();
             _date.tm_sec = val % 60;
             break;
         case MINUTES_ALARM:
-            update_date();
+            lazy_update();
             _minutes_alarm = localize(val) % 60;
             break;
         case HOURS:
-            update_date();
+            lazy_update();
             _date.tm_hour = localize_hours(val);
             break;
         case HOURS_ALARM:
-            update_date();
+            lazy_update();
             _hours_alarm = localize_hours(val);
             break;
         case DAY_OF_WEEK:
-            update_date();
+            lazy_update();
             val = localize(val) - 1;
             val %= 7;
             _date.tm_wday = val;
-            return;
+            break;
         case DAY_OF_MOUNTH:
-            update_date();
+            lazy_update();
             val = MAX(localize(val), 1);
             _date.tm_mday = MIN(val, 31);
-            return;
+            break;
         case MOUNTH:
-            update_date();
+            lazy_update();
             val = MAX(localize(val) - 1, 1);
             _date.tm_mon = MIN(val, 11);
-            return;
+            break;
         case YEAR:
-            update_date();
+            lazy_update();
             _date.tm_year = localize(val);
-            return;
+            break;
         case REGA:
             set_reg_a(val);
             return;
@@ -458,6 +545,23 @@ uint8_t CMOS::delocalize_hours(uint8_t val)
 }
 
 
+uint8_t CMOS::get_update_in_progress()
+{
+    if ((_reg_b & REG_B_HALT_CLOCK_MASK)) {
+        return 0;
+    }
+
+    lazy_update();
+
+    // according to ICH7 doc 0 => update will not start for at last 488 micro and the entire
+    // update cycle dose not take more than 1984 micro
+    // todo: measure the time it take to read the date and time from guest
+    //       and configure it threshold accordingly
+    int64_t delta = _next_update_time - get_monolitic_time();
+    return (delta >= 2 * NANO_PER_MILI) ? 0 : REG_A_UPDATE_IN_PROGRESS_MASK;
+}
+
+
 uint8_t CMOS::read_byte(uint16_t port)
 {
     Lock lock(_mutex);
@@ -465,36 +569,34 @@ uint8_t CMOS::read_byte(uint16_t port)
     if (port == 0x71) {
         switch (_index) {
         case SECONDS:
-            update_date();
+            lazy_update();
             return delocalize(_date.tm_sec % 60);
         case SECONDS_ALARM:
             return delocalize(_seconds_alarm);
         case MINUTES:
-            update_date();
+            lazy_update();
             return delocalize(_date.tm_min);
         case MINUTES_ALARM:
             return delocalize(_minutes_alarm);
         case HOURS:
-            update_date();
+            lazy_update();
             return delocalize_hours(_date.tm_hour);
         case HOURS_ALARM:
             return delocalize_hours(_hours_alarm);
         case DAY_OF_WEEK:
-            update_date();
+            lazy_update();
             return delocalize(_date.tm_wday + 1);
         case DAY_OF_MOUNTH:
-            update_date();
+            lazy_update();
             return delocalize(_date.tm_mday);
         case MOUNTH:
-            update_date();
+            lazy_update();
             return delocalize(_date.tm_mon + 1);
         case YEAR:
-            update_date();
+            lazy_update();
             return delocalize(_date.tm_year);
         case REGA: {
-            nox_time_t now = get_monolitic_time();
-            // update in prgress for 20us every second
-            return _reg_a | ((now % 1000000) <= 20000 ? REG_A_UPDATE_IN_PROGRESS_MASK : 0);
+            return _reg_a | get_update_in_progress();
         }
         case REGB:
             return _reg_b;
@@ -561,18 +663,29 @@ void CMOS::host_write(uint index, uint value)
 
 bool CMOS::start()
 {
+    if (_date_base_time) {
+        time_t time = timegm(&_date);
+        time += (get_monolitic_time() - _date_base_time) / NANO_PER_SEC;
+        gmtime_r(&time, &_date);
+        _date_base_time = 0;
+    }
+
     if ((_reg_a & REG_A_RATE_MASK) && (_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
         _period_timer->arm(rates_table[_reg_a & REG_A_RATE_MASK], true);
     }
 
-    if (!(_reg_b & REG_B_HALT_CLOCK_MASK) && (_reg_b & REG_B_ENABLE_UPDATE_INTERRUPT_MASK)) {
-        _update_timer->arm(1000 * 1000 * 1000, true);
+    if (!is_clock_halted()) {
+        nox_time_t now = get_monolitic_time();
+        ASSERT(_suspend_time);
+        _next_update_time = now + MAX(0, int64_t(_next_update_time - _suspend_time));
+        _suspend_time = 0;
+
+        if (!is_lazy_mode()) {
+            _update_timer->arm(_next_update_time - now, true);
+        }
     }
 
-    if (_alarm_on_resume) {
-        _alarm_timer->arm(0, false);
-        _alarm_on_resume = false;
-    }
+    reschedule_alarm();
 
     return true;
 }
@@ -582,6 +695,11 @@ bool CMOS::stop()
 {
     _period_timer->disarm();
     _update_timer->disarm();
+    _alarm_timer->disarm();
+
+    if (!is_clock_halted()) {
+        _suspend_time = get_monolitic_time();
+    }
 
     return true;
 }

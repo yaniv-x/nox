@@ -52,17 +52,22 @@ public:
 private:
     virtual void write_byte(uint16_t port, uint8_t val);
     virtual uint8_t read_byte(uint16_t port);
-    void update_date();
+
+    bool is_lazy_mode();
+    bool is_clock_halted();
+    bool is_alarm_on();
+    bool lazy_update();
+    void update_cycle();
     uint8_t localize_hours(uint8_t val);
     uint localize(uint val);
     uint8_t delocalize_hours(uint8_t val);
     uint delocalize(uint val);
     void period_timer_proc();
     void alarm_timer_proc();
-    void update_timer_proc();
     void reschedule_alarm();
     void set_reg_a(uint8_t val);
     void set_reg_b(uint8_t val);
+    uint8_t get_update_in_progress();
 
     enum {
         SECONDS,
@@ -99,10 +104,12 @@ private:
     uint _index;
     struct tm _date;
     nox_time_t _date_base_time;
+    nox_time_t _next_update_time;
+    nox_time_t _suspend_time;
+    time_t _alarm_time;
     uint8_t _seconds_alarm;
     uint8_t _minutes_alarm;
     uint8_t _hours_alarm;
-    bool _alarm_on_resume;
 };
 
 #endif

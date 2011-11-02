@@ -35,7 +35,7 @@ public:
     virtual void destroy(bool sync = false) = 0;
     virtual void arm(nox_time_t delte, bool auto_arm) = 0;
     virtual void disarm(bool sync = false) = 0;
-    virtual void modifay(nox_time_t delte) = 0;
+    virtual void modify(nox_time_t delte) = 0;
     virtual void suspend() = 0;
     virtual void resume() = 0;
 
