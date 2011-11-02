@@ -56,7 +56,7 @@ private:
     bool is_lazy_mode();
     bool is_clock_halted();
     bool is_alarm_on();
-    bool lazy_update();
+    bool lazy_update(nox_time_t update_time);
     void update_cycle();
     uint8_t localize_hours(uint8_t val);
     uint localize(uint val);
@@ -64,10 +64,10 @@ private:
     uint delocalize(uint val);
     void period_timer_proc();
     void alarm_timer_proc();
-    void reschedule_alarm();
+    void reschedule_alarm(nox_time_t update_time);
     void set_reg_a(uint8_t val);
-    void set_reg_b(uint8_t val);
-    uint8_t get_update_in_progress();
+    void set_reg_b(uint8_t val, nox_time_t update_time);
+    uint8_t get_update_in_progress(nox_time_t update_time);
 
     enum {
         SECONDS,

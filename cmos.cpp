@@ -212,24 +212,24 @@ void CMOS::alarm_timer_proc()
         return;
     }
 
-    if (lazy_update()) {
+    nox_time_t update_time = get_monolitic_time();
+
+    if (lazy_update(update_time)) {
         return;
     }
 
     D_MESSAGE("unexpected too early. rescheduling");
-    reschedule_alarm();
+    reschedule_alarm(update_time);
 }
 
 
-bool CMOS::lazy_update()
+bool CMOS::lazy_update(nox_time_t now)
 {
     if (is_clock_halted() || !is_lazy_mode()) {
         return false;
     }
 
     ASSERT(_next_update_time);
-
-    uint64_t now = get_monolitic_time();
 
     if (now < _next_update_time) {
         return false;
@@ -254,7 +254,7 @@ bool CMOS::lazy_update()
         _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
         _irq_wire.spike();
 
-        reschedule_alarm();
+        reschedule_alarm(now);
         return true;
     } else {
         time += delta;
@@ -326,7 +326,7 @@ void CMOS::set_reg_a(uint8_t val)
 
 
 // called after time is up to date
-void CMOS::reschedule_alarm()
+void CMOS::reschedule_alarm(nox_time_t update_time)
 {
     if (is_clock_halted() || !is_alarm_on() || !is_lazy_mode()) {
         _alarm_timer->disarm();
@@ -346,15 +346,14 @@ void CMOS::reschedule_alarm()
 
     _alarm_time = timegm(&_date) + dest;
 
-    nox_time_t next_update = _next_update_time - get_monolitic_time();
+    nox_time_t next_update = _next_update_time - update_time;
     _alarm_timer->arm(nox_time_t(dest -1) * NANO_PER_SEC + next_update , true);
 }
 
 
-void CMOS::set_reg_b(uint8_t val)
+void CMOS::set_reg_b(uint8_t val, nox_time_t now)
 {
-    nox_time_t now = get_monolitic_time();
-    lazy_update();
+    lazy_update(now);
 
     if ((val & REG_B_HALT_CLOCK_MASK) != (_reg_b & REG_B_HALT_CLOCK_MASK)) {
         if (val & REG_B_HALT_CLOCK_MASK) {
@@ -382,7 +381,7 @@ void CMOS::set_reg_b(uint8_t val)
         _update_timer->disarm();
     }
 
-    reschedule_alarm();
+    reschedule_alarm(now);
 }
 
 
@@ -414,58 +413,51 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
         get_nox().set_nmi_mask(!!(val & NMI_MASK));
         _index = val & INDEX_MASK;
     } else if (port == 0x71) {
+        nox_time_t update_time = get_monolitic_time();
+        lazy_update(update_time);
+
         switch (_index) {
         case SECONDS:
-            lazy_update();
             val = localize(val);
             _date.tm_sec = val % 60;
             break;
         case SECONDS_ALARM:
-            lazy_update();
             _seconds_alarm = localize(val) % 60;
             break;
         case MINUTES:
-            lazy_update();
             val = localize(val);
             _date.tm_sec = val % 60;
             break;
         case MINUTES_ALARM:
-            lazy_update();
             _minutes_alarm = localize(val) % 60;
             break;
         case HOURS:
-            lazy_update();
             _date.tm_hour = localize_hours(val);
             break;
         case HOURS_ALARM:
-            lazy_update();
             _hours_alarm = localize_hours(val);
             break;
         case DAY_OF_WEEK:
-            lazy_update();
             val = localize(val) - 1;
             val %= 7;
             _date.tm_wday = val;
             break;
         case DAY_OF_MOUNTH:
-            lazy_update();
             val = MAX(localize(val), 1);
             _date.tm_mday = MIN(val, 31);
             break;
         case MOUNTH:
-            lazy_update();
             val = MAX(localize(val) - 1, 1);
             _date.tm_mon = MIN(val, 11);
             break;
         case YEAR:
-            lazy_update();
             _date.tm_year = localize(val);
             break;
         case REGA:
             set_reg_a(val);
             return;
         case REGB:
-            set_reg_b(val);
+            set_reg_b(val, update_time);
             return;
         case REGC:
         case REGD:
@@ -503,7 +495,7 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
             return;
         }
 
-        reschedule_alarm();
+        reschedule_alarm(update_time);
 
     } else {
         PANIC("unexpectd");
@@ -545,19 +537,17 @@ uint8_t CMOS::delocalize_hours(uint8_t val)
 }
 
 
-uint8_t CMOS::get_update_in_progress()
+uint8_t CMOS::get_update_in_progress(nox_time_t update_time)
 {
     if ((_reg_b & REG_B_HALT_CLOCK_MASK)) {
         return 0;
     }
 
-    lazy_update();
-
     // according to ICH7 doc 0 => update will not start for at last 488 micro and the entire
     // update cycle dose not take more than 1984 micro
     // todo: measure the time it take to read the date and time from guest
     //       and configure it threshold accordingly
-    int64_t delta = _next_update_time - get_monolitic_time();
+    int64_t delta = _next_update_time - update_time;
     return (delta >= 2 * NANO_PER_MILI) ? 0 : REG_A_UPDATE_IN_PROGRESS_MASK;
 }
 
@@ -567,36 +557,32 @@ uint8_t CMOS::read_byte(uint16_t port)
     Lock lock(_mutex);
 
     if (port == 0x71) {
+        nox_time_t update_time = get_monolitic_time();
+        lazy_update(update_time);
+
         switch (_index) {
         case SECONDS:
-            lazy_update();
             return delocalize(_date.tm_sec % 60);
         case SECONDS_ALARM:
             return delocalize(_seconds_alarm);
         case MINUTES:
-            lazy_update();
             return delocalize(_date.tm_min);
         case MINUTES_ALARM:
             return delocalize(_minutes_alarm);
         case HOURS:
-            lazy_update();
             return delocalize_hours(_date.tm_hour);
         case HOURS_ALARM:
             return delocalize_hours(_hours_alarm);
         case DAY_OF_WEEK:
-            lazy_update();
             return delocalize(_date.tm_wday + 1);
         case DAY_OF_MOUNTH:
-            lazy_update();
             return delocalize(_date.tm_mday);
         case MOUNTH:
-            lazy_update();
             return delocalize(_date.tm_mon + 1);
         case YEAR:
-            lazy_update();
             return delocalize(_date.tm_year);
         case REGA: {
-            return _reg_a | get_update_in_progress();
+            return _reg_a | get_update_in_progress(update_time);
         }
         case REGB:
             return _reg_b;
@@ -663,9 +649,11 @@ void CMOS::host_write(uint index, uint value)
 
 bool CMOS::start()
 {
+    nox_time_t now = get_monolitic_time();
+
     if (_date_base_time) {
         time_t time = timegm(&_date);
-        time += (get_monolitic_time() - _date_base_time) / NANO_PER_SEC;
+        time += (now - _date_base_time) / NANO_PER_SEC;
         gmtime_r(&time, &_date);
         _date_base_time = 0;
     }
@@ -675,7 +663,6 @@ bool CMOS::start()
     }
 
     if (!is_clock_halted()) {
-        nox_time_t now = get_monolitic_time();
         ASSERT(_suspend_time);
         _next_update_time = now + MAX(0, int64_t(_next_update_time - _suspend_time));
         _suspend_time = 0;
@@ -685,7 +672,7 @@ bool CMOS::start()
         }
     }
 
-    reschedule_alarm();
+    reschedule_alarm(now);
 
     return true;
 }
