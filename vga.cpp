@@ -1191,7 +1191,7 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
 
             if ((_attrib_control_index & ATTRIB_INDEX_DISABLE_MASK) &&
                 (_attrib_control_index & ATTRIB_INDEX_MASK) <= 0x0f) {
-                D_MESSAGE("modifay protected reg[0x%x]", _attrib_control_index & ATTRIB_INDEX_MASK);
+                D_MESSAGE("modify protected reg[0x%x]", _attrib_control_index & ATTRIB_INDEX_MASK);
             }
 
             _attributes_regs[_attrib_control_index & ATTRIB_INDEX_MASK] = val;
