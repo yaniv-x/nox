@@ -55,7 +55,7 @@ private:
 
     bool is_lazy_mode();
     bool is_clock_halted();
-    bool is_alarm_on();
+    bool interrupt_on_alarm();
     bool lazy_update(nox_time_t update_time);
     void update_cycle();
     uint8_t localize_hours(uint8_t val);
@@ -106,6 +106,7 @@ private:
     nox_time_t _date_base_time;
     nox_time_t _next_update_time;
     nox_time_t _suspend_time;
+    nox_time_t _last_periodic_time;
     time_t _alarm_time;
     uint8_t _seconds_alarm;
     uint8_t _minutes_alarm;
