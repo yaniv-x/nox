@@ -91,10 +91,10 @@ enum {
                                 REG_B_ENABLE_UPDATE_INTERRUPT_MASK | (1 << 3),
 
 
-    REG_C_INTERRUPT_MASK = (1 << 7),
-    REG_C_PERIODIC_INTERRUPT_MASK = (1 << 6),
-    REG_C_ALARM_INTERRUPT_MASK = (1 << 5),
-    REG_C_UPDATE_INTERRUPT_MASK = (1 << 4),
+    REG_C_INTERRUPT_FLAG_MASK = (1 << 7),
+    REG_C_PERIODIC_FLAG_MASK = (1 << 6),
+    REG_C_ALARM_FLAG_MASK = (1 << 5),
+    REG_C_UPDATE_FLAG_MASK = (1 << 4),
 
 
     REG_D_POWER_STABLE_MASK = (1 << 7),
@@ -143,6 +143,7 @@ CMOS::CMOS(NoxVM& vm)
     _date_base_time = get_monolitic_time();
     _suspend_time = _date_base_time;
     _next_update_time = _suspend_time + NANO_PER_SEC;
+    _last_periodic_time = _date_base_time;
 
     _reg_a = (REG_A_DIVIDER_NORMAL << REG_A_DIVIDER_SHIFT) | REG_A_RATE_DEFAULT,
     _reg_b = 0;
@@ -183,7 +184,7 @@ inline bool CMOS::is_clock_halted()
 }
 
 
-inline bool CMOS::is_alarm_on()
+inline bool CMOS::interrupt_on_alarm()
 {
     return !!(_reg_b & REG_B_ENABLE_ALARM_INTERRUPT_MASK);
 }
@@ -196,8 +197,8 @@ void CMOS::period_timer_proc()
     Lock lock(_mutex);
 
     if ((_reg_b & REG_A_RATE_MASK) && (_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
-        _reg_c |= REG_C_INTERRUPT_MASK | REG_C_PERIODIC_INTERRUPT_MASK;
-        _irq_wire.spike();
+        _reg_c |= REG_C_INTERRUPT_FLAG_MASK | REG_C_PERIODIC_FLAG_MASK;
+        _irq_wire.raise();
     }
 }
 
@@ -208,7 +209,7 @@ void CMOS::alarm_timer_proc()
 
     ASSERT(get_state() == VMPart::RUNNING);
 
-    if (is_clock_halted() || !is_alarm_on() || !is_lazy_mode()) {
+    if (is_clock_halted() || !interrupt_on_alarm() || !is_lazy_mode()) {
         return;
     }
 
@@ -238,7 +239,7 @@ bool CMOS::lazy_update(nox_time_t now)
     uint64_t delta = 1 + (now - _next_update_time) / NANO_PER_SEC;
     time_t time = timegm(&_date);
 
-    if (is_alarm_on() && _alarm_time <= time + delta) {
+    if (_alarm_time <= time + delta) {
         if (_alarm_time < time + delta) {
             time_t shift = time + delta - _alarm_time;
             W_MESSAGE("too late guest time shift backword %lusec", shift);
@@ -251,12 +252,17 @@ bool CMOS::lazy_update(nox_time_t now)
         gmtime_r(&time, &_date);
         _next_update_time += delta * NANO_PER_SEC;
 
-        _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
-        _irq_wire.spike();
+        _reg_c |= REG_C_ALARM_FLAG_MASK | REG_C_UPDATE_FLAG_MASK;
 
-        reschedule_alarm(now);
+        if (interrupt_on_alarm()) {
+            _reg_c |= REG_C_INTERRUPT_FLAG_MASK;
+            _irq_wire.raise();
+            reschedule_alarm(now);
+        }
+
         return true;
     } else {
+        _reg_c |= REG_C_UPDATE_FLAG_MASK;
         time += delta;
         gmtime_r(&time, &_date);
         _next_update_time += delta * NANO_PER_SEC;
@@ -297,13 +303,13 @@ void CMOS::update_cycle()
     _next_update_time += NANO_PER_SEC;
     _update_timer->modify(_next_update_time - now);
 
-    if (is_alarm_on() && _date.tm_hour == _hours_alarm && _date.tm_min == _minutes_alarm &&
+    if (_date.tm_hour == _hours_alarm && _date.tm_min == _minutes_alarm &&
                                                           _date.tm_sec == _seconds_alarm) {
-        _reg_c |= REG_C_INTERRUPT_MASK | REG_C_ALARM_INTERRUPT_MASK;
+        _reg_c |= REG_C_ALARM_FLAG_MASK;
     }
 
-    _reg_c |= REG_C_INTERRUPT_MASK | REG_C_UPDATE_INTERRUPT_MASK;
-    _irq_wire.spike();
+    _reg_c |= REG_C_INTERRUPT_FLAG_MASK | REG_C_UPDATE_FLAG_MASK;
+    _irq_wire.raise();
 }
 
 
@@ -317,7 +323,7 @@ void CMOS::set_reg_a(uint8_t val)
         _period_timer->disarm();
     }
 
-    if (((_reg_a & REG_A_DIVIDER_MASK) >> REG_A_DIVIDER_SHIFT) != REG_A_DIVIDER_NORMAL) {
+    if (((val & REG_A_DIVIDER_MASK) >> REG_A_DIVIDER_SHIFT) != REG_A_DIVIDER_NORMAL) {
         W_MESSAGE("ignoring REG A divider");
     }
 
@@ -328,7 +334,7 @@ void CMOS::set_reg_a(uint8_t val)
 // called after time is up to date
 void CMOS::reschedule_alarm(nox_time_t update_time)
 {
-    if (is_clock_halted() || !is_alarm_on() || !is_lazy_mode()) {
+    if (is_clock_halted() || !is_lazy_mode()) {
         _alarm_timer->disarm();
         return;
     }
@@ -346,8 +352,12 @@ void CMOS::reschedule_alarm(nox_time_t update_time)
 
     _alarm_time = timegm(&_date) + dest;
 
-    nox_time_t next_update = _next_update_time - update_time;
-    _alarm_timer->arm(nox_time_t(dest -1) * NANO_PER_SEC + next_update , true);
+    if (interrupt_on_alarm()) {
+        nox_time_t next_update = _next_update_time - update_time;
+        _alarm_timer->arm(nox_time_t(dest -1) * NANO_PER_SEC + next_update , true);
+    } else {
+        _alarm_timer->disarm();
+    }
 }
 
 
@@ -369,7 +379,7 @@ void CMOS::set_reg_b(uint8_t val, nox_time_t now)
 
     _reg_b = val;
 
-    if ((_reg_a & REG_A_RATE_MASK) && (val & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
+    if ((_reg_a & REG_A_RATE_MASK) && (_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
         _period_timer->arm(rates_table[_reg_a & REG_A_RATE_MASK], true);
     } else {
         _period_timer->disarm();
@@ -588,7 +598,18 @@ uint8_t CMOS::read_byte(uint16_t port)
             return _reg_b;
         case REGC: {
             uint8_t val = _reg_c;
+
+            if ((_reg_a & REG_A_RATE_MASK) && !(_reg_b & REG_B_ENABLE_PERIODIC_INTERRUPT_MASK)) {
+                uint32_t rate = rates_table[_reg_a & REG_A_RATE_MASK];
+
+                if (update_time - _last_periodic_time >= rate) {
+                    _last_periodic_time = update_time - (update_time % rate);
+                    val |= REG_C_PERIODIC_FLAG_MASK;
+                }
+            }
+
             _reg_c = 0;
+            _irq_wire.drop();
             return val;
         }
         case REGD:
