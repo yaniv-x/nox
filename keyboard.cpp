@@ -42,6 +42,7 @@ enum {
     CTRL_STATUS_DATA_READY_MASK = (1 << 0),
     CTRL_STATUS_SELF_TEST_MASK = (1 << 2),
     CTRL_STATUS_LAST_INPUT_COMMAND_MASK = (1 << 3),
+    CTRL_STATUS_KEYBORD_NOT_INHIBIT_MASK = (1 << 4),
     CTRL_STATUS_MOUSE_DATA_READY_MASK = (1 << 5),
 
     CTRL_CMD_READ_COMMAND_BYTE = 0x20,
@@ -95,7 +96,7 @@ enum {
 
     MOUSE_CMD_SCALING_1_1 = 0xe6,
     MOUSE_CMD_SCALING_2_1 = 0xe7,
-    MOUSE_CMD_RESOLUTUIN = 0xe8,
+    MOUSE_CMD_RESOLUTION = 0xe8,
     MOUSE_CMD_STATUS = 0xe9,
     MOUSE_CMD_STREAM_MODE = 0xea,
     MOUSE_CMD_READ_DATA = 0xeb,
@@ -150,8 +151,15 @@ enum {
 
 enum {
     MOUSE_WRITE_STATE_CMD,
-    MOUSE_WRITE_STATE_RESOLUTUIN,
+    MOUSE_WRITE_STATE_RESOLUTION,
     MOUSE_WRITE_STATE_SAMPLE_RATE,
+};
+
+
+enum {
+    OUTPUT_SOURCE_SELF,
+    OUTPUT_SOURCE_KEYBOARD,
+    OUTPUT_SOURCE_MOUSE,
 };
 
 
@@ -171,40 +179,118 @@ KbdController::KbdController(NoxVM& nox)
     pic->wire(_mouse_output.irq_wire, MOUSE_IRQ);
 }
 
+
 KbdController::~KbdController()
 {
 }
 
-void KbdController::refill_outgoing()
+
+uint8_t KbdController::get_output(KBCOutput& output)
+{
+    ASSERT(output.reply_count || !output.buf.is_empty());
+
+    if (output.reply_count) {
+        output.reply_count--;
+        uint8_t ret = output.reply;
+        output.reply >>= 8;
+        return ret;
+    }
+
+    return output.buf.pop();
+}
+
+
+bool KbdController::keyboard_has_output()
+{
+    return keyboard_is_active() &&
+           (_keyboard_output.reply_count || !_keyboard_output.buf.is_empty());
+}
+
+
+uint8_t KbdController::keyboard_get_output()
+{
+    return get_output(_keyboard_output);
+}
+
+
+void KbdController::compile_mouse_packet()
+{
+    ASSERT(_keyboard_output.buf.is_empty());
+
+    uint8_t state = (1 << 3) | (_mouse_buttons & 0x7) |
+                    ((uint32_t)(_mouse_dx & (1 << 31)) >> (31 - 4)) |
+                    ((uint32_t)(_mouse_dy & (1 << 31)) >> (31 - 5));
+
+    _mouse_output.buf.insert(state);
+    _mouse_output.buf.insert(_mouse_dx);
+    _mouse_output.buf.insert(_mouse_dy);
+
+    _mouse_dx = _mouse_dy = 0;
+    _mouse_packet_pending = false;
+}
+
+
+void KbdController::push_mouse_packet()
 {
     if (!_keyboard_output.buf.is_empty()) {
+        _mouse_packet_pending = true;
+        return;
+    }
+
+    compile_mouse_packet();
+    prepare_outgoing();
+}
+
+
+uint8_t KbdController::mouse_get_output()
+{
+    uint8_t ret = get_output(_mouse_output);;
+
+    if (_mouse_output.buf.is_empty() && _mouse_packet_pending) {
+        compile_mouse_packet();
+    }
+
+    return ret;
+}
+
+
+bool KbdController::mouse_has_output()
+{
+    return mouse_is_active() && (_mouse_output.reply_count || !_mouse_output.buf.is_empty());
+}
+
+
+void KbdController::prepare_outgoing()
+{
+    if ((_state & CTRL_STATUS_DATA_READY_MASK)) {
+        return;
+    }
+
+    if (keyboard_has_output()) {
+        _output_source = OUTPUT_SOURCE_KEYBOARD;
         _state |= CTRL_STATUS_DATA_READY_MASK;
 
         if (_command_byte & COMMAND_BYTE_IRQ1_MASK) {
             _keyboard_output.irq_wire.raise();
         }
 
-        _outgoing = _keyboard_output.buf.pop();
-
         return;
     }
 
-    if (!_mouse_output.buf.is_empty()) {
+    if (mouse_has_output()) {
+        _output_source = OUTPUT_SOURCE_MOUSE;
         _state |= CTRL_STATUS_DATA_READY_MASK | CTRL_STATUS_MOUSE_DATA_READY_MASK;
 
         if (_command_byte & COMMAND_BYTE_IRQ12_MASK) {
             _mouse_output.irq_wire.raise();
         }
 
-        _outgoing = _mouse_output.buf.pop();
-
-        if (_mouse_packet_pending && mouse_stream_test()) {
-            push_mouse_packet();
-        }
-
         return;
     }
+
+    _output_source = OUTPUT_SOURCE_SELF;
 }
+
 
 uint8_t KbdController::io_read_port_a(uint16_t port)
 {
@@ -214,30 +300,49 @@ uint8_t KbdController::io_read_port_a(uint16_t port)
         D_MESSAGE("unexpected read");
     }
 
-    uint8_t ret = _outgoing;
+    switch (_output_source) {
+    case OUTPUT_SOURCE_MOUSE:
+        _self_output = mouse_get_output();
+        break;
+    case OUTPUT_SOURCE_KEYBOARD:
+        _self_output = keyboard_get_output();
+        break;
+    }
+
     _keyboard_output.irq_wire.drop();
     _mouse_output.irq_wire.drop();
     _state &= ~(CTRL_STATUS_DATA_READY_MASK | CTRL_STATUS_MOUSE_DATA_READY_MASK);
 
-    refill_outgoing();
+    prepare_outgoing();
 
-    return ret;
+    return _self_output;
 }
 
 
 void KbdController::restore_keyboard_defaults()
 {
-    _kbd_enabled = true;
     _kbd_leds = 0;
-    _kbd_rate = 0;
+
+    //delay formula (1 + a) * 250 mili sec
+    uint a = 1; // bits 5-6
+
+    // period formula (2 ^ b) * (c + 8) / 240 sec
+    // typematic rate 1/period
+    uint b = 1; // bits 3-4
+    uint c = 3; // bits 0-2
+
+    _kbd_rate = (a << 5) /* 500 ms delay */ | (( b << 3) | c) /* 10.9 characters per second */;
 }
 
 
 void KbdController::reset_keyboard(bool cold)
 {
+    _kbd_scan_enabled = true;
     _kbd_write_state = KBD_WRITE_STATE_CMD;
     restore_keyboard_defaults();
     _keyboard_output.buf.reset();
+    _keyboard_output.reply_count = 0;
+    _keyboard_output.reply = 0;
 
     if (cold) {
         _keyboard_output.irq_wire.reset();
@@ -250,8 +355,8 @@ void KbdController::reset_keyboard(bool cold)
 void KbdController::restore_mouse_defaults()
 {
     _mouse_scaling = false;
-    _mouse_resolution = 100;
-    _mouse_sample_rate = 30;
+    _mouse_resolution = 2;
+    _mouse_sample_rate = 100;
     _mouse_reporting = false;
     _mouse_reomte_mode = false;
     _mouse_warp_mode = false;
@@ -267,6 +372,8 @@ void KbdController::reset_mouse(bool cold)
     _mouse_write_state = MOUSE_WRITE_STATE_CMD,
     restore_mouse_defaults();
     _mouse_output.buf.reset();
+    _mouse_output.reply_count = 0;
+    _mouse_output.reply = 0;
 
     if (cold) {
         _mouse_output.irq_wire.reset();
@@ -285,6 +392,9 @@ void KbdController::set_command_byte(uint8_t command_byte)
     }
 
     _command_byte = command_byte;
+
+    // in case mouse or keyboard state changed to enabled
+    prepare_outgoing();
 }
 
 
@@ -318,13 +428,13 @@ bool KbdController::keyboard_is_active()
 
 void KbdController::write_to_mouse(uint8_t val)
 {
-    if (!mouse_is_active()) {
-        return;
-    }
+    _command_byte &= ~COMMAND_BYTE_DISABLE_MOUSE_MASK; // according to real world test the keyboard
+                                                       // link is automaticlly enabled on writing
+                                                       // to the keybord. although real word show
+                                                       // otherwise, applying the same rule on the
+                                                       // mouse interface.
 
     if (_mouse_warp_mode && val != MOUSE_CMD_RESET_WARP_MOD && val != MOUSE_CMD_RESET) {
-        // send ack ?
-        D_MESSAGE("send ack ?");
         put_mouse_data(val);
         return;
     }
@@ -332,108 +442,121 @@ void KbdController::write_to_mouse(uint8_t val)
     int write_state = _mouse_write_state;
     _mouse_write_state = MOUSE_WRITE_STATE_CMD;
 
+    bool resend = !_mouse_output.buf.is_empty();
+    _mouse_output.buf.reset();
+    _mouse_dx = _mouse_dy = 0;
+
     switch (write_state) {
     case MOUSE_WRITE_STATE_CMD:
         switch (val) {
         case MOUSE_CMD_READ_DATA:
-            put_mouse_data(KBD_ACK);
-
-            if (_mouse_output.buf.capacity() - _mouse_output.buf.num_items() >= MOUSE_PACKET_SIZE) {
-                push_mouse_packet();
-            } else {
-                D_MESSAGE("MOUSE_CMD_READ_DATA: no space");
-            }
-
+            mouse_put_reply(KBD_ACK);
+            push_mouse_packet();
             break;
         case MOUSE_CMD_RESET_WARP_MOD:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_warp_mode = false;
             break;
         case MOUSE_CMD_SET_WARP_MODE:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_warp_mode = true;
             break;
         case MOUSE_CMD_SCALING_1_1:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_scaling = false;
             break;
         case MOUSE_CMD_SCALING_2_1:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_scaling = true;
             break;
-        case MOUSE_CMD_RESOLUTUIN:
-            put_mouse_data(KBD_ACK);
-            _mouse_write_state = MOUSE_WRITE_STATE_RESOLUTUIN;
+        case MOUSE_CMD_RESOLUTION:
+            mouse_put_reply(KBD_ACK);
+            _mouse_write_state = MOUSE_WRITE_STATE_RESOLUTION;
             break;
         case MOUSE_CMD_SAMPLE_RATE:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
             break;
         case MOUSE_CMD_ENABLE_DATA_REPORTING:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_reporting = true;
             break;
         case MOUSE_CMD_RESET:
             reset_mouse(false);
-            put_mouse_data(KBD_ACK);
-            put_mouse_data(KBD_SELF_TEST_REPLAY);
-            put_mouse_data(0); // id
+            mouse_put_reply(KBD_ACK);
+            mouse_put_reply(KBD_SELF_TEST_REPLAY);
+            mouse_put_reply(0); // id
             break;
         case MOUSE_CMD_STATUS:
-            put_mouse_data(KBD_ACK);
-            put_mouse_data((_mouse_buttons & MOUSE_STATE_BUTTON_MASK) |
-                           (_mouse_scaling ? MOUSE_STATE_SCALING_MASK : 0) |
-                           (_mouse_reomte_mode ? MOUSE_STATE_REMOTE_MODE_MASK : 0) |
-                           (_mouse_reporting ? MOUSE_STATE_DATA_REPORTING_MASK : 0));
-            put_mouse_data(_mouse_resolution);
-            put_mouse_data(_mouse_sample_rate);
+            mouse_put_reply(KBD_ACK);
+            mouse_put_reply((_mouse_buttons & MOUSE_STATE_BUTTON_MASK) |
+                            (_mouse_scaling ? MOUSE_STATE_SCALING_MASK : 0) |
+                            (_mouse_reomte_mode ? MOUSE_STATE_REMOTE_MODE_MASK : 0) |
+                            (_mouse_reporting ? MOUSE_STATE_DATA_REPORTING_MASK : 0));
+            mouse_put_reply(_mouse_resolution);
+            mouse_put_reply(_mouse_sample_rate);
             break;
         case MOUSE_CMD_READ_ID:
-            put_mouse_data(KBD_ACK);
-            put_mouse_data(0);
+            mouse_put_reply(KBD_ACK);
+            mouse_put_reply(0);
             break;
         case MOUSE_CMD_DISABLE_DATA_REPORTING:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_reporting = false;
             break;
         case MOUSE_CMD_STREAM_MODE:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_reomte_mode = false;
             break;
         case MOUSE_CMD_REMOTE_MODE:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             _mouse_reomte_mode = true;
             break;
         case MOUSE_CMD_SET_DEFAULT:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             restore_mouse_defaults();
             break;
         case MOUSE_CMD_RESEND:
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_ACK);
             D_MESSAGE("todo: resend last mouse packet");
             break;
         default:
             D_MESSAGE("unhandled command 0x%x", val);
-            put_mouse_data(KBD_ACK);
+            mouse_put_reply(KBD_NAK);
         }
         break;
-    case MOUSE_WRITE_STATE_RESOLUTUIN:
-        _mouse_resolution = val;
-        put_mouse_data(KBD_ACK);
+    case MOUSE_WRITE_STATE_RESOLUTION:
+        if (val > 4) {
+            mouse_put_reply(KBD_NAK);
+        } else {
+            _mouse_resolution = val;
+            mouse_put_reply(KBD_ACK);
+        }
         break;
     case MOUSE_WRITE_STATE_SAMPLE_RATE:
-        _mouse_sample_rate = val;
-        put_mouse_data(KBD_ACK);
+        uint8_t rates[]= {10, 20, 40, 60, 80, 100, 200};
+        std::set<uint8_t> rates_set(rates, rates + sizeof(rates));
+
+        if (rates_set.find(val) == rates_set.end()) {
+            mouse_put_reply(KBD_NAK);
+        } else {
+            _mouse_sample_rate = val;
+            mouse_put_reply(KBD_ACK);
+        }
         break;
+    }
+
+    if (resend && mouse_stream_test()) {
+        push_mouse_packet();
     }
 }
 
 
 void KbdController::write_to_keyboard(uint8_t val)
 {
-    if (!keyboard_is_active()) {
-        return;
-    }
+    _command_byte &= ~COMMAND_BYTE_DISABLE_KYBD_MASK;  // according to real world test test the
+                                                       // keyboard link is automaticlly enabled
+                                                       // on writing to the keybord
 
     int write_state = _kbd_write_state;
     _kbd_write_state = KBD_WRITE_STATE_CMD;
@@ -442,59 +565,64 @@ void KbdController::write_to_keyboard(uint8_t val)
     case KBD_WRITE_STATE_CMD:
         switch (val) {
         case KBD_CMD_LED:
-            put_data(KBD_ACK);
+            keyboard_put_reply(KBD_ACK);
             _kbd_write_state = KBD_WRITE_STATE_LEDS;
             break;
         case KBD_CMD_DISABLE_SCANNING_AND_SET_DEFAULTS:
-            _kbd_enabled = false;
+            _kbd_scan_enabled = false;
             restore_keyboard_defaults();
-            put_data(KBD_ACK);
+            _keyboard_output.buf.reset();
+            keyboard_put_reply(KBD_ACK);
             break;
         case KBD_CMD_SET_DEFAUL:
             restore_keyboard_defaults();
-            put_data(KBD_ACK);
+            _keyboard_output.buf.reset();
+            keyboard_put_reply(KBD_ACK);
             break;
         case KBD_CMD_RESET:
             reset_keyboard(false);
-            put_data(KBD_ACK);
-            put_data(KBD_SELF_TEST_REPLAY);
+            keyboard_put_reply(KBD_ACK);
+            _kbd_leds = 0x7; // flush the leds
+            // todo: use timer to do the rest in delay of 1/4sec
+            keyboard_put_reply(KBD_SELF_TEST_REPLAY);
+            _kbd_leds = 0x0;
             break;
         case KBD_CMD_ENABLE_SCANNING:
-            _kbd_enabled = true;
-            put_data(KBD_ACK);
+            _kbd_scan_enabled = true;
+            keyboard_put_reply(KBD_ACK);
             break;
         case KBD_CMD_ECHO:
-            put_data(KBD_ECHO);
+            keyboard_put_reply(KBD_ECHO);
             break;
         case KBD_CMD_REPEAT_RATE:
-            put_data(KBD_ACK);
+            keyboard_put_reply(KBD_ACK);
             _kbd_write_state = KBD_WRITE_STATE_RATE;
             break;
         case KBD_CMD_RESEND:
-            put_data(KBD_ACK);
-            D_MESSAGE("todo: resend last keyboard packet");
+            D_MESSAGE("todo: resend valid data");
+            keyboard_put_reply(0);
             break;
         default:
-            if (!(val >= KBD_CMD_NOP2_FIRST && val <= KBD_CMD_NOP2_LAST) &&
-               !(val >= KBD_CMD_NOP1_FIRST && val <= KBD_CMD_NOP1_LAST)) {
+            if ((val >= KBD_CMD_NOP2_FIRST && val <= KBD_CMD_NOP2_LAST) ||
+               (val >= KBD_CMD_NOP1_FIRST && val <= KBD_CMD_NOP1_LAST)) {
+                keyboard_put_reply(KBD_ACK);
+            } else {
                 D_MESSAGE("unhandled command 0x%x", val);
+                keyboard_put_reply(KBD_NAK);
             }
-            put_data(KBD_ACK);
         }
         break;
     case KBD_WRITE_STATE_LEDS:
-        if (!keyboard_is_active()) {
-            return;
-        }
-        put_data(KBD_ACK);
-        _kbd_leds = val;
+        keyboard_put_reply(KBD_ACK);
+        _kbd_leds = val & 0x7;
         break;
     case KBD_WRITE_STATE_RATE:
-        if (!keyboard_is_active()) {
-            return;
+        if (val & (1 << 7)) {
+            keyboard_put_reply(KBD_NAK);
+        } else {
+            keyboard_put_reply(KBD_ACK);
+            _kbd_rate = val;
         }
-        put_data(KBD_ACK);
-        _kbd_rate = val;
         break;
     }
 }
@@ -513,12 +641,22 @@ void KbdController::io_write_port_a(uint16_t port, uint8_t val)
         write_to_keyboard(val);
         break;
     case WRITE_STATE_KBD_OUTPUT:
-        put_data(val); // Write the keyboard controllers output buffer with the byte next
-                       // written to port 0x60, and act as if this was keyboard data.
+        // brute force
+        put_controller_data(val); // Write the keyboard controllers output buffer with the byte next
+                                  // written to port 0x60, and act as if this was keyboard data.
+        _state &= ~CTRL_STATUS_MOUSE_DATA_READY_MASK;
+        if (_command_byte & COMMAND_BYTE_IRQ1_MASK) {
+            _keyboard_output.irq_wire.raise();
+        }
         break;
     case WRITE_STATE_MOUSE_OUTPUT:
-        put_mouse_data(val); // Write the keyboard controllers output buffer with the byte next
-                             // written to port 0x60, and act as if this was mouse data.
+        // brute force
+        put_controller_data(val); // Write the keyboard controllers output buffer with the byte next
+                                  // written to port 0x60, and act as if this was mouse data.
+        _state |= CTRL_STATUS_MOUSE_DATA_READY_MASK;
+        if (_command_byte & COMMAND_BYTE_IRQ12_MASK) {
+            _mouse_output.irq_wire.raise();
+        }
         break;
     case WRITE_STATE_MOUSE:
         write_to_mouse(val);
@@ -544,7 +682,9 @@ void KbdController::reset(bool cold)
     reset_mouse(cold);
     reset_keyboard(cold);
     _state = 0;
-    _command_byte = 0;
+    _output_source = OUTPUT_SOURCE_SELF;
+    _self_output = 0;
+    _command_byte = COMMAND_BYTE_DISABLE_MOUSE_MASK | COMMAND_BYTE_DISABLE_KYBD_MASK;
     _write_state = WRITE_STATE_KBD_CMD;
     remap_io_regions();
 }
@@ -565,13 +705,11 @@ void KbdController::put_mouse_data(uint8_t data)
 
     _mouse_output.buf.insert(data);
 
-    if (!(_state & CTRL_STATUS_DATA_READY_MASK)) {
-        refill_outgoing();
-    }
+    prepare_outgoing();
 }
 
 
-void KbdController::put_data(uint8_t data)
+void KbdController::put_keyboard_data(uint8_t data)
 {
     if (_keyboard_output.buf.is_full()) {
         D_MESSAGE("full");
@@ -580,9 +718,51 @@ void KbdController::put_data(uint8_t data)
 
     _keyboard_output.buf.insert(data);
 
-    if (!(_state & CTRL_STATUS_DATA_READY_MASK)) {
-        refill_outgoing();
+    prepare_outgoing();
+}
+
+
+void KbdController::put_reply(KBCOutput& output, uint8_t data)
+{
+    if (output.reply_count == sizeof(output.reply)) {
+        D_MESSAGE("no space");
+        return;
     }
+
+    typeof(output.reply) next = data;
+    next <<= (output.reply_count++ * 8);
+    output.reply |= next;
+
+    prepare_outgoing();
+}
+
+
+void KbdController::keyboard_put_reply(uint8_t data)
+{
+    put_reply(_keyboard_output, data);
+}
+
+
+void KbdController::mouse_put_reply(uint8_t data)
+{
+    put_reply(_mouse_output, data);
+}
+
+
+void KbdController::put_controller_data(uint8_t data)
+{
+    // according to real world test:
+    //  - no irq
+    //  - CTRL_STATUS_MOUSE_DATA_READY_MASK is ignored.
+    //  - any pending data will be lost
+
+    if ((_state & CTRL_STATUS_DATA_READY_MASK)) {
+        D_MESSAGE("outgoing data lost");
+    }
+
+    _output_source = OUTPUT_SOURCE_SELF;
+    _self_output = data;
+    _state |= CTRL_STATUS_DATA_READY_MASK;
 }
 
 
@@ -594,39 +774,33 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
 
     switch (val) {
     case CTRL_CMD_READ_COMMAND_BYTE:
-        if (!_keyboard_output.buf.is_empty()) {
-            D_MESSAGE("CTRL_CMD_READ_COMMAND_BYTE while output is not ready")
-        }
-        put_data(_command_byte);
+        put_controller_data(_command_byte);
         break;
     case CTRL_CMD_SELF_TEST:
         reset(false);
-        _state |= CTRL_STATUS_SELF_TEST_MASK;
-        put_data(CTRL_SELF_TEST_REPLAY);
+        _state |= CTRL_STATUS_SELF_TEST_MASK | CTRL_STATUS_KEYBORD_NOT_INHIBIT_MASK;
+        _command_byte |= COMMAND_BYTE_SYS_MASK;
+        put_controller_data(CTRL_SELF_TEST_REPLAY);
         break;
     case CTRL_CMD_KEYBOARD_INTERFACE_TEST:
-        if (!_keyboard_output.buf.is_empty()) {
-            D_MESSAGE("CTRL_INTERFACE_TEST_REPLAY while output is not ready")
-        }
-        put_data(CTRL_KEYBOARD_INTERFACE_TEST_REPLY_NO_ERROR);
+        put_controller_data(CTRL_KEYBOARD_INTERFACE_TEST_REPLY_NO_ERROR);
         break;
     case CTRL_CMD_MOUSE_INTERFACE_TEST:
-        if (!_keyboard_output.buf.is_empty()) {
-            D_MESSAGE("CTRL_CMD_MOUSE_INTERFACE_TEST while output is not ready")
-        }
-        put_data(CTRL_MOUSE_INTERFACE_TEST_REPLY_NO_ERROR);
+        put_controller_data(CTRL_MOUSE_INTERFACE_TEST_REPLY_NO_ERROR);
         break;
     case CTRL_CMD_DISABLE_MOUSE:
         _command_byte |= COMMAND_BYTE_DISABLE_MOUSE_MASK;
         break;
     case CTRL_CMD_ENABLE_MOUSE:
         _command_byte &= ~COMMAND_BYTE_DISABLE_MOUSE_MASK;
+        prepare_outgoing();
         break;
     case CTRL_CMD_DISABLE_KEYBOARD:
          _command_byte |= COMMAND_BYTE_DISABLE_KYBD_MASK;
         break;
     case CTRL_CMD_ENABLE_KEYBOARD:
         _command_byte &= ~COMMAND_BYTE_DISABLE_KYBD_MASK;
+        prepare_outgoing();
         break;
     case CTRL_CMD_WRITE_COMMAND_BYTE:
         _write_state = WRITE_STATE_COMMAND_BYTE;
@@ -644,17 +818,10 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         _write_state = WRITE_STATE_OUTPUT_PORT;
         break;
     case CTRL_CMD_READ_INPUT_PORT:
-        if (!_keyboard_output.buf.is_empty()) {
-            D_MESSAGE("CTRL_CMD_READ_INPUT_PORT while output is not ready")
-        }
         // not sure about the following.
-        put_data(0xa7); // the value I got on physical machine
+        put_controller_data(0xa7); // the value I got on physical machine
         break;
     case CTRL_CMD_READ_OUTPUT_PORT: {
-        if (!_keyboard_output.buf.is_empty()) {
-            D_MESSAGE("CTRL_CMD_READ_OUTPUT_PORT while output is not ready")
-        }
-
         uint8_t output_port = OUTPUT_PORT_RESET_MASK;
         output_port |= memory_bus->line_20_is_set() ? OUTPUT_PORT_A20_MASK : 0;
 
@@ -665,7 +832,7 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         // do we need to use COMMAND_BYTE_DISABLE_KYBD_MASK and
         // COMMAND_BYTE_DISABLE_MOUSE_MASK here?
 
-        put_data(output_port);
+        put_controller_data(output_port);
         break;
     }
     case CTRL_CMD_PULSE_0UTPUT_RESET:
@@ -677,8 +844,8 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         memory_bus->enable_address_line_20();
         break;
     case CTRL_CMD_READ_TEST_INPUTS:
-        put_data(!!(_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK) |
-                 (!!(_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) << 1));
+        put_controller_data(!!(_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK) |
+                            (!!(_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) << 1));
         break;
     default:
         if (val < CTRL_CMD_PULSE_0UTPUT_FIRST) {
@@ -860,7 +1027,7 @@ void KbdController::key_common(NoxKey code, uint scan_index)
 
     Lock lock(_mutex);
 
-    if ((_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK) || !_kbd_enabled) {
+    if (!_kbd_scan_enabled) {
         return;
     }
 
@@ -880,7 +1047,7 @@ void KbdController::key_common(NoxKey code, uint scan_index)
     uint8_t* scan_end  =  scan + sizeof(map[0].make_break[0]);
 
     for (; scan < scan_end && *scan; scan++) {
-        put_data(*scan);
+        put_keyboard_data(*scan);
     }
 }
 
@@ -915,28 +1082,9 @@ void KbdController::key_up(NoxKey code)
 }
 
 
-void KbdController::push_mouse_packet()
-{
-    uint8_t state = (1 << 3) | (_mouse_buttons & 0x7) |
-                    ((uint32_t)(_mouse_dx & (1 << 31)) >> (31 - 4)) |
-                    ((uint32_t)(_mouse_dy & (1 << 31)) >> (31 - 5));
-    put_mouse_data(state);
-
-    uint8_t x = _mouse_dx;
-    put_mouse_data(x);
-
-    uint8_t y = _mouse_dy;
-    put_mouse_data(y);
-
-    _mouse_dx = _mouse_dy = 0;
-    _mouse_packet_pending = false;
-}
-
-
 bool KbdController::mouse_stream_test()
 {
-    return !_mouse_warp_mode && !_mouse_reomte_mode && _mouse_reporting &&
-           _mouse_output.buf.is_empty();
+    return !_mouse_warp_mode && !_mouse_reomte_mode && _mouse_reporting && mouse_is_active();
 }
 
 
@@ -944,7 +1092,7 @@ void KbdController::mouse_motion(int dx, int dy)
 {
     Lock lock(_mutex);
 
-    if ((_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK)  || get_state() != VMPart::RUNNING) {
+    if (get_state() != VMPart::RUNNING) {
         return;
     }
 
@@ -952,7 +1100,6 @@ void KbdController::mouse_motion(int dx, int dy)
     _mouse_dy -= dy;
 
     if (!mouse_stream_test()) {
-        _mouse_packet_pending = true;
         return;
     }
 
@@ -964,14 +1111,13 @@ void KbdController::mouse_button_press(MouseButton button)
 {
     Lock lock(_mutex);
 
-    if ((_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) || get_state() != VMPart::RUNNING) {
+    if (get_state() != VMPart::RUNNING) {
         return;
     }
 
     _mouse_buttons |= (1 << button);
 
     if (!mouse_stream_test()) {
-        _mouse_packet_pending = true;
         return;
     }
 
@@ -983,14 +1129,13 @@ void KbdController::mouse_button_release(MouseButton button)
 {
     Lock lock(_mutex);
 
-    if ((_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) || get_state() != VMPart::RUNNING) {
+    if (get_state() != VMPart::RUNNING) {
         return;
     }
 
     _mouse_buttons &= ~(1 << button);
 
     if (!mouse_stream_test()) {
-        _mouse_packet_pending = true;
         return;
     }
 
