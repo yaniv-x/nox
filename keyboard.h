@@ -42,7 +42,7 @@ public:
     }
 
     enum {
-        BUF_SIZE = 256,
+        BUF_SIZE = 64,
     };
 
     void reset() { _head = _tail = 0;}
@@ -87,31 +87,6 @@ public:
     void mouse_button_release(MouseButton button);
 
 private:
-    uint8_t io_read_port_a(uint16_t port);
-    void io_write_port_a(uint16_t port, uint8_t val);
-    uint8_t io_read_status(uint16_t port);
-    void io_write_command(uint16_t port, uint8_t val);
-    void write_to_keyboard(uint8_t val);
-    void put_mouse_data(uint8_t data);
-    void put_data(uint8_t data);
-    void restore_keyboard_defaults();
-    void reset_keyboard(bool cold);
-    void restore_mouse_defaults();
-    void reset_mouse(bool cold);
-    void reset(bool cold);
-    void set_command_byte(uint8_t command_byte);
-    void write_output_port(uint8_t val);
-    void write_to_mouse(uint8_t val);
-    void refill_outgoing();
-    bool mouse_is_active();
-    bool keyboard_is_active();
-    void key_common(NoxKey code, uint scan_index);
-    bool mouse_stream_test();
-    void push_mouse_packet();
-
-private:
-    Mutex _mutex;
-
     struct KBCOutput {
         KBCOutput(KbdController& controller)
             : irq_wire(controller)
@@ -120,12 +95,50 @@ private:
 
         Wire irq_wire;
         CyclicBuffer buf;
+        uint reply_count;
+        uint32_t reply;
     };
 
-    uint8_t _outgoing;
+    uint8_t io_read_port_a(uint16_t port);
+    void io_write_port_a(uint16_t port, uint8_t val);
+    uint8_t io_read_status(uint16_t port);
+    void io_write_command(uint16_t port, uint8_t val);
+    void write_to_keyboard(uint8_t val);
+    void put_mouse_data(uint8_t data);
+    void put_keyboard_data(uint8_t data);
+    void put_reply(KBCOutput& output, uint8_t data);
+    void keyboard_put_reply(uint8_t data);
+    void put_controller_data(uint8_t data);
+    void restore_keyboard_defaults();
+    void reset_keyboard(bool cold);
+    void restore_mouse_defaults();
+    void reset_mouse(bool cold);
+    void reset(bool cold);
+    void set_command_byte(uint8_t command_byte);
+    void write_output_port(uint8_t val);
+    void write_to_mouse(uint8_t val);
+    void prepare_outgoing();
+    bool mouse_is_active();
+    bool keyboard_is_active();
+    void key_common(NoxKey code, uint scan_index);
+    bool mouse_stream_test();
+    void mouse_put_reply(uint8_t val);
+    void push_mouse_packet();
+    void compile_mouse_packet();
+    static uint8_t get_output(KBCOutput& output);
+    uint8_t mouse_get_output();
+    bool mouse_has_output();
+    uint8_t keyboard_get_output();
+    bool keyboard_has_output();
+
+private:
+    Mutex _mutex;
+
+    uint _output_source;
+    uint8_t _self_output;
 
     KBCOutput _keyboard_output;
-    bool _kbd_enabled;
+    bool _kbd_scan_enabled;
     uint8_t _kbd_leds;
     uint8_t _kbd_rate;
     int _kbd_write_state;
