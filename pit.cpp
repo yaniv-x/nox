@@ -246,6 +246,7 @@ inline bool PIT::update_one_shot(PICTimer& timer)
 
 inline bool PIT::update_interval(PICTimer& timer, uint shift)
 {
+    //todo: use timer.start_time and timer.tiks in order to compensate on time lost
     nox_time_t now = get_monolitic_time();
     int64_t delta = timer.end_time - now;
     bool is_tick = delta <= 0;
@@ -254,24 +255,22 @@ inline bool PIT::update_interval(PICTimer& timer, uint shift)
 
         uint programed_val = timer.programed_val >> shift;
 
+        timer.end_time = TICK * programed_val;
+        timer.end_time += now;
+        delta = programed_val;
+
         if (timer.null) {
             timer.start_time = now;
             timer.ticks = 0;
             timer.null = 0;
 
             if (timer.timer) {
-                timer.timer->modify(timer.end_time);
+                timer.timer->modify(timer.end_time - timer.start_time);
             }
 
         } else {
             timer.ticks++;
         }
-
-        //todo: use timer.start_time and timer.tiks in order to compensate on time lost
-
-        timer.end_time = TICK * programed_val;
-        timer.end_time += now;
-        delta = programed_val;
     }
 
     uint counter_val = delta / TICK;
