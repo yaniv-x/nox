@@ -74,14 +74,11 @@ enum {
 
     KBD_CMD_LED = 0xed,
     KBD_CMD_ECHO = 0xee,
-    KBD_CMD_NOP2_FIRST = 0xef,
-    KBD_CMD_NOP2_LAST = 0xf2,
+    KBD_CMD_GET_ID = 0xf2,
     KBD_CMD_REPEAT_RATE = 0xf3,
     KBD_CMD_ENABLE_SCANNING = 0xf4,
     KBD_CMD_DISABLE_SCANNING_AND_SET_DEFAULTS = 0xf5,
     KBD_CMD_SET_DEFAUL = 0xf6,
-    KBD_CMD_NOP1_FIRST = 0xf7,
-    KBD_CMD_NOP1_LAST = 0xfd,
     KBD_CMD_RESEND = 0xfe,
     KBD_CMD_RESET = 0xff,
 
@@ -598,18 +595,18 @@ void KbdController::write_to_keyboard(uint8_t val)
             keyboard_put_reply(KBD_ACK);
             _kbd_write_state = KBD_WRITE_STATE_RATE;
             break;
+        case KBD_CMD_GET_ID:
+            keyboard_put_reply(KBD_ACK);
+            keyboard_put_reply(0xab); // what is the correct id ?
+            keyboard_put_reply(0x41);
+            break;
         case KBD_CMD_RESEND:
             D_MESSAGE("todo: resend valid data");
             keyboard_put_reply(0);
             break;
         default:
-            if ((val >= KBD_CMD_NOP2_FIRST && val <= KBD_CMD_NOP2_LAST) ||
-               (val >= KBD_CMD_NOP1_FIRST && val <= KBD_CMD_NOP1_LAST)) {
-                keyboard_put_reply(KBD_ACK);
-            } else {
-                D_MESSAGE("unhandled command 0x%x", val);
-                keyboard_put_reply(KBD_NAK);
-            }
+            D_MESSAGE("unhandled command 0x%x", val);
+            keyboard_put_reply(KBD_NAK);
         }
         break;
     case KBD_WRITE_STATE_LEDS:
