@@ -54,11 +54,27 @@ enum {
     PLATFORM_REG_WRITE_POS,
 };
 
+
+#define PLATFORM_ERR_TYPE_SHIFT 29
+#define PLATFORM_ERR_SUBSYS_SHIFT 16
+
+#define PLATFORM_MK_ERR(type, subsys, code)                     \
+    (((uint32_t)(type) << PLATFORM_ERR_TYPE_SHIFT) |            \
+    ((uint32_t)(subsys) << PLATFORM_ERR_SUBSYS_SHIFT) |         \
+    (code))
+
+
 enum {
-    PLATFORM_ERR_INVALID = 0,
-    PLATFORM_ERR_INVALID_ARG,
-    PLATFORM_ERR_UNEXPECTED,
+    PLATFORM_ERR_TYPE_INFO = 1,
+    PLATFORM_ERR_TYPE_WARN,
+    PLATFORM_ERR_TYPE_ERROR,
 };
+
+
+enum {
+    PLATFORM_ERR_SUBSYS_BIOS = 1,
+};
+
 
 #endif
 
