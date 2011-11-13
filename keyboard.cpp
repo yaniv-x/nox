@@ -318,7 +318,7 @@ uint8_t KbdController::io_read_port_a(uint16_t port)
 
 void KbdController::restore_keyboard_defaults()
 {
-    _kbd_leds = 0;
+    keyboard_set_leds(0);
 
     //delay formula (1 + a) * 250 mili sec
     uint a = 1; // bits 5-6
@@ -549,6 +549,16 @@ void KbdController::write_to_mouse(uint8_t val)
 }
 
 
+void KbdController::keyboard_set_leds(uint8_t val)
+{
+    _kbd_leds = val;
+    D_MESSAGE("SCROLL-%s NUM-%s CAPS-%s",
+              (_kbd_leds & KBD_LEDS_SCROLL_MASK) ? "ON " : "OFF",
+              (_kbd_leds & KBD_LEDS_NUM_MASK) ? "ON " : "OFF",
+              (_kbd_leds & KBD_LEDS_CAPS_MASK) ? "ON " : "OFF");
+}
+
+
 void KbdController::write_to_keyboard(uint8_t val)
 {
     _command_byte &= ~COMMAND_BYTE_DISABLE_KYBD_MASK;  // according to real world test test the
@@ -579,10 +589,11 @@ void KbdController::write_to_keyboard(uint8_t val)
         case KBD_CMD_RESET:
             reset_keyboard(false);
             keyboard_put_reply(KBD_ACK);
-            _kbd_leds = 0x7; // flush the leds
+            // flush the leds
+            keyboard_set_leds(KBD_LEDS_SCROLL_MASK | KBD_LEDS_NUM_MASK | KBD_LEDS_CAPS_MASK);
             // todo: use timer to do the rest in delay of 1/4sec
             keyboard_put_reply(KBD_SELF_TEST_REPLAY);
-            _kbd_leds = 0x0;
+            keyboard_set_leds(0);
             break;
         case KBD_CMD_ENABLE_SCANNING:
             _kbd_scan_enabled = true;
@@ -611,7 +622,7 @@ void KbdController::write_to_keyboard(uint8_t val)
         break;
     case KBD_WRITE_STATE_LEDS:
         keyboard_put_reply(KBD_ACK);
-        _kbd_leds = val & 0x7;
+        keyboard_set_leds(val & 0x7);
         break;
     case KBD_WRITE_STATE_RATE:
         if (val & (1 << 7)) {

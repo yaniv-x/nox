@@ -130,6 +130,7 @@ private:
     bool mouse_has_output();
     uint8_t keyboard_get_output();
     bool keyboard_has_output();
+    void keyboard_set_leds(uint8_t val);
 
 private:
     Mutex _mutex;
