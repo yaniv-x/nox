@@ -45,16 +45,18 @@ nox_SOURCES =					\
     ata_disk.cpp        \
     atapi_cdrom.cpp        \
     block_device.cpp        \
+    speaker.cpp             \
 	run_loop.cpp
 
 INCLUDES =												\
 	-Wall -Werror -Wno-sign-compare -Wno-switch-enum						\
 	-Wno-pmf-conversions										\
 	-DNOX_DEBUG											\
-	$(X11_CFLAGS)
+	$(X11_CFLAGS)											\
+	$(PULSE_CFLAGS)
 
 nox_LDADD = \
-	-lrt -lpthread $(X11_LIBS)
+	-lrt -lpthread $(X11_LIBS) $(PULSE_LIBS)
 
 #nox_DEPENDENCIES = yaniv
 

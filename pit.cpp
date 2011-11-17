@@ -295,7 +295,7 @@ void PIT::update_timer(PICTimer& timer)
         break;
     case 3:
         if (update_interval(timer, 1)) {
-            timer.counter_output ^= 1;
+            timer.output ^= 1;
         }
         break;
     case 4:
@@ -304,8 +304,8 @@ void PIT::update_timer(PICTimer& timer)
         }
         break;
     case 5:
-    case 1: // hardware triggers will never hapend so the
-            // counter will never be loaded (check if set_gate_level can trigget it?)
+    case 1:
+        W_MESSAGE_SOME(10, "timer %u: mode %u is not implemnted", &timer - _timers, timer.mode);
         timer.counter_output = 0;
         break;
     default:
@@ -351,12 +351,17 @@ void PIT::set_one_shout_counter(PICTimer& timer, uint output)
     }
 }
 
+
 void PIT::set_counter(PICTimer& timer, uint val)
 {
     timer.programed_val = timer.bcd ? from_bcd(val) : val;
 
     if (timer.programed_val == 0) {
         timer.programed_val = timer.bcd ? 10000 : 1 << 16;
+    }
+
+    if (timer.cb) {
+        timer.cb(timer.cb_opaque, timer.mode, timer.programed_val);
     }
 
     switch (timer.mode) {
@@ -468,9 +473,7 @@ uint8_t PIT::io_read_byte(uint16_t port)
 
 void PIT::set_gate_level(uint timer, bool high)
 {
-    if (!high) {
-        D_MESSAGE_SOME(10, "impliment me");
-    }
+    D_MESSAGE_SOME(10, "impliment me");
 }
 
 
@@ -489,6 +492,8 @@ void PIT::reset(PICTimer& pic_timer)
 {
     Timer* timer = pic_timer.timer;
     Wire* wire = pic_timer.irq_wire;
+    state_cb_t cb = pic_timer.cb;
+    void* opaque = pic_timer.cb_opaque;
 
     memset(&pic_timer, 0, sizeof(pic_timer));
 
@@ -501,6 +506,17 @@ void PIT::reset(PICTimer& pic_timer)
         wire->reset();
         pic_timer.irq_wire = wire;
     }
+
+    pic_timer.cb = cb;
+    pic_timer.cb_opaque = opaque;
+}
+
+
+void PIT::set_state_callback(uint timer_id, state_cb_t cb, void *opaque)
+{
+    ASSERT(timer_id < NUM_TIMERS);
+    _timers[timer_id].cb = cb;
+    _timers[timer_id].cb_opaque = opaque;
 }
 
 
