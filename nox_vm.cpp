@@ -48,6 +48,7 @@
 #include "display.h"
 #include "admin_server.h"
 #include "pci.h"
+#include "speaker.h"
 
 enum {
     IO_PORT_MISC = 0x61,
@@ -212,6 +213,7 @@ NoxVM::NoxVM()
     , _kbd (new KbdController(*this))
     , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
+    , _speaker (new Speaker(*this))
     , _low_ram (NULL)
     , _mid_ram (NULL)
     , _high_bios (NULL)
@@ -559,10 +561,12 @@ uint8_t NoxVM::a20_port_read(uint16_t port)
     return _mem_bus->line_20_is_set() ? 0x02 : 0;
 }
 
+
 void NoxVM::misc_port_write(uint16_t port, uint8_t val)
 {
     _misc_port = val & 0x0f;
     _pit->set_gate_level(2, !!(_misc_port & 0x1));
+    _speaker->set_level((_misc_port >> 1) & 1, _misc_port & 1);
 }
 
 

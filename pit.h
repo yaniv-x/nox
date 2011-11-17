@@ -50,6 +50,9 @@ public:
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 
+    typedef void (*state_cb_t)(void* opaque, uint mode, uint counter);
+    virtual void set_state_callback(uint timer_id, state_cb_t cb, void *opaque);
+
 private:
 
     struct PICTimer {
@@ -68,6 +71,9 @@ private:
         uint read_flip;
         uint write_filp;
         uint write_lsb;
+
+        state_cb_t cb;
+        void* cb_opaque;
 
         Timer* timer;
         Wire* irq_wire;

@@ -46,6 +46,7 @@ class KbdController;
 class IOBus;
 class VGA;
 class AdminReplyContext;
+class Speaker;
 
 
 class NoxVM: public VMPart {
@@ -57,6 +58,7 @@ public:
 
     KVM& get_kvm() { return *_kvm.get();}
     IOBus& get_io_bus() { return *_io_bus.get();}
+    PIT& get_pit() { return *_pit.get();}
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}
 
     void set_ram_size(uint32_t ram_size);
@@ -131,6 +133,7 @@ private:
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
+    std::auto_ptr<Speaker> _speaker;
     VMParts _dynamic_parts;
     PhysicalRam* _low_ram;
     PhysicalRam* _mid_ram;
