@@ -27,22 +27,40 @@
 #ifndef _H_NOX
 #define _H_NOX
 
+#ifdef __GNUC__
+#define ATTR_PACKED_1
+#define ATTR_PACKED_2 __attribute__ ((__packed__))
+#else
+#define ATTR_PACKED_1 _Packed
+#define ATTR_PACKED_2
+#endif
+
 #define NOX_PCI_VENDOR_ID 0x1aaa
 #define NOX_PCI_DEV_ID_HOST_BRIDGE 0x0001
 #define NOX_PCI_DEV_HOST_BRIDGE_REV 1
 #define NOX_ADDRESS_LINES 52
+#define NOX_PCI_IRQ_LINES_MASK 0xdef8 // exclude: PIT, keyboard, PIC slave, RTC, and DMA
+#define NOX_PCI_IRQ_EXCLUSIVE_MASK (NOX_PCI_IRQ_LINES_MASK & ~(0xd000)) // exclude: mouse, and
+                                                                            //          lagacy ide
 
 enum {
     PLATFORM_IO_LOCK = 0x00,
     PLATFORM_IO_SELECT = 0x01,
     PLATFORM_IO_LOG = 0x02,
-    PLATFORM_IO_PUT_BYTE = 0x03,
-    PLATFORM_IO_ERROR = 0x04,
-    PLATFORM_IO_REGISTER = 0x08,
-    PLATFORM_IO_END = 0x0c,
+    PLATFORM_IO_CMD = 0x03,
+    PLATFORM_IO_BYTE = 0x04,
+
+    PLATFORM_IO_ERROR = 0x08,
+    PLATFORM_IO_REGISTER = 0x0c,
+    PLATFORM_IO_END = 0x10,
 
     PLATFORM_MEM_PAGES = 1,
+    PLATFORM_LOG_BUF_START = 0,
     PLATFORM_LOG_BUF_SIZE = 1024,
+    PLATFORM_CMD_BUF_START = PLATFORM_LOG_BUF_START,
+    PLATFORM_CMD_BUF_SIZE = PLATFORM_LOG_BUF_SIZE,
+    PLATFORM_BIOS_DATA_START = PLATFORM_LOG_BUF_START + PLATFORM_LOG_BUF_SIZE,
+    PLATFORM_BIOS_DATA_SIZE = 1024,
 };
 
 enum {
@@ -52,7 +70,21 @@ enum {
     PLATFORM_REG_BELOW_4G_USED_PAGES,
     PLATFORM_REG_ABOVE_4G_PAGES,
     PLATFORM_REG_WRITE_POS,
+    PLATFORM_REG_READ_POS,
 };
+
+enum {
+    PALTFORM_CMD_SET_PCI_IRQ = 1,
+};
+
+
+typedef ATTR_PACKED_1 struct ATTR_PACKED_2 PCmdSetIRQ {
+    uint8_t bus;
+    uint8_t device;
+    uint8_t pin;
+    uint8_t irq;
+    uint8_t ret_val;
+} PCmdSetIRQ;
 
 
 #define PLATFORM_ERR_TYPE_SHIFT 29

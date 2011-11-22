@@ -273,6 +273,16 @@ void PCIBus::remove_device(PCIDevice& device)
 }
 
 
+bool PCIBus::set_irq(uint bus, uint device, uint pin, uint irq)
+{
+    if (bus != 0 || !_devices[device]) {
+        return false;
+    }
+
+    return _devices[device]->set_irq(pin, irq);
+}
+
+
 void PCIBus::reset()
 {
     remap_io_regions();

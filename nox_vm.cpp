@@ -27,7 +27,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#include "nox.h"
 #include "cpu.h"
 #include "application.h"
 #include "nox_vm.h"
@@ -49,6 +48,7 @@
 #include "admin_server.h"
 #include "pci.h"
 #include "speaker.h"
+#include "nox.h"
 
 enum {
     IO_PORT_MISC = 0x61,
@@ -436,6 +436,7 @@ void NoxVM::reset()
     _platform_lock = 0;
     _platform_reg_index = 0;
     _platform_write_pos = 0;
+    _platform_read_pos = 0;
     _nmi_mask = true;
 
     _mem_bus->map_physical_ram(_low_ram, 0, false);
@@ -626,12 +627,20 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 uint8_t NoxVM::platform_port_read_byte(uint16_t port)
 {
     switch (port) {
+    case PLATFORM_IO_BYTE:
+        if (_platform_read_pos >= (PLATFORM_MEM_PAGES << GUEST_PAGE_SHIFT)) {
+            W_MESSAGE_SOME(10, "read position is out of bound");
+            break;
+        }
+
+        return _pci_host->get_ram_ptr()[_platform_read_pos++];
     case PLATFORM_IO_LOCK:
         return _platform_lock;
     default:
         D_MESSAGE("unexpected port 0x%x", port);
-        return 0xff;
     }
+
+    return 0xff;
 }
 
 static void replace_none_printable(char* str)
@@ -644,10 +653,24 @@ static void replace_none_printable(char* str)
 }
 
 
+void NoxVM::do_platform_command(uint8_t val)
+{
+    switch (val) {
+    case PALTFORM_CMD_SET_PCI_IRQ: {
+        PCmdSetIRQ* args = (PCmdSetIRQ*)_pci_host->get_ram_ptr();
+        args->ret_val = pci_bus->set_irq(args->bus, args->device, args->pin, args->irq);
+        break;
+    }
+    default:
+        W_MESSAGE("invalid command 0x%x", val);
+    }
+}
+
+
 void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
 {
     switch (port) {
-    case PLATFORM_IO_PUT_BYTE:
+    case PLATFORM_IO_BYTE:
         if (_platform_write_pos >= (PLATFORM_MEM_PAGES << GUEST_PAGE_SHIFT)) {
             W_MESSAGE_SOME(10, "write position is out of bound 0x%x", val);
             break;
@@ -668,6 +691,9 @@ void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
         D_MESSAGE("guest: %s", str_copy.get());
         break;
     }
+    case PLATFORM_IO_CMD:
+        do_platform_command(val);
+        break;
     default:
         D_MESSAGE("unexpected port 0x%x val %u", port, val);
     }
@@ -718,6 +744,13 @@ void NoxVM::platform_port_write_dword(uint16_t port, uint32_t val)
             }
 
             _platform_write_pos = val;
+            break;
+        case PLATFORM_REG_READ_POS:
+            if (val >= (PLATFORM_MEM_PAGES << GUEST_PAGE_SHIFT)) {
+                W_MESSAGE_SOME(10, "read position is out of bound 0x%x", val);
+            }
+
+            _platform_read_pos = val;
             break;
         default:
             D_MESSAGE("unexpected register 0x%x", _platform_reg_index);
