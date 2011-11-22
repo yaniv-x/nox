@@ -30,6 +30,8 @@
 #include "io_bus.h"
 #include "memory_bus.h"
 #include "wire.h"
+#include "nox.h"
+#include "pic.h"
 
 
 // The following section, from PCI spec, explain the mechanism for getting
@@ -708,6 +710,33 @@ void PCIDevice::set_interrupt_level(uint level)
 }
 
 
+bool PCIDevice::set_irq(uint pin, uint irq)
+{
+    if (!((1 << irq) & NOX_PCI_IRQ_LINES_MASK)) {
+        return false;
+    }
+
+    if (pin != 0x0a) {
+        return true;
+    }
+
+    Lock lock(_mutex);
+    uint output = _interrupt_line.output();
+
+    if (output) {
+        _interrupt_line.drop();
+    }
+
+    pic->wire(_interrupt_line, irq);
+
+    if (output) {
+        _interrupt_line.raise();
+    }
+
+    return true;
+}
+
+
 uint8_t PCIDevice::read_config_byte(uint index, uint offset)
 {
     ASSERT(offset < 4);
@@ -1097,6 +1126,7 @@ void PCIDevice::write_config_dword(uint index, uint32_t val)
     }
 }
 
+
 void PCIDevice::reset_config_space()
 {
     uint16_t vendor = *reg16(PCI_CONF_VENDOR);
@@ -1120,6 +1150,7 @@ void PCIDevice::reset_config_space()
     *reg16(PCI_CONF_STATUS) = PCI_STATUS_66MHZ_MASK;
     *reg8(PCI_CONF_INTERRUPT_PIN) = interrupt_pin;
 }
+
 
 void PCIDevice::reset()
 {

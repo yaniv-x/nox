@@ -63,6 +63,7 @@ public:
     uint get_preferd_id() { return ~0;}
 
     void set_interrupt_level(uint level);
+    bool set_irq(uint pin, uint irq);
 
     class Region;
 

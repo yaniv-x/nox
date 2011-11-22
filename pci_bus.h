@@ -46,6 +46,7 @@ public:
 
     void add_device(PCIDevice& device);
     void remove_device(PCIDevice& device);
+    bool set_irq(uint bus, uint device, uint pin, uint irq);
 
 private:
     uint32_t io_get_config_address(uint16_t port);

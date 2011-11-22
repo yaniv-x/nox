@@ -105,6 +105,7 @@ private:
 #endif
     void post_diagnostic(uint16_t port, uint8_t val);
     uint8_t platform_port_read_byte(uint16_t port);
+    void do_platform_command(uint8_t val);
     void platform_port_write_byte(uint16_t port, uint8_t val);
     uint32_t platform_port_read_dword(uint16_t port);
     void platform_port_write_dword(uint16_t port, uint32_t val);
@@ -156,6 +157,7 @@ private:
     uint8_t _platform_lock;
     uint8_t _platform_reg_index;
     uint32_t _platform_write_pos;
+    uint32_t _platform_read_pos;
 
     std::list<StateChangeRequest*> _stat_change_req_list;
 
