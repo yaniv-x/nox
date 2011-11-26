@@ -49,6 +49,7 @@
 #include "pci.h"
 #include "speaker.h"
 #include "nox.h"
+#include "firmware_file.h"
 
 enum {
     IO_PORT_MISC = 0x61,
@@ -214,6 +215,7 @@ NoxVM::NoxVM()
     , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
     , _speaker (new Speaker(*this))
+    , _bios_file (new FirmwareFile())
     , _low_ram (NULL)
     , _mid_ram (NULL)
     , _high_bios (NULL)
@@ -801,36 +803,15 @@ void NoxVM::load_bios()
     uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
     ptr += MB - MID_RAM_START;
 
-    std::string pc_bios_file = application->get_nox_dir() + "/firmware/pc-bios.bin";
-
-    AutoFD _bios_fd(::open(pc_bios_file.c_str(), O_RDONLY));
-
-    if (!_bios_fd.is_valid()) {
-        THROW("open failed");
-    }
-
-    struct stat stat;
-
-    if (fstat(_bios_fd.get(), &stat) == -1) {
-        THROW("fstat failed");
-    }
-
-    if (stat.st_size > MB - MID_RAM_START) {
-        THROW("bad bios size");
-    }
-
-    _bios_pages = ALIGN(stat.st_size, GUEST_PAGE_SIZE) >> GUEST_PAGE_SHIFT;
-    ptr -= stat.st_size;
-
-    if (read(_bios_fd.get(), ptr, stat.st_size) != stat.st_size) {
-        THROW("read failed");
-    }
+    uint size = (_bios_file->num_pages() << GUEST_PAGE_SHIFT);
+    ptr -= size;
+    _bios_file->read_all(ptr);
 
     uint8_t* footer_ptr = _mem_bus->get_physical_ram_ptr(_high_bios);
     footer_ptr += _mem_bus->get_physical_ram_size(_high_bios);
     footer_ptr -= BIOS_FOOTER_SIZE;
 
-    memcpy(footer_ptr, ptr + stat.st_size - BIOS_FOOTER_SIZE, BIOS_FOOTER_SIZE);
+    memcpy(footer_ptr, ptr + size - BIOS_FOOTER_SIZE, BIOS_FOOTER_SIZE);
 
 #ifdef WITH_BOCHS_BIOS
     std::string vga_bios_file = application->get_nox_dir() + "/firmware/vga-bios.bin";
@@ -916,12 +897,43 @@ void NoxVM::set_boot_device(bool from_cdrom)
 }
 
 
+void NoxVM::init_bios()
+{
+    std::vector<std::string> names(3);
+
+    sprintf(names[0], "bios-%.4x-%.4x-%.2x.bin", NOX_PCI_VENDOR_ID,
+            NOX_PCI_DEV_ID_HOST_BRIDGE, NOX_PCI_DEV_HOST_BRIDGE_REV);
+
+    sprintf(names[1], "bios-%.4x-%.4x.bin", NOX_PCI_VENDOR_ID,
+            NOX_PCI_DEV_ID_HOST_BRIDGE);
+
+    names[2] = "bios.bin";
+
+    std::string file_name;
+
+    if (!Application::find_firmware(file_name, names)) {
+        THROW("open bios - failed");
+    }
+
+    _bios_file->open(file_name.c_str());
+
+    if (!_bios_file->is_valid()) {
+        THROW("open bios - failed");
+    }
+
+    if ((_bios_file->num_pages() << GUEST_PAGE_SHIFT) != 128 * KB) {
+        THROW("bad bios file size");
+    }
+}
+
+
 void NoxVM::init()
 {
     ASSERT(_state == INIT);
 
     new NoxDisplay(*_vga.get(), *_kbd.get());
 
+    init_bios();
     init_ram();
     init_hard_disk();
     init_cdrom();

@@ -42,6 +42,7 @@ public:
 
     static ErrorCode main(int argc, const char** argv);
     static const std::string& get_nox_dir();
+    static bool find_firmware(std::string& file, const std::vector< std::string>& names);
     void quit();
 
 private:
