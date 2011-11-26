@@ -32,6 +32,8 @@
 #include "wire.h"
 #include "nox.h"
 #include "pic.h"
+#include "application.h"
+#include "firmware_file.h"
 
 
 // The following section, from PCI spec, explain the mechanism for getting
@@ -535,35 +537,102 @@ private:
 };
 
 
-static uint32_t generate_rom_size()
-{
-#if 1
-    return 0;
-#else
-    static bool flip = true;
-    static uint shift = 0;
-    uint32_t size;
+class PCIFirmware : public NonCopyable {
+public:
+    PCIFirmware(PCIDevice& device, FirmwareFile *file, PhysicalRam* ram)
+        : _device (device)
+        , _file (file)
+        , _ram (ram)
+        , _mmio (NULL)
+        , _mapped (false)
+    {
+        uint32_t size = memory_bus->get_physical_ram_size(_ram);
 
-    D_MESSAGE("implement me");
+        int msb = find_msb(size);
 
-    if (!(flip = !flip)) {
-        return 0;
+        _map_size = 1ULL << msb;
+
+        if (_map_size < size) {
+            _map_size <<= 1;
+        }
     }
 
-    size = 4096 << shift++;
 
-    ASSERT(size <= PCI_ROM_MAX_SIZE && size >=  PCI_ROM_MIN_SIZE);
+    virtual ~PCIFirmware()
+    {
+        unmap();
+        delete _file;
+        memory_bus->release_physical_ram(_ram);
+    }
 
-    return size;
-#endif
-}
+    void reload()
+    {
+        _file->read_all(memory_bus->get_physical_ram_ptr(_ram));
+    }
+
+    void unmap()
+    {
+        if (!_mapped) {
+            return;
+        }
+
+        _mapped = false;
+        memory_bus->unmap_physical_ram(_ram);
+
+        if (_mmio) {
+            memory_bus->unregister_mmio(_mmio);
+            _mmio = NULL;
+        }
+    }
+
+    void map(uint32_t address)
+    {
+        unmap();
+
+        memory_bus->map_physical_ram(_ram, address >> GUEST_PAGE_SHIFT, true);
+
+        uint32_t size = memory_bus->get_physical_ram_size(_ram);
+
+        if (size != _map_size) {
+            _mmio = memory_bus->register_mmio((address + size) >> GUEST_PAGE_SHIFT,
+                                              (_map_size - size) >> GUEST_PAGE_SHIFT,
+                                              (read_mem_proc_t)&PCIFirmware::nop_read,
+                                              (write_mem_proc_t)&PCIFirmware::nop_write,
+                                              this, _device);
+        }
+
+        _mapped = true;
+    }
+
+    uint32_t get_size()
+    {
+        return  _map_size;
+    }
+
+    void nop_read(uint64_t src, uint64_t length, uint8_t* dest)
+    {
+        memset(dest, 0xff, length);
+    }
+
+    void nop_write(const uint8_t* src, uint64_t length, uint64_t dest)
+    {
+    }
+
+
+private:
+    PCIDevice& _device;
+    FirmwareFile *_file;
+    PhysicalRam* _ram;
+    uint32_t _map_size;
+    MMIORegion* _mmio;
+    bool _mapped;
+};
 
 
 PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t device,
                      uint8_t revision, uint32_t class_code, bool with_interrupt)
     : VMPart(name, bus)
     , _interrupt_line (*this)
-    , _rom_size (generate_rom_size())
 {
     if (vendor == 0 || vendor == ~0) {
         THROW("invalid vendor id");
@@ -586,6 +655,8 @@ PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t de
     if (with_interrupt) {
         *reg8(PCI_CONF_INTERRUPT_PIN) = PCI_INTTERUPT_PIN_A;
     }
+
+    load_firmware(vendor, device, revision);
 }
 
 
@@ -606,6 +677,38 @@ PCIDevice::~PCIDevice()
 
         delete region;
     }
+
+    delete _firmware;
+}
+
+
+void PCIDevice::load_firmware(uint16_t vendor, uint16_t device, uint8_t revision)
+{
+    std::string file_name;
+
+    sprintf(file_name, "%s/firmware/pci-%.4x-%.4x-%.2x",
+            application->get_nox_dir().c_str(),
+            vendor, device, revision);
+
+    std::auto_ptr<FirmwareFile> file(new FirmwareFile());
+
+    file->open(file_name.c_str());
+
+    if (!file->is_valid()) {
+        sprintf(file_name, "%s/firmware/pci-%.4x-%.4x",
+            application->get_nox_dir().c_str(),
+            vendor, device);
+
+        file->open(file_name.c_str());
+
+        if (!file->is_valid()) {
+            return;
+        }
+    }
+
+    PhysicalRam* ram = memory_bus->alloc_physical_ram(*this, file->num_pages(), "firmware");
+
+    _firmware = new PCIFirmware(*this, file.release(), ram);
 }
 
 
@@ -1067,7 +1170,9 @@ void PCIDevice::write_bar(uint reg_index, uint32_t val)
 
 void PCIDevice::unmap_rom()
 {
-    D_MESSAGE("implement me");
+    if (_firmware) {
+        _firmware->unmap();
+    }
 }
 
 
@@ -1078,17 +1183,23 @@ void PCIDevice::map_rom()
         return;
     }
 
-    D_MESSAGE("implement me");
-
-    D_MESSAGE("%s: 0x%lx 0x%lx", get_name().c_str(),
+    D_MESSAGE("%s: 0x%x 0x%x", get_name().c_str(),
               _config_space[PCI_CONF_ROM_ADDRESS >> 2] & ~PCI_ROM_ENABLE_MASK,
               get_rom_size());
+
+    if (_firmware) {
+        _firmware->map(_config_space[PCI_CONF_ROM_ADDRESS >> 2] & ~PCI_ROM_ENABLE_MASK);
+    }
 }
 
 
 uint32_t PCIDevice::get_rom_size()
 {
-    return _rom_size;
+    if (!_firmware) {
+        return 0;
+    }
+
+    return _firmware->get_size();
 }
 
 
@@ -1183,8 +1294,10 @@ void PCIDevice::reset()
         region->reset();
     }
 
-    D_MESSAGE("todo: reset rom");
-
     _interrupt_line.reset();
+
+    if (_firmware) {
+        _firmware->reload();
+    }
 }
 

@@ -24,30 +24,69 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_PCI
-#define _H_PCI
-
-#define NOX_PCI_VENDOR_ID 0x1aaa
-
-#define NOX_PCI_DEV_ID_HOST_BRIDGE 0x0001
-#define NOX_PCI_DEV_ID_ISA_BRIDGE 0x0010
-#define NOX_PCI_DEV_ID_VGA 0x0100
-#define NOX_PCI_DEV_ID_IDE 0x0110
-
-#define PCI_CLASS_MASS_STORAGE 0x01
-#define PCI_MASS_STORAGE_SUBCLASS_IDE 0x01
-#define PCI_IDE_PROGIF_BUS_MASTER_BIT 7
-
-#define PCI_CLASS_DISPLAY 0x03
-#define PCI_DISPLAY_SUBCLASS_VGA 0x00
-#define PCI_VGA_INTERFACE_VGACOMPAT 0x00
-
-#define PCI_CLASS_BRIDGE 0x06
-#define PCI_SUBCLASS_BRIDGE_HOST 0x00
-#define PCI_SUBCLASS_BRIDGE_ISA 0x01
+#include <fcntl.h>
+#include <sys/stat.h>
+#include "firmware_file.h"
 
 
-#define PCI_IO_MIN_SIZE 4
+FirmwareFile::FirmwareFile()
+    : _fd (-1)
+{
+}
 
-#endif
+
+FirmwareFile::~FirmwareFile()
+{
+    if (is_valid()) {
+        close(_fd);
+    }
+}
+
+
+bool FirmwareFile::open(const char* path)
+{
+    if (is_valid()) {
+        THROW("double open");
+    }
+
+    AutoFD fd(::open(path, O_RDONLY));
+
+    if (!fd.is_valid()) {
+        return false;
+    }
+
+    struct stat stat;
+
+    if (fstat(fd.get(), &stat) == -1) {
+        THROW("fstat failed");
+    }
+
+    if (!stat.st_size) {
+        THROW("bad file size %u", stat.st_size);
+    }
+
+    if ((stat.st_size % GUEST_PAGE_SIZE)) {
+        D_MESSAGE("bad file size %u", stat.st_size);
+    }
+
+    _file_size = stat.st_size;
+
+    if (stat.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) {
+        W_MESSAGE("%s is writable. trying to remove write permission", path);
+        fchmod(fd.get(), stat.st_mode & ~(S_IWUSR | S_IWGRP | S_IWOTH));
+    }
+
+    _fd = fd.release();
+    _num_pages = ALIGN(_file_size, GUEST_PAGE_SIZE) >> GUEST_PAGE_SHIFT;
+
+    return true;
+}
+
+
+void FirmwareFile::read_all(void* buf)
+{
+    uint8_t* dest = (uint8_t*)buf;
+    ::read_all(_fd, 0, dest, _file_size);
+    memset(dest + _file_size, 0, (_num_pages << GUEST_PAGE_SHIFT) - _file_size);
+}
 

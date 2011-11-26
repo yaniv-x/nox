@@ -46,6 +46,7 @@ nox_SOURCES =					\
     atapi_cdrom.cpp        \
     block_device.cpp        \
     speaker.cpp             \
+    firmware_file.cpp       \
 	run_loop.cpp
 
 INCLUDES =												\

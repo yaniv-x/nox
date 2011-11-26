@@ -798,18 +798,6 @@ void NoxVM::init_ram()
 
 void NoxVM::load_bios()
 {
-    // BIOS scan for existence of valid expansion ROMS.
-    //   Video ROM:   from 0xC0000..0xC7FFF in 2k increments
-    //   General ROM: from 0xC8000..0xDFFFF in 2k increments
-    //   System  ROM: only 0xE0000
-    //
-    // Header:
-    //   Offset    Value
-    //   0         0x55
-    //   1         0xAA
-    //   2         ROM length in 512-byte blocks
-    //   3         ROM initialization entry point (FAR CALL)
-
     uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
     ptr += MB - MID_RAM_START;
 
@@ -820,6 +808,7 @@ void NoxVM::load_bios()
     if (!_bios_fd.is_valid()) {
         THROW("open failed");
     }
+
     struct stat stat;
 
     if (fstat(_bios_fd.get(), &stat) == -1) {
@@ -843,6 +832,7 @@ void NoxVM::load_bios()
 
     memcpy(footer_ptr, ptr + stat.st_size - BIOS_FOOTER_SIZE, BIOS_FOOTER_SIZE);
 
+#ifdef WITH_BOCHS_BIOS
     std::string vga_bios_file = application->get_nox_dir() + "/firmware/vga-bios.bin";
 
     AutoFD _vga_fd(::open(vga_bios_file.c_str(), O_RDONLY));
@@ -856,6 +846,7 @@ void NoxVM::load_bios()
     if (read(_vga_fd.get(), ptr, stat.st_size) != stat.st_size) {
         THROW("read failed");
     }
+#endif
 }
 
 
