@@ -24,30 +24,27 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_PCI
-#define _H_PCI
+#ifndef _H_FIRMWARE_FILE
+#define _H_FIRMWARE_FILE
 
-#define NOX_PCI_VENDOR_ID 0x1aaa
+#include "common.h"
+#include "non_copyable.h"
 
-#define NOX_PCI_DEV_ID_HOST_BRIDGE 0x0001
-#define NOX_PCI_DEV_ID_ISA_BRIDGE 0x0010
-#define NOX_PCI_DEV_ID_VGA 0x0100
-#define NOX_PCI_DEV_ID_IDE 0x0110
+class FirmwareFile : public NonCopyable {
+public:
+    FirmwareFile();
+    virtual ~FirmwareFile();
 
-#define PCI_CLASS_MASS_STORAGE 0x01
-#define PCI_MASS_STORAGE_SUBCLASS_IDE 0x01
-#define PCI_IDE_PROGIF_BUS_MASTER_BIT 7
+    bool open(const char* path);
+    void read_all(void* buf);
+    bool is_valid() { return _fd != -1;}
+    uint num_pages() { return _num_pages;}
 
-#define PCI_CLASS_DISPLAY 0x03
-#define PCI_DISPLAY_SUBCLASS_VGA 0x00
-#define PCI_VGA_INTERFACE_VGACOMPAT 0x00
-
-#define PCI_CLASS_BRIDGE 0x06
-#define PCI_SUBCLASS_BRIDGE_HOST 0x00
-#define PCI_SUBCLASS_BRIDGE_ISA 0x01
-
-
-#define PCI_IO_MIN_SIZE 4
+private:
+    int _fd;
+    uint _file_size;
+    uint _num_pages;
+};
 
 #endif
 

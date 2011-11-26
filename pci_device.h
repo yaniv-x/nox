@@ -33,6 +33,7 @@
 
 class PhysicalRam;
 class PCIBus;
+class PCIFirmware;
 
 
 // supporting only single function device (multi function device
@@ -79,6 +80,8 @@ protected:
     virtual void on_io_disabled() {}
 
 private:
+    void load_firmware(uint16_t vendor, uint16_t device, uint8_t revision);
+
     uint8_t read_config_byte(uint index, uint offset);
     uint16_t read_config_word(uint index, uint offset);
     uint32_t read_config_dword(uint index);
@@ -109,7 +112,7 @@ private:
     void set_region(uint index, PCIDevice::Region* region);
     Wire& get_wire() { return _interrupt_line;}
 
-     enum {
+    enum {
         CONFIG_SPACE_SIZE = 64,
         NUM_BARS = 6,
     };
@@ -119,7 +122,7 @@ private:
     uint32_t _config_space[CONFIG_SPACE_SIZE];
     Region* _regions[NUM_BARS];
     Wire _interrupt_line;
-    uint32_t _rom_size;
+    PCIFirmware* _firmware;
 
     friend class PCIBus;
 };

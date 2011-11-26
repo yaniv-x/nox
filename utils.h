@@ -49,6 +49,7 @@ public:
     int get() { return _fd;}
     void reset(int fd) { close(); _fd = fd; }
     bool is_valid() { return _fd != -1;}
+    int release() { int fd = _fd; _fd = -1; return fd; }
 
 private:
     void close() { if (_fd != -1) ::close(_fd);}
@@ -181,6 +182,8 @@ inline char* copy_cstr(const char* str)
 
     return ret;
 }
+
+void read_all(int fd, off_t from, void* in_dest, size_t size);
 
 #endif
 

@@ -94,3 +94,26 @@ bool str_to_uint32(const char *str, uint32_t& num)
     return true;
 }
 
+
+void read_all(int fd, off_t from, void* in_dest, size_t size)
+{
+    uint8_t* dest = (uint8_t*)in_dest;
+
+    if (lseek(fd, from, SEEK_SET) != from) {
+        THROW("seek failed");
+    }
+
+    while (size) {
+        ssize_t n = read(fd, dest, size);
+        if (n <= 0) {
+             if (n == 0 || errno != EINTR) {
+                 THROW("read failed");
+             }
+             continue;
+        }
+
+        size -= n;
+        dest += n;
+    }
+}
+
