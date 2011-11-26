@@ -633,6 +633,7 @@ PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t de
                      uint8_t revision, uint32_t class_code, bool with_interrupt)
     : VMPart(name, bus)
     , _interrupt_line (*this)
+    , _firmware (NULL)
 {
     if (vendor == 0 || vendor == ~0) {
         THROW("invalid vendor id");
@@ -684,26 +685,22 @@ PCIDevice::~PCIDevice()
 
 void PCIDevice::load_firmware(uint16_t vendor, uint16_t device, uint8_t revision)
 {
+    std::vector< std::string> names(2);
     std::string file_name;
 
-    sprintf(file_name, "%s/firmware/pci-%.4x-%.4x-%.2x",
-            application->get_nox_dir().c_str(),
-            vendor, device, revision);
+    sprintf(names[0], "pci-%.4x-%.4x-%.2x.bin", vendor, device, revision);
+    sprintf(names[1], "pci-%.4x-%.4x.bin", vendor, device);
+
+    if (!Application::find_firmware(file_name, names)) {
+        return;
+    }
 
     std::auto_ptr<FirmwareFile> file(new FirmwareFile());
 
     file->open(file_name.c_str());
 
     if (!file->is_valid()) {
-        sprintf(file_name, "%s/firmware/pci-%.4x-%.4x",
-            application->get_nox_dir().c_str(),
-            vendor, device);
-
-        file->open(file_name.c_str());
-
-        if (!file->is_valid()) {
-            return;
-        }
+        return;
     }
 
     PhysicalRam* ram = memory_bus->alloc_physical_ram(*this, file->num_pages(), "firmware");

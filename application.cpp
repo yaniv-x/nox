@@ -409,6 +409,28 @@ const std::string& Application::get_nox_dir()
 }
 
 
+bool Application::find_firmware(std::string& file, const std::vector< std::string>& names)
+{
+    for (int i = 0; i < names.size(); i++) {
+        struct stat stat_buf;
+
+        file = get_nox_dir() + "/firmware/" + names[i].c_str();
+
+        if (stat(file.c_str(), &stat_buf) != -1) {
+            return true;
+        }
+
+        if (errno != ENOENT) {
+            break;
+        }
+    }
+
+    file = "";
+
+    return false;
+}
+
+
 ErrorCode Application::main(int argc, const char** argv)
 {
     srand(time(NULL));

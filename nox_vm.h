@@ -47,6 +47,7 @@ class IOBus;
 class VGA;
 class AdminReplyContext;
 class Speaker;
+class FirmwareFile;
 
 
 class NoxVM: public VMPart {
@@ -87,6 +88,7 @@ protected:
     virtual void load(InStream& stream);
 
 private:
+    void init_bios();
     void init_ram();
     void init_hard_disk();
     void init_cdrom();
@@ -135,6 +137,7 @@ private:
     std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
     std::auto_ptr<Speaker> _speaker;
+    std::auto_ptr<FirmwareFile> _bios_file;
     VMParts _dynamic_parts;
     PhysicalRam* _low_ram;
     PhysicalRam* _mid_ram;
