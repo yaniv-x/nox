@@ -304,7 +304,7 @@ inline void PIC::handle_OCW2(Chip& chip, uint8_t val)
         chip.highst_priority = (irq + 1) % NUM_IRQ;
         break;
     case OCW2_CMD_NONSPECIFIC_EOI:
-        nonspecific_EOI(chip,false);
+        nonspecific_EOI(chip, false);
         break;
     case OCW2_CMD_ROTATE_ON_NON_SPECIFIC_EOI:
         nonspecific_EOI(chip, true);
@@ -319,6 +319,10 @@ inline void PIC::handle_OCW2(Chip& chip, uint8_t val)
     case OCW2_CMD_DISABLE_AUTO_ROTAT_IN_AEOI_MODE:
         chip.auto_rotate = false;
         break;
+    }
+
+    if (is_slave(chip)) {
+        update_slave_IR();
     }
 }
 
@@ -362,7 +366,7 @@ void PIC::io_write_port_1(uint16_t port, uint8_t val)
 
     chip.regs[REG_INDEX_IMR] = val; //0 => enable;
 
-     if (is_slave(chip)) {
+    if (is_slave(chip)) {
         update_slave_IR();
     }
 
