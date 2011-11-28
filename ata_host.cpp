@@ -48,7 +48,9 @@ enum {
 
     IO_NUM_PORTS = 8,
 
-    RET_VAL_WHILE_NO_DEVICE = 0x7f,
+    RET_VAL_WHILE_NO_DEVICE = 0x7f, // on some systems the host return a const value (with
+                                    // cleared BSY bit) and on some other systems the ret val
+                                    // is (last-written-val & ~BSY)
 
     IO_BUS_MASTER_PRIMERY_COMMAND = 0x00,
     IO_BUS_MASTER_PRIMERY_STATUS = 0x02,
