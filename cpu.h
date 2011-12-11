@@ -34,6 +34,49 @@ class NoxVM;
 class IOBus;
 class Timer;
 
+
+enum {
+    CPU_REG_A_INDEX,
+    CPU_REG_B_INDEX,
+    CPU_REG_C_INDEX,
+    CPU_REG_D_INDEX,
+    CPU_REG_SI_INDEX,
+    CPU_REG_DI_INDEX,
+    CPU_REG_SP_INDEX,
+    CPU_REG_BP_INDEX,
+    CPU_REG_8_INDEX,
+    CPU_REG_9_INDEX,
+    CPU_REG_10_INDEX,
+    CPU_REG_11_INDEX,
+    CPU_REG_12_INDEX,
+    CPU_REG_13_INDEX,
+    CPU_REG_14_INDEX,
+    CPU_REG_15_INDEX,
+    CPU_REG_IP_INDEX,
+    CPU_REG_FLAGS_INDEX,
+
+    CPU_REGS_COUNT
+};
+
+
+enum {
+    CPU_SEG_CS,
+    CPU_SEG_DS,
+    CPU_SEG_ES,
+    CPU_SEG_FS,
+    CPU_SEG_GS,
+    CPU_SEG_SS,
+
+    CPU_SEG_COUNT
+};
+
+
+struct CPURegs {
+    uint64_t r[CPU_REGS_COUNT];
+    uint16_t seg[CPU_SEG_COUNT];
+};
+
+
 class CPU: public VMPart {
 public:
     CPU(NoxVM& vm, uint id);
@@ -46,7 +89,16 @@ public:
     virtual bool start();
     virtual bool stop();
 
+    uint get_id() { return _id;}
+    void get_regs(CPURegs& regs);
+    bool translate(uint64_t address, uint64_t& pysical);
     void backtrace_64();
+    void set_single_step();
+    void cancle_single_step();
+    void debug_untrap();
+    void enter_debug_mode(void_callback_t cb, void* opaque);
+    void exit_debug_mode();
+    void trigger_debug_trap();
 
     enum Command {
         WAIT,
@@ -81,7 +133,11 @@ private:
     void save_init_msrs();
     void create();
     void output_trigger();
-    void halt();
+    void trap_wait();
+    bool halt_trap();
+    void set_halt_trap();
+    bool debug_trap();
+    void set_debug_trap();
     void apic_write(uint32_t offset, uint32_t n, uint8_t* src);
     void apic_read(uint32_t offset, uint32_t n, uint8_t* dest);
     void handle_mmio();
@@ -134,10 +190,9 @@ private:
     bool _need_timer_update;
     uint _interrupt_mark_set;
     uint _interrupt_mark_get;
-    bool _halt;
-    bool _halt_on_resume;
-    Mutex _halt_mutex;
-    Condition _halt_condition;
+    Mutex _trap_mutex;
+    Condition _trap_condition;
+    bool (CPU::*_trap)();
     uint32_t _version_information;
     address_t _apic_address;
     address_t _apic_start;
@@ -148,8 +203,10 @@ private:
     Timer* _apic_timer;
     int _current_interrupt;
     //Mutex _apic_timer_mutex;
+    void_callback_t _debug_cb;
+    void* _debug_opaque;
+    bool _debug_trap;
 };
-
 
 
 extern __thread CPU* vcpu;

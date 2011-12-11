@@ -31,6 +31,7 @@
 #include "nox_vm.h"
 #include "options_parser.h"
 #include "admin_server.h"
+#include "gdb_target.h"
 
 #define MIN_MEM_SIZE (uint64_t(1) * MB)
 #define MAX_MEM_SIZE (uint64_t(8) * GB) // todo: calc dinamically according to system resources
@@ -363,6 +364,7 @@ bool Application::init(int argc, const char** argv)
     }
 
     _vm->vm_reset();
+    _gdb_target.reset(new GDBTarget(*_vm, *this));
     _vm->vm_start(NULL, NULL);
 
     return true;

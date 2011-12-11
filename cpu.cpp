@@ -193,9 +193,11 @@ CPU::CPU(NoxVM& vm, uint id)
     , _test_interrupts(false)
     , _interrupt_mark_set(0)
     , _interrupt_mark_get (0)
-    , _halt (false)
-    , _halt_on_resume (false)
+    , _trap (NULL)
     , _version_information (0)
+    , _debug_cb (NULL)
+    , _debug_opaque (NULL)
+    , _debug_trap (false)
 {
     init_sig_usr1();
 
@@ -488,8 +490,8 @@ void CPU::reset()
     reset_fpu();
     reset_msrs();
 
-    _halt = false;
-    _halt_on_resume = false;
+    _trap = NULL;
+    _debug_trap = false;
 
     ASSERT(_cpu_state == WAITING);
 }
@@ -527,28 +529,66 @@ void CPU::handle_io()
 }
 
 
-void CPU::halt()
+void CPU::trap_wait()
 {
-    Lock lock(_halt_mutex);
-    _halt = true;
+    Lock lock(_trap_mutex);
+
+    if (!_trap) {
+        return;
+    }
 
     for (;;) {
 
-        if (_kvm_run->if_flag && pic->interrupt_test()) {
+        if (!(this->*_trap)()) {
+            _trap = NULL;
             break;
         }
 
         if (_execution_break) {
-            _halt_on_resume = true;
             break;
         }
 
-        _halt_condition.wait(_halt_mutex);
+        _trap_condition.wait(_trap_mutex);
     }
+}
 
-    _halt = false;
 
+bool CPU::debug_trap()
+{
+    return _debug_trap;
+}
+
+
+void CPU::set_debug_trap()
+{
+    ASSERT(_trap == NULL);
+    _debug_trap = true;
+    _trap = &CPU::debug_trap;
+    _debug_cb(_debug_opaque);
+    trap_wait();
+}
+
+
+void CPU::debug_untrap()
+{
+    Lock lock(_trap_mutex);
+    _debug_trap = false;
+    _trap_condition.signal();
+}
+
+
+bool CPU::halt_trap()
+{
+    return !_kvm_run->if_flag || !pic->interrupt_test();
     //todo : resume only in case we can push interrupt
+}
+
+
+void CPU::set_halt_trap()
+{
+    ASSERT(_trap == NULL);
+    _trap = &CPU::halt_trap;
+    trap_wait();
 }
 
 
@@ -885,6 +925,141 @@ void CPU::backtrace_64()
 }
 
 
+void CPU::set_single_step()
+{
+    ASSERT(vcpu == this || _cpu_state != RUNNING);
+
+    struct kvm_guest_debug debug;
+
+    memset(&debug, 0, sizeof(debug));
+    debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_USE_SW_BP;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_GUEST_DEBUG, &debug) == -1) {
+        THROW("failed %d", errno);
+    }
+}
+
+
+void CPU::enter_debug_mode(void_callback_t cb, void* opaque)
+{
+    ASSERT(_cpu_state != RUNNING);
+
+    struct kvm_guest_debug debug;
+
+    memset(&debug, 0, sizeof(debug));
+    debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_SW_BP;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_GUEST_DEBUG, &debug) == -1) {
+        THROW("failed %d", errno);
+    }
+
+    _debug_cb = cb;
+    _debug_opaque = opaque;
+}
+
+
+void CPU::cancle_single_step()
+{
+    ASSERT(_cpu_state != RUNNING);
+
+    struct kvm_guest_debug debug;
+
+    memset(&debug, 0, sizeof(debug));
+    debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_SW_BP;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_GUEST_DEBUG, &debug) == -1) {
+        THROW("failed %d", errno);
+    }
+
+    _debug_trap = false;
+}
+
+
+void CPU::exit_debug_mode()
+{
+    ASSERT(_cpu_state != RUNNING);
+
+    struct kvm_guest_debug debug;
+
+    memset(&debug, 0, sizeof(debug));
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_GUEST_DEBUG, &debug) == -1) {
+        THROW("failed %d", errno);
+    }
+
+    _debug_cb = NULL;
+    _debug_opaque = NULL;
+    _debug_trap = false;
+}
+
+
+void CPU::trigger_debug_trap()
+{
+    set_single_step();
+}
+
+
+void CPU::get_regs(CPURegs& regs)
+{
+    ASSERT(_cpu_state != RUNNING);
+
+    struct kvm_regs kvm_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_REGS, &kvm_regs) == -1) {
+        THROW("get regs failed %d", errno);
+    }
+
+    regs.r[CPU_REG_A_INDEX] = kvm_regs.rax;
+    regs.r[CPU_REG_B_INDEX] = kvm_regs.rbx;
+    regs.r[CPU_REG_C_INDEX] = kvm_regs.rcx;
+    regs.r[CPU_REG_D_INDEX] = kvm_regs.rdx;
+    regs.r[CPU_REG_SI_INDEX] = kvm_regs.rsi;
+    regs.r[CPU_REG_DI_INDEX] = kvm_regs.rdi;
+    regs.r[CPU_REG_SP_INDEX] = kvm_regs.rsp;
+    regs.r[CPU_REG_BP_INDEX] = kvm_regs.rbp;
+    regs.r[CPU_REG_8_INDEX] = kvm_regs.r8;
+    regs.r[CPU_REG_9_INDEX] = kvm_regs.r9;
+    regs.r[CPU_REG_10_INDEX] = kvm_regs.r10;
+    regs.r[CPU_REG_11_INDEX] = kvm_regs.r11;
+    regs.r[CPU_REG_12_INDEX] = kvm_regs.r12;
+    regs.r[CPU_REG_13_INDEX] = kvm_regs.r13;
+    regs.r[CPU_REG_14_INDEX] = kvm_regs.r14;
+    regs.r[CPU_REG_15_INDEX] = kvm_regs.r15;
+    regs.r[CPU_REG_IP_INDEX] = kvm_regs.rip;
+    regs.r[CPU_REG_FLAGS_INDEX] = kvm_regs.rflags;
+
+    struct kvm_sregs sys_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_SREGS, &sys_regs) == -1) {
+        THROW("get sregs failed %d", errno);
+    }
+
+    regs.seg[CPU_SEG_CS] = sys_regs.cs.selector;
+    regs.seg[CPU_SEG_DS] = sys_regs.ds.selector;
+    regs.seg[CPU_SEG_ES] = sys_regs.es.selector;
+    regs.seg[CPU_SEG_FS] = sys_regs.fs.selector;
+    regs.seg[CPU_SEG_GS] = sys_regs.gs.selector;
+    regs.seg[CPU_SEG_SS] = sys_regs.ss.selector;
+}
+
+
+bool CPU::translate(uint64_t address, uint64_t& pysical)
+{
+    ASSERT(_cpu_state != RUNNING);
+
+    struct kvm_translation translation;
+    translation.linear_address = address;
+
+    if (ioctl(_vcpu_fd.get(), KVM_TRANSLATE, &translation) == -1 || !translation.valid) {
+        D_MESSAGE("translate failed");
+        return false;
+    }
+
+    pysical = translation.physical_address;
+    return true;
+}
+
+
 inline bool CPU::is_apic_enabled()
 {
     return _apic_address & APIC_ENABLE_MASK;
@@ -1017,10 +1192,7 @@ void CPU::run_loop()
 {
     apic_rearm_timer();
 
-    if (_halt_on_resume) {
-        _halt_on_resume = false;
-        halt();
-    }
+    trap_wait();
 
     while (!_execution_break) {
 
@@ -1086,7 +1258,10 @@ void CPU::run_loop()
         case KVM_EXIT_INTR:
             break;
         case KVM_EXIT_HLT:
-            halt();
+            set_halt_trap();
+            break;
+        case KVM_EXIT_DEBUG:
+            set_debug_trap();
             break;
         default:
             THROW("unhandle kvm exit reason %d", _kvm_run->exit_reason);
@@ -1184,9 +1359,9 @@ bool CPU::stop()
 {
     ASSERT(_cpu_state == RUNNING || _cpu_state == WAITING);
 
-    Lock lock(_halt_mutex);
+    Lock lock(_trap_mutex);
     _execution_break = true;
-    _halt_condition.signal();
+    _trap_condition.signal();
     lock.unlock();
 
     _thread.signal(SIGUSR1);
@@ -1246,9 +1421,9 @@ void CPU::output_trigger()
         _thread.signal(SIGUSR1);
     }
 
-    Lock lock(_halt_mutex);
-    if (_halt) {
-        _halt_condition.signal();
+    Lock lock(_trap_mutex);
+    if (_trap == &CPU::halt_trap) {
+        _trap_condition.signal();
     }
 }
 

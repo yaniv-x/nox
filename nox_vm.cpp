@@ -815,6 +815,7 @@ void NoxVM::load_bios()
 
 #ifdef WITH_BOCHS_BIOS
     std::string vga_bios_file = application->get_nox_dir() + "/firmware/vga-bios.bin";
+    struct stat stat;
 
     AutoFD _vga_fd(::open(vga_bios_file.c_str(), O_RDONLY));
 
@@ -836,6 +837,28 @@ void NoxVM::init_cpus()
     for (int i = 0; i < _num_cpus; i++) {
         _dynamic_parts.push_back(new CPU(*this, i));
     }
+}
+
+
+CPU* NoxVM::get_cpu(uint id)
+{
+    VMParts::iterator iter = _dynamic_parts.begin();
+
+    for (; iter != _dynamic_parts.end(); ++iter) {
+        VMPart* part = *iter;
+
+        if (part->get_name() != "cpu") {
+            continue;
+        }
+
+        CPU* cpu = (CPU*)*iter;
+
+        if (cpu->get_id() == id) {
+            return cpu;
+        }
+    }
+
+    return NULL;
 }
 
 
@@ -1129,6 +1152,126 @@ void NoxVM::vm_stop(NoxVM::compleation_routin_t cb, void* opaque)
 }
 
 
+class DebugRequest: public NoxVM::StateChangeRequest {
+public:
+    DebugRequest(NoxVM::compleation_routin_t cb, void* opaque)
+        : NoxVM::StateChangeRequest(cb, opaque)
+    {
+    }
+
+    virtual bool test(NoxVM& vm)
+    {
+        switch (vm.get_state()) {
+        case VMPart::STOPPED:
+        case VMPart::DEBUGGING:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    virtual bool start(NoxVM& vm)
+    {
+        switch (vm.get_state()) {
+        case VMPart::STOPPED:
+            vm.set_debug();
+            return true;
+        case VMPart::DEBUGGING:
+            return true;
+        default:
+            PANIC("unexpected");
+            return false;
+        }
+    }
+
+    virtual bool cont(NoxVM& vm)
+    {
+        PANIC("unexpected");
+        return false;
+    }
+};
+
+
+void NoxVM::set_debug()
+{
+    debug_all();
+}
+
+
+void NoxVM::vm_debug(NoxVM::compleation_routin_t cb, void* opaque)
+{
+    Lock lock(_vm_state_mutex);
+
+    _stat_change_req_list.push_back(new StopRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new DebugRequest(cb, opaque));
+
+    if (_stat_change_req_list.size() == 2) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
+class DebugContRequest: public NoxVM::StateChangeRequest {
+public:
+    DebugContRequest(NoxVM::compleation_routin_t cb, void* opaque)
+        : NoxVM::StateChangeRequest(cb, opaque)
+    {
+    }
+
+    virtual bool test(NoxVM& vm)
+    {
+        switch (vm.get_state()) {
+        case VMPart::DEBUGGING:
+        case VMPart::RUNNING:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    virtual bool start(NoxVM& vm)
+    {
+        switch (vm.get_state()) {
+        case VMPart::DEBUGGING:
+            vm.set_stopped();
+            return true;
+        case VMPart::RUNNING:
+            return true;
+        default:
+            PANIC("unexpected");
+            return false;
+        }
+    }
+
+    virtual bool cont(NoxVM& vm)
+    {
+        PANIC("unexpected");
+        return false;
+    }
+};
+
+
+void NoxVM::vm_debug_cont(NoxVM::compleation_routin_t cb, void* opaque)
+{
+    Lock lock(_vm_state_mutex);
+
+    _stat_change_req_list.push_back(new DebugContRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new StartRequest(cb, opaque));
+
+    if (_stat_change_req_list.size() == 2) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
+void NoxVM::set_stopped()
+{
+    set_stopped_all();
+}
+
+
 class DownRequest: public NoxVM::StateChangeRequest {
 public:
     DownRequest(NoxVM::compleation_routin_t cb, void* opaque)
@@ -1192,6 +1335,8 @@ void NoxVM::handle_state_request()
 
     StateChangeRequest* request = _stat_change_req_list.front();
 
+    lock.unlock();
+
     if (!request->verify_start_condition(*this)) {
         request->notify(false);
     } else {
@@ -1201,6 +1346,8 @@ void NoxVM::handle_state_request()
 
         request->notify(true);
     }
+
+    lock.lock();
 
     _stat_change_req_list.pop_front();
     delete request;

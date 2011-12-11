@@ -24,49 +24,67 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_APPLICATION
-#define _H_APPLICATION
+#ifndef _H_GDB_TARGET
+#define _H_GDB_TARGET
 
-#include "common.h"
-#include "run_loop.h"
+#include "non_copyable.h"
+#include "threads.h"
 
 class NoxVM;
-class AdminServer;
-class GDBTarget;
+class RunLoop;
+class FDEvent;
 
-class Application: public RunLoop {
+class GDBTarget: public NonCopyable {
 public:
-    Application();
-    ~Application();
+    GDBTarget(NoxVM& vm, RunLoop& loop);
+    virtual ~GDBTarget();
 
-    AdminServer* get_admin() { return _admin_server.get();}
-
-    static ErrorCode main(int argc, const char** argv);
-    static const std::string& get_nox_dir();
-    static bool find_firmware(std::string& file, const std::vector< std::string>& names);
-    void quit();
+    void cpu_interrupt();
 
 private:
-    void init_signals();
-    void restore_signals();
-    bool init(int argc, const char** argv);
-    void continue_quitting(bool ok);
-    void quit_handler();
+    void accept();
+    void handle_io();
+    void recive();
+    void transmit();
+    void disconnect();
+    void terminate();
 
-    static void sig_int_handler(int sig);
-    static void sig_term_handler(int sig);
+    void process(uint8_t* data, int len);
+    void ack_recived();
+    void nak_recived();
+    void test_sum();
+    void handle_v();
+    void handle_q();
+    void handle_H();
+    void handle_read_mem();
+    void handle_write_mem();
+    void handle_regs();
+    void process_packet();
+    void ack();
+    void put_packet(const char* data);
+    void attach(bool ok);
+    void trap(bool ok);
+    void interrupt(bool ok);
+    void detach(bool ok);
+    void terminate_cb(bool ok);
+    void debug_condition();
 
 private:
-    std::auto_ptr<AdminServer> _admin_server;
-    std::auto_ptr<NoxVM> _vm;
-    Event* _quit_event;
-    bool _quitting;
-    struct sigaction _prev_term_act;
-    struct sigaction _prev_int_act;
-    std::auto_ptr<GDBTarget> _gdb_target;
+    Mutex _detach_mutex;
+    NoxVM& _vm;
+    RunLoop& _loop;
+    int _listenr;
+    FDEvent* _accept_event;
+    int _connection;
+    FDEvent* _io_event;
+
+    int _state;
+    int _in_state;
+    std::string _data;
+    char _sum[3];
+    std::string _output;
 };
 
-extern Application* application;
 
 #endif
 
