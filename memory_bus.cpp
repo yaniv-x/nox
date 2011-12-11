@@ -306,7 +306,7 @@ void MemoryBus::read_from_pages(uint64_t src, uint64_t length, uint8_t* dest)
 
 void MemoryBus::read(uint64_t src, uint64_t length, void* dest)
 {
-    ASSERT(get_state() == VMPart::RUNNING);
+    ASSERT(get_state() == VMPart::RUNNING || get_state() == VMPart::DEBUGGING);
 
     if ((src & ~((1ULL << ADDRESS_BITS) - 1)) || src + length < src ||
         ((src + length)  & ~((1ULL << ADDRESS_BITS) - 1))) {
@@ -359,7 +359,7 @@ void MemoryBus::write_to_pages(const uint8_t* src, uint64_t length, uint64_t des
 
 void MemoryBus::write(const void* src, uint64_t length, uint64_t dest)
 {
-    ASSERT(get_state() == VMPart::RUNNING);
+    ASSERT(get_state() == VMPart::RUNNING || get_state() == VMPart::DEBUGGING);
 
     if ((dest & ~((1ULL << ADDRESS_BITS) - 1)) || dest + length < dest ||
         ((dest + length)  & ~((1ULL << ADDRESS_BITS) - 1))) {

@@ -48,6 +48,7 @@ class VGA;
 class AdminReplyContext;
 class Speaker;
 class FirmwareFile;
+class CPU;
 
 
 class NoxVM: public VMPart {
@@ -59,6 +60,7 @@ public:
 
     KVM& get_kvm() { return *_kvm.get();}
     IOBus& get_io_bus() { return *_io_bus.get();}
+    CPU* get_cpu(uint id);
     PIT& get_pit() { return *_pit.get();}
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}
 
@@ -73,6 +75,8 @@ public:
     void vm_stop(compleation_routin_t cb, void* opaque);
     void vm_restart(compleation_routin_t cb, void* opaque);
     void vm_down(compleation_routin_t cb, void* opaque);
+    void vm_debug(NoxVM::compleation_routin_t cb, void* opaque);
+    void vm_debug_cont(NoxVM::compleation_routin_t cb, void* opaque);
 
     void resume_mode_change();
     void handle_state_request();
@@ -96,6 +100,8 @@ private:
     void init_cpus();
     void reset_bios_stuff();
     void set_down();
+    void set_debug();
+    void set_stopped();
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
@@ -168,6 +174,8 @@ private:
     friend class StartRequest;
     friend class ResetRequest;
     friend class DownRequest;
+    friend class DebugRequest;
+    friend class DebugContRequest;
     friend class PCIHost;
 };
 

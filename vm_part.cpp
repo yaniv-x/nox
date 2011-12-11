@@ -131,6 +131,30 @@ void VMPart::down_all()
 }
 
 
+void VMPart::debug_all()
+{
+    VMParts::iterator iter = _parts.begin();
+
+    for (; iter != _parts.end(); iter++) {
+        (*iter)->debug_all();
+    }
+
+    _state = DEBUGGING;
+}
+
+
+void VMPart::set_stopped_all()
+{
+    VMParts::iterator iter = _parts.begin();
+
+    for (; iter != _parts.end(); iter++) {
+        (*iter)->set_stopped_all();
+    }
+
+    _state = STOPPED;
+}
+
+
 void VMPart::reset_childrens()
 {
     VMParts::iterator iter = _parts.begin();

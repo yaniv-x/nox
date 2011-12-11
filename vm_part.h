@@ -49,6 +49,7 @@ public:
         RUNNING,
         STOPPING,
         STOPPED,
+        DEBUGGING,
         SHUTING_DOWN,
         DOWN,
     };
@@ -84,6 +85,8 @@ private:
     void reset_childrens();
     void reset_all();
     void down_all();
+    void debug_all();
+    void set_stopped_all();
 
     VMPart(const char* name);
     void unregister_regions();
