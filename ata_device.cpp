@@ -625,6 +625,7 @@ void ATADevice::remove_pio_source(bool done)
         uint new_state = (_status | ATA_STATUS_BUSY_MASK) & ~ATA_STATUS_DATA_REQUEST_MASK;
         _status = new_state;
     } else {
+        //todo: no interrupt is needed in case of successfull pio data-in
         notify_command_done();
     }
 }
