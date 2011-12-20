@@ -641,6 +641,8 @@ public:
 
     virtual void start()
     {
+        _cd._count &= ATA_REASON_TAG_MASK;
+        _cd._count |= (1 << ATA_REASON_CD_BIT);
         _cd.set_pio_dest(this, false);
     }
 
@@ -1945,6 +1947,43 @@ void ATAPICdrom::mmc_start_stop_unit(uint8_t* packet)
 
 void ATAPICdrom::mmc_mechanisim_status(uint8_t* packet)
 {
+    if (handle_attention_condition()) {
+        D_MESSAGE("attention");
+        return;
+    }
+
+    if ((packet[5] & 1) /*link bit is set*/) {
+        D_MESSAGE("link is set");
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+        return;
+    }
+
+
+    uint16_t* ptr16 = (uint16_t*)&packet[8];
+    uint length = revers_unit16(*ptr16);
+
+    if (length == 0) {
+        packet_cmd_sucess();
+        return;
+    }
+
+    uint max_transfer = max_pio_transfer_bytes();
+
+    if (length > max_transfer && (max_transfer & 1)) {
+        D_MESSAGE("odd max_transfer 0x%x 0x%x", max_transfer, length);
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
+        return;
+    }
+
+    uint8_t result[8];
+
+    length = MIN(length, sizeof(result));
+
+    memset(result, 0, sizeof(result));
+
+    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    memcpy(task->get_data(), result, length);
+    start_task(task.get());
 }
 
 
@@ -1989,9 +2028,9 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     case MMC_CMD_START_STOP_UNIT:
         mmc_start_stop_unit(packet);
         break;
-    //case MMC_CMD_MECHANISM_STATUS:
-        //mmc_mechanisim_status(packet);
-        //break;
+    case MMC_CMD_MECHANISM_STATUS:
+        mmc_mechanisim_status(packet);
+        break;
     case MMC_CMD_GET_PERFORMANCE:
     case MMC_CMD_READ_DISC_INFORMATION:
     case MMC_CMD_REPORT_KEY:
