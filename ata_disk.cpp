@@ -34,7 +34,11 @@
 #include "memory_bus.h"
 #include "dma_state.h"
 
+#ifdef ATA_DEBUG
+#define ATA_LOG(format, ...) D_MESSAGE(format, ## __VA_ARGS__)
+#else
 #define ATA_LOG(format, ...)
+#endif
 
 enum {
     SECTOR_SIZE = 512,
@@ -1102,6 +1106,7 @@ void ATADisk::do_initialize_device_parameters()
         _heads_per_cylinder = new_heads_per_cylinder;
     }
 
+    _status |= ATA_STATUS_SEEK_COMPLEAT; // solves hung during winxp boot
     raise();
 }
 

@@ -38,8 +38,11 @@ enum {
     ULTRA_DMA_MODE_MAX = 5,
 };
 
-
+#ifdef ATA_DEBUG
+#define ATA_LOG(format, ...) D_MESSAGE(format, ## __VA_ARGS__)
+#else
 #define ATA_LOG(format, ...)
+#endif
 
 
 ATADevice::ATADevice(const char* name, VMPart& owner, Wire& wire)
@@ -385,6 +388,104 @@ inline uint8_t ATADevice::byte_by_HOB(uint16_t val)
 {
     return (_control & ATA_CONTROL_HOB_MASK) ? val >> 8 : val;
 }
+
+
+#ifdef ATA_DEBUG
+static const char* reg_offset_to_name(uint offset, bool read)
+{
+    switch (offset) {
+    case ATA_IO_ERROR:
+        return read ? "ERROR" :"FEATURE";
+    case ATA_IO_SECTOR_COUNT:
+        return "COUNT";
+    case ATA_IO_LBA_LOW:
+        return "LBA_LOW";
+    case ATA_IO_LBA_MID:
+        return "LBA_MID";
+    case ATA_IO_LBA_HIGH:
+        return "LBA_HIGH";
+    case ATA_IO_DEVICE:
+        return "DEVICE";
+    case ATA_IO_COMMAND:
+        return read ? "STATUS" : "COMMAND";
+    default:
+        return "???";
+    }
+}
+
+
+const char* command_name(uint8_t command)
+{
+    switch (command) {
+    case ATA_CMD_PACKET:
+        return "PACKET";
+    case ATA_CMD_READ_SECTORS:
+        return "READ_SECTORS";
+    case ATA_CMD_READ_SECTORS_EXT:
+        return "READ_SECTORS_EXT";
+    case ATA_CMD_READ_VERIFY_SECTORS:
+        return "READ_VERIFY_SECTORS";
+    case ATA_CMD_READ_VERIFY_SECTORS_EXT:
+        return "READ_VERIFY_SECTORS_EXT";
+    case ATA_CMD_SEEK:
+        return "SEEK";
+    case ATA_CMD_SET_FEATURES:
+        return "SET_FEATURES";
+    case ATA_CMD_WRITE_SECTORS:
+        return "WRITE_SECTORS";
+    case ATA_CMD_WRITE_SECTORS_EXT:
+        return "WRITE_SECTORS_EXT";
+    case ATA_CMD_WRITE_DMA:
+        return "WRITE_DMA";
+    case ATA_CMD_WRITE_DMA_EXT:
+        return "WRITE_DMA_EXT";
+    case ATA_CMD_READ_DMA:
+        return "READ_DMA";
+    case ATA_CMD_READ_DMA_EXT:
+        return "READ_DMA_EXT";
+    case ATA_CMD_READ_MULTIPLE:
+        return "READ_MULTIPLE";
+    case ATA_CMD_READ_MULTIPLE_EXT:
+        return "READ_MULTIPLE_EXT";
+    case ATA_CMD_WRITE_MULTIPLE:
+        return "WRITE_MULTIPLE";
+    case ATA_CMD_WRITE_MULTIPLE_EXT:
+        return "WRITE_MULTIPLE_EXT";
+    case ATA_CMD_FLUSH_CACHE_EXT:
+        return "FLUSH_CACHE_EXT";
+    case ATA_CMD_FLUSH_CACHE:
+        return "FLUSH_CACHE";
+    case ATA_CMD_IDENTIFY_DEVICE:
+        return "IDENTIFY_DEVICE";
+    case ATA_CMD_IDENTIFY_PACKET_DEVICE:
+        return "IDENTIFY_PACKET_DEVICE";
+    case ATA_CMD_CHECK_POWER_MODE:
+        return "CHECK_POWER_MODE";
+    case ATA_CMD_IDLE_IMMEDIATE:
+        return "IDLE_IMMEDIATE";
+    case ATA_CMD_IDLE:
+        return "IDLE";
+    case ATA_CMD_EXECUTE_DEVICE_DIAGNOSTIC:
+        return "EXECUTE_DEVICE_DIAGNOSTIC";
+    case ATA_CMD_DEVICE_RESET:
+        return "DEVICE_RESET";
+    case ATA_CMD_NOP:
+        return "NOP";
+    case ATA_CMD_SET_MULTIPLE_MODE:
+        return "SET_MULTIPLE_MODE";
+    case ATA_CMD_SLEEP:
+        return "SLEEP";
+    case ATA_CMD_STANDBY:
+        return "STANDBY";
+    case ATA_CMD_STANDBY_IMMEDIATE:
+        return "STANDBY_IMMEDIATE";
+    case ATA_CMOMPAT_CMD_INITIALIZE_DEVICE_PARAMETERS:
+        return "INITIALIZE_DEVICE_PARAMETERS";
+    default:
+        return "???";
+    }
+}
+#endif
 
 
 uint8_t ATADevice::io_read(uint16_t port)

@@ -35,7 +35,11 @@
 #include "dma_state.h"
 #include "memory_bus.h"
 
+#ifdef ATA_DEBUG
+#define ATA_LOG(format, ...) D_MESSAGE(format, ## __VA_ARGS__)
+#else
 #define ATA_LOG(format, ...)
+#endif
 
 enum {
     MAX_PACKET_PIO_TRANSFER_SIZE = 0xfffe,
