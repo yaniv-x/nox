@@ -204,6 +204,9 @@ inline void ATADevice::set_state_and_notify(uint state, DMAState& dma)
 void set_ata_str(uint16_t* start, int len, const char* str);
 int8_t checksum8(void *start, uint size);
 
+#ifdef ATA_DEBUG
+const char* command_name(uint8_t command);
+#endif
 
 #endif
 
