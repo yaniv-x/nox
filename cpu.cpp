@@ -995,6 +995,12 @@ void CPU::exit_debug_mode()
 
 void CPU::trigger_debug_trap()
 {
+    ASSERT(_cpu_state == RUNNING);
+
+    if (!_debug_cb) {
+        return;
+    }
+
     set_single_step();
 }
 
