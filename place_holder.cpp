@@ -35,6 +35,9 @@
 PlaceHolder::PlaceHolder(NoxVM& nox)
     : VMPart ("holder", nox)
 {
+    add_io_region(io_bus->register_region(*this, 0x80, 1, this, NULL,
+                                          (io_write_byte_proc_t)&PlaceHolder::write_byte));
+
     add_io_region(io_bus->register_region(*this, 0x278, 3, this,
                                           (io_read_byte_proc_t)&PlaceHolder::read_byte,
                                           (io_write_byte_proc_t)&PlaceHolder::write_byte));
