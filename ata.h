@@ -90,9 +90,9 @@ enum {
     ATA_CMD_FLUSH_CACHE = 0xe7,
     ATA_CMD_FLUSH_CACHE_EXT = 0xea,
 
-    //ATA_CMD_GET_MEDIA_STATUS = 0xda,  // Mandatory for devices implementing the Removable
-                                        // Media Status Notification feature set. Optional for
-                                        // devices implementing the Removable Media feature set.
+    ATA_CMD_GET_MEDIA_STATUS = 0xda,  // Mandatory for devices implementing the Removable
+                                      // Media Status Notification feature set. Optional for
+                                      // devices implementing the Removable Media feature set.
 
     ATA_CMD_IDENTIFY_DEVICE = 0xec,
     ATA_CMD_PACKET = 0xa0,
