@@ -109,7 +109,7 @@ enum {
     MOUSE_CMD_RESET = 0xff,
 
     MOUSE_STATE_BUTTON_MASK = 0x7,
-    MOUSE_STATE_SCALING_MASK = (1 << 5),
+    MOUSE_STATE_SCALING_MASK = (1 << 4),
     MOUSE_STATE_DATA_REPORTING_MASK = (1 << 5),
     MOUSE_STATE_REMOTE_MODE_MASK = (1 << 6),
 
@@ -468,10 +468,12 @@ void KbdController::write_to_mouse(uint8_t val)
             break;
         case MOUSE_CMD_RESOLUTION:
             mouse_put_reply(KBD_ACK);
+            // temporarily disabel streaming ?
             _mouse_write_state = MOUSE_WRITE_STATE_RESOLUTION;
             break;
         case MOUSE_CMD_SAMPLE_RATE:
             mouse_put_reply(KBD_ACK);
+            // temporarily disabel streaming ?
             _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
             break;
         case MOUSE_CMD_ENABLE_DATA_REPORTING:
