@@ -98,7 +98,9 @@ private:
     void init_cdrom();
     void load_bios();
     void init_cpus();
+#ifdef WITH_BOCHS_BIOS
     void reset_bios_stuff();
+#endif
     void set_down();
     void set_debug();
     void set_stopped();
@@ -156,7 +158,9 @@ private:
     uint _num_cpus;
     std::string _hard_disk_file_name;
     bool _ro_hard_disk_file;
+#ifdef WITH_BOCHS_BIOS
     uint64_t _hard_disk_size;
+#endif
     bool _cdrom;
     std::string _cdrom_file_name;
     bool _boot_from_cdrom;

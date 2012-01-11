@@ -224,7 +224,9 @@ NoxVM::NoxVM()
     , _free_high_bios_pages (0)
     , _num_cpus (1)
     , _ro_hard_disk_file (false)
+#ifdef WITH_BOCHS_BIOS
     , _hard_disk_size (0)
+#endif
     , _cdrom (false)
     , _boot_from_cdrom (false)
 {
@@ -311,10 +313,9 @@ void NoxVM::register_admin_commands()
 }
 
 
+#ifdef WITH_BOCHS_BIOS
 void NoxVM::reset_bios_stuff()
 {
-    // todo: let the bios handle all the following stuff
-
     _cmos->host_write(0x10, 0);      // no floppy
 
     //equipment byte
@@ -327,7 +328,6 @@ void NoxVM::reset_bios_stuff()
     _cmos->host_write(0x32, 0x20); // IBM
     _cmos->host_write(0x37, 0x20); // PS2
 
-#ifdef WITH_BOCHS_BIOS
     /****************************************** mem ***********************************************/
     //640k base memory
     _cmos->host_write(0x15, (LOW_RAM_SIZE / KB));
@@ -370,7 +370,7 @@ void NoxVM::reset_bios_stuff()
     _cmos->host_write(0x5d, above_4G >> 32);
 
     /****************************************** mem end *******************************************/
-#endif
+
     if (_boot_from_cdrom) {
         _cmos->host_write(0x3d, 0x03); //first boot device is CD
     } else {
@@ -421,6 +421,7 @@ void NoxVM::reset_bios_stuff()
 
     /************************************** hard disk done ****************************************/
 }
+#endif
 
 
 void NoxVM::reset()
@@ -450,7 +451,9 @@ void NoxVM::reset()
     }
 
     load_bios();
+#ifdef WITH_BOCHS_BIOS
     reset_bios_stuff();
+#endif
 
     _state = READY;
 }
@@ -889,7 +892,9 @@ void NoxVM::init_hard_disk()
 
     ATADiskFactory factory(_hard_disk_file_name.c_str(), _ro_hard_disk_file);
     _ata_host->set_device_0(factory);
+#ifdef WITH_BOCHS_BIOS
     _hard_disk_size = factory.get_size();
+#endif
 }
 
 
