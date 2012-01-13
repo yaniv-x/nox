@@ -109,7 +109,6 @@ private:
     uint8_t a20_port_read(uint16_t port);
     void misc_port_write(uint16_t port, uint8_t val);
     uint8_t misc_port_read(uint16_t port);
-    void vgabios_port_write(uint16_t port, uint8_t val);
 #ifdef WITH_BOCHS_BIOS
     void bochs_port_write(uint16_t port, uint8_t val);
 #endif

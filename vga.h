@@ -86,10 +86,11 @@ public:
     VGABackEnd* attach_front_end(VGAFrontEnd* front_and);
 
 private:
-    uint8_t io_read_byte(uint16_t port);
+    uint8_t io_vga_read_byte(uint16_t port);
+    void io_vga_write_byte(uint16_t port, uint8_t val);
     void io_write_byte(uint16_t port, uint8_t val);
-    uint16_t io_vbe_read(uint16_t port);
-    void io_vbe_write(uint16_t port, uint16_t val);
+    uint16_t io_read_word(uint16_t port);
+    void io_write_word(uint16_t port, uint16_t val);
 
     void set_misc_reg(uint8_t val);
     void reset_sequencer();
@@ -133,7 +134,7 @@ private:
         GRAPHICS_NUM_REGS = 16,
         PALETTE_SIZE = 256,
         CRT_NUM_REGS = 0x25,
-        NUM_VBE_REGS = 16,
+        NUM_VBE_REGS = 15,
         NUM_PLANS = 4,
     };
 

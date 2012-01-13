@@ -62,7 +62,6 @@ enum {
     IO_PORT_BOCHS_DEBUG = 0x403,
     IO_PORT_BOCHS_MY_TEST = 0x404,
 #endif
-    IO_PORT_VGA_BIOS_MESSAGE = 0x500,
 
     LOW_RAM_SIZE = 640 * KB,
     MID_RAM_START = 768 * KB,
@@ -241,11 +240,6 @@ NoxVM::NoxVM()
     add_io_region(_io_bus->register_region(*this, IO_PORT_POST_DIAGNOSTIC, 1, this,
                                            NULL,
                                            (io_write_byte_proc_t)&NoxVM::post_diagnostic));
-
-
-    add_io_region(_io_bus->register_region(*this, IO_PORT_VGA_BIOS_MESSAGE, 1, this,
-                                           NULL,
-                                           (io_write_byte_proc_t)&NoxVM::vgabios_port_write));
 
     add_io_region(_io_bus->register_region(*this, IO_PORT_MISC, 1, this,
                                            (io_read_byte_proc_t)&NoxVM::misc_port_read,
@@ -606,19 +600,6 @@ void NoxVM::bochs_port_write(uint16_t port, uint8_t val)
     };
 }
 #endif
-
-void NoxVM::vgabios_port_write(uint16_t port, uint8_t val)
-{
-    if (val == '\r') {
-        return;
-    }
-
-    printf("%c", val);
-
-    if (val == '\n') {
-        fflush(stdout);
-    }
-}
 
 
 void NoxVM::post_diagnostic(uint16_t port, uint8_t val)

@@ -189,9 +189,6 @@ enum {
 };
 
 enum {
-    IO_VBE_REG_SELECT = 0x01ce,
-    IO_VBE_DATA = 0x01cf,
-
     VBE_MAX_X_RES = 1920,
     VBE_MAX_Y_RES = 1200,
     VBE_MAX_DEPTH = 32,
@@ -208,7 +205,6 @@ enum {
     VBE_REG_X_OFFSET,
     VBE_REG_Y_OFFSET,
     VBE_REG_VIDEO_MEMORY_64K,
-    VBE_REG_LINEAR_FB,
     VBE_REG_EDID_WINDOW,
     VBE_REG_EDID_DATA,
     VBE_REG_PALETTE_WRITE_INDEX,
@@ -220,6 +216,15 @@ enum {
     VBE_DISPI_8BIT_DAC = (1 << 5),
     VBE_COMMAND_LINEAR = (1 << 6),
     VBE_COMMAN_NOCLEARMEM = (1 << 7),
+};
+
+
+enum {
+    IO_PORT_LOG = 0,
+    IO_PORT_VBE_REG_SELECT = 2,
+    IO_PORT_VBE_DATA = 4,
+
+    IO_PORT_SIZE = IO_PORT_VBE_DATA + 2,
 };
 
 
@@ -289,7 +294,8 @@ enum {
     VGA_MAX_HIGHT = 600,
     VGA_MIN_WIDTH = 320,
     VGA_MIN_HIGHT = 200,
-    VGA_PCI_FB_REGION = 0,
+    VGA_PCI_IO_REGION = 0,
+    VGA_PCI_FB_REGION = 1,
     VGA_PCI_REVISION = 1,
 
     EDID_BLOCK_SIZE = 128,
@@ -308,13 +314,8 @@ VGA::VGA(NoxVM& nox)
     ASSERT(int(VBE_NUM_REGS) == int(NUM_VBE_REGS));
 
     add_io_region(io_bus->register_region(*this, IO_VGA_BASE, IO_VGA_END - IO_VGA_BASE, this,
-                                         (io_read_byte_proc_t)&VGA::io_read_byte,
-                                         (io_write_byte_proc_t)&VGA::io_write_byte));
-
-    add_io_region(io_bus->register_region(*this, IO_VBE_REG_SELECT, 3, this,
-                                          NULL, NULL,
-                                          (io_read_word_proc_t)&VGA::io_vbe_read,
-                                          (io_write_word_proc_t)&VGA::io_vbe_write));
+                                         (io_read_byte_proc_t)&VGA::io_vga_read_byte,
+                                         (io_write_byte_proc_t)&VGA::io_vga_write_byte));
 
 
     _update_timer = application->create_timer((void_callback_t)&VGA::update, this);
@@ -329,10 +330,37 @@ VGA::VGA(NoxVM& nox)
                                             PCI_VGA_INTERFACE_VGACOMPAT);
     _pci_device = new PCIDevice("vga-pci", *pci_bus, NOX_PCI_VENDOR_ID,
                                 NOX_PCI_DEV_ID_VGA, VGA_PCI_REVISION, class_code, false);
+    _pci_device->add_io_region(VGA_PCI_IO_REGION, IO_PORT_SIZE, this, NULL,
+                               (io_write_byte_proc_t)&VGA::io_write_byte,
+                               (io_read_word_proc_t)&VGA::io_read_word,
+                               (io_write_word_proc_t)&VGA::io_write_word);
     _pci_device->add_mem_region(VGA_PCI_FB_REGION, _physical_ram, false);
     pci_bus->add_device(*_pci_device);
 
     reset();
+}
+
+
+void VGA::io_write_byte(uint16_t port, uint8_t val)
+{
+    port -= _pci_device->get_region_address(VGA_PCI_IO_REGION);
+
+    switch (port) {
+    case IO_PORT_LOG:
+        if (val == '\r') {
+            return;
+        }
+
+        printf("%c", val);
+
+        if (val == '\n') {
+            fflush(stdout);
+        }
+
+        break;
+    default:
+        D_MESSAGE("invalid port 0x%x", port);
+    }
 }
 
 
@@ -858,12 +886,12 @@ void VGA::reset_io()
     VGA_D_MESSAGE("0x%x 0x%x", IO_INPUT_STATUS_1_MDA + delta, IO_CRT_CONTROL_INDEX_MDA + delta);
 
     _region1 = io_bus->register_region(*this, IO_INPUT_STATUS_1_MDA + delta, 1, this,
-                                       (io_read_byte_proc_t)&VGA::io_read_byte,
-                                       (io_write_byte_proc_t)&VGA::io_write_byte);
+                                       (io_read_byte_proc_t)&VGA::io_vga_read_byte,
+                                       (io_write_byte_proc_t)&VGA::io_vga_write_byte);
 
     _region2 = io_bus->register_region(*this, IO_CRT_CONTROL_INDEX_MDA + delta, 2, this,
-                                       (io_read_byte_proc_t)&VGA::io_read_byte,
-                                       (io_write_byte_proc_t)&VGA::io_write_byte);
+                                       (io_read_byte_proc_t)&VGA::io_vga_read_byte,
+                                       (io_write_byte_proc_t)&VGA::io_vga_write_byte);
 
     _last_io_delta = delta;
 }
@@ -987,7 +1015,7 @@ void VGA::reset()
 
 static uint8_t v_retrace = 0;
 
-uint8_t VGA::io_read_byte(uint16_t port)
+uint8_t VGA::io_vga_read_byte(uint16_t port)
 {
     Lock lock(_mutex);
 
@@ -1108,7 +1136,7 @@ void VGA::blank_screen()
 }
 
 
-void VGA::io_write_byte(uint16_t port, uint8_t val)
+void VGA::io_vga_write_byte(uint16_t port, uint8_t val)
 {
     Lock lock(_mutex);
 
@@ -1632,15 +1660,19 @@ static const uint8_t edid_data[] = {
 };
 
 
-uint16_t VGA::io_vbe_read(uint16_t port)
+uint16_t VGA::io_read_word(uint16_t port)
 {
-    if (port == IO_VBE_REG_SELECT) {
+    port -= _pci_device->get_region_address(VGA_PCI_IO_REGION);
+
+    switch (port) {
+    case IO_PORT_VBE_REG_SELECT:
         return _vbe_reg_index;
-    }
+    case IO_PORT_VBE_DATA:
+        if (_vbe_reg_index >= NUM_VBE_REGS) {
+            W_MESSAGE("out of range");
+            return 0;
+        }
 
-    ASSERT(port == IO_VBE_DATA);
-
-    if (_vbe_reg_index < NUM_VBE_REGS) {
         if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_CAPS) {
             switch (_vbe_reg_index) {
             case VBE_REG_X_RES:
@@ -1650,7 +1682,7 @@ uint16_t VGA::io_vbe_read(uint16_t port)
             case VBE_REG_DEPTH:
                 return VBE_MAX_DEPTH;
             default:
-                D_MESSAGE("unhendled get caps for reg %u");
+                W_MESSAGE("unhendled get caps for reg %u");
                 return 0;
             }
         }
@@ -1670,10 +1702,10 @@ uint16_t VGA::io_vbe_read(uint16_t port)
         }
 
         return _vbe_regs[_vbe_reg_index];
+    default:
+        W_MESSAGE("invalid port 0x%x", port);
+        return 0xffff;
     }
-
-    D_MESSAGE("out of range");
-    return 0;
 }
 
 
@@ -1773,27 +1805,15 @@ void VGA::update_one_effective_palette(uint index)
 }
 
 
-void VGA::io_vbe_write(uint16_t port, uint16_t val)
+void VGA::io_write_word(uint16_t port, uint16_t val)
 {
-    Lock lock(_mutex);
+    port -= _pci_device->get_region_address(VGA_PCI_IO_REGION);
 
-    if (port == IO_VBE_REG_SELECT) {
-        if (val == VBE_REG_EDID_WINDOW) {
-            D_MESSAGE("VBE_REG_EDID_WINDOW");
-        }
+    switch (port) {
+    case IO_PORT_VBE_REG_SELECT:
         _vbe_reg_index = val;
-
-        if (_vbe_reg_index == VBE_REG_LINEAR_FB) {
-            address_t fb_address = _pci_device->get_region_address(VGA_PCI_FB_REGION);
-
-            if (!fb_address || fb_address > fb_address + VBE_VRAM_SIZE ||
-                fb_address + VBE_VRAM_SIZE > ((1ULL << 32) - 1) || (fb_address & 0xffff)) {
-                PANIC("bad fb address %lu", fb_address);
-            }
-
-            _vbe_regs[VBE_REG_LINEAR_FB] = fb_address >> 16;
-        }
-    } else if (port == IO_VBE_DATA){
+        break;
+    case IO_PORT_VBE_DATA:
         switch (_vbe_reg_index) {
         case VBE_REG_DISPLAY_ID:
             _vbe_regs[_vbe_reg_index] = val;
@@ -1905,8 +1925,9 @@ void VGA::io_vbe_write(uint16_t port, uint16_t val)
             D_MESSAGE("unhandled %u, inf sleep", _vbe_reg_index);
             for (;;) sleep(2);
         }
-    } else {
-        W_MESSAGE("bad port 0x%x", port);
+        break;
+    default:
+        D_MESSAGE("invalid port 0x%x", port);
     }
 }
 
