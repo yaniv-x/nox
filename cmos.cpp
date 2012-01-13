@@ -472,35 +472,8 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
         case REGC:
         case REGD:
             return;
-        case CMOD_OFFSET_SHUTDOWN:
-        case CMOD_OFFSET_FLOPPY_TYPE:
-        case CMOD_OFFSET_HD_TYPE:
-        case CMOD_OFFSET_EQUIPMENT:
-        case CMOD_OFFSET_BASE_MEM_LOW:
-        case CMOD_OFFSET_BASE_MEM_HIGH:
-        case CMOD_OFFSET_EXT_MEM_LOW:
-        case CMOD_OFFSET_EXT_MEM_HIGH:
-        case CMOD_OFFSET_HD_EXT_TYPE:
-        case CMOD_OFFSET_HD0_T47_CYL_LOW:
-        case CMOD_OFFSET_HD0_T47_CYL_HIGH:
-        case CMOD_OFFSET_HD0_T47_HEADS:
-        case CMOD_OFFSET_HD0_T47_SECTORS:
-        case CMOD_OFFSET_EXT_MEM_LOW_ALIAS:
-        case CMOD_OFFSET_EXT_MEM_HIGH_ALIAS:
-        case CMOD_OFFSET_MEM_ABOVE_16M_LOW:
-        case CMOD_OFFSET_MEM_ABOVE_16M_HIGH:
-        case CMOD_OFFSET_BOOT_DEV_LOW:
-        case CMOD_OFFSET_BOOT_DEV_HIGH:
-        case CMOD_OFFSET_MEM_ABOVE_4G_LOW:
-        case CMOD_OFFSET_MEM_ABOVE_4G_MID:
-        case CMOD_OFFSET_MEM_ABOVE_4G_HIGH:
-        case CMOD_OFFSET_NUM_CPUS:
-        case CMOD_OFFSET_CENTURY:
-        case CMOD_OFFSET_PS2_CENTURY:
-            _user_ares[_index - USER_0] = val;
-            return;
         default:
-            W_MESSAGE("user 0x%x", _index);
+            D_MESSAGE("[0x%x] = 0x%x", _index, val);
             _user_ares[_index - USER_0] = val;
             return;
         }
