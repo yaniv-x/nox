@@ -303,7 +303,13 @@ enum {
 
 
 VGA::VGA(NoxVM& nox)
-    : VMPart("vga", nox)
+    : PCIDevice("vga-pci", *pci_bus, NOX_PCI_VENDOR_ID, NOX_PCI_DEV_ID_VGA, VGA_PCI_REVISION,
+                mk_pci_class_code(PCI_CLASS_DISPLAY, PCI_DISPLAY_SUBCLASS_VGA,
+                                  PCI_VGA_INTERFACE_VGACOMPAT),
+                false)
+    , _region0 (NULL)
+    , _region1 (NULL)
+    , _region2 (NULL)
     , _mmio (NULL)
     , _fb (new HostSharedBuf(VBE_MAX_X_RES * VBE_MAX_Y_RES * sizeof(uint32_t)))
     , _width (640)
@@ -313,11 +319,6 @@ VGA::VGA(NoxVM& nox)
 {
     ASSERT(int(VBE_NUM_REGS) == int(NUM_VBE_REGS));
 
-    add_io_region(io_bus->register_region(*this, IO_VGA_BASE, IO_VGA_END - IO_VGA_BASE, this,
-                                         (io_read_byte_proc_t)&VGA::io_vga_read_byte,
-                                         (io_write_byte_proc_t)&VGA::io_vga_write_byte));
-
-
     _update_timer = application->create_timer((void_callback_t)&VGA::update, this);
 
     _physical_ram = memory_bus->alloc_physical_ram(*this, VBE_VRAM_SIZE / GUEST_PAGE_SIZE,
@@ -326,16 +327,13 @@ VGA::VGA(NoxVM& nox)
     _vga_vram_end = _vram + VGA_VRAM_SIZE;
     _vbe_vram_end = _vram + VBE_VRAM_SIZE;
 
-    uint32_t class_code = mk_pci_class_code(PCI_CLASS_DISPLAY, PCI_DISPLAY_SUBCLASS_VGA,
-                                            PCI_VGA_INTERFACE_VGACOMPAT);
-    _pci_device = new PCIDevice("vga-pci", *pci_bus, NOX_PCI_VENDOR_ID,
-                                NOX_PCI_DEV_ID_VGA, VGA_PCI_REVISION, class_code, false);
-    _pci_device->add_io_region(VGA_PCI_IO_REGION, IO_PORT_SIZE, this, NULL,
-                               (io_write_byte_proc_t)&VGA::io_write_byte,
-                               (io_read_word_proc_t)&VGA::io_read_word,
-                               (io_write_word_proc_t)&VGA::io_write_word);
-    _pci_device->add_mem_region(VGA_PCI_FB_REGION, _physical_ram, false);
-    pci_bus->add_device(*_pci_device);
+    add_io_region(VGA_PCI_IO_REGION, IO_PORT_SIZE, this, NULL,
+                  (io_write_byte_proc_t)&VGA::io_write_byte,
+                  (io_read_word_proc_t)&VGA::io_read_word,
+                  (io_write_word_proc_t)&VGA::io_write_word);
+    add_mem_region(VGA_PCI_FB_REGION, _physical_ram, false);
+
+    pci_bus->add_device(*this);
 
     reset();
 }
@@ -343,7 +341,7 @@ VGA::VGA(NoxVM& nox)
 
 void VGA::io_write_byte(uint16_t port, uint8_t val)
 {
-    port -= _pci_device->get_region_address(VGA_PCI_IO_REGION);
+    port -= get_region_address(VGA_PCI_IO_REGION);
 
     switch (port) {
     case IO_PORT_LOG:
@@ -366,13 +364,9 @@ void VGA::io_write_byte(uint16_t port, uint8_t val)
 
 VGA::~VGA()
 {
-    delete _pci_device;
     _update_timer->destroy();
-
-    io_bus->unregister_region(_region1);
-    io_bus->unregister_region(_region2);
-
-    memory_bus->unregister_mmio(_mmio);
+    unmap_lagacy_io();
+    unmap_lagacy_fb();
     memory_bus->release_physical_ram(_physical_ram);
 }
 
@@ -867,23 +861,41 @@ void VGA::update_vga()
 }
 
 
+void VGA::unmap_lagacy_io()
+{
+    io_bus->unregister_region(_region0);
+    _region0 = NULL;
+    io_bus->unregister_region(_region1);
+    _region1 = NULL;
+    io_bus->unregister_region(_region2);
+    _region2 = NULL;
+
+    _last_io_delta = ~0;
+}
+
+
+void VGA::unmap_lagacy_fb()
+{
+    memory_bus->unregister_mmio(_mmio);
+    _mmio = NULL;
+}
+
+
 void VGA::reset_io()
 {
     uint8_t delta = (_misc_output & MISC_IO_ADDRESS_SELECT_MASK) ? 0xd0 - 0xb0 : 0;
-    IORegion* region;
 
     if (_last_io_delta == delta) {
         return;
     }
 
-    region = _region1;
-    _region1 = NULL;
-    io_bus->unregister_region(region);
-    region = _region2;
-    _region2 = NULL;
-    io_bus->unregister_region(region);
+    unmap_lagacy_io();
 
     VGA_D_MESSAGE("0x%x 0x%x", IO_INPUT_STATUS_1_MDA + delta, IO_CRT_CONTROL_INDEX_MDA + delta);
+
+    _region0 = io_bus->register_region(*this, IO_VGA_BASE, IO_VGA_END - IO_VGA_BASE, this,
+                                       (io_read_byte_proc_t)&VGA::io_vga_read_byte,
+                                       (io_write_byte_proc_t)&VGA::io_vga_write_byte);
 
     _region1 = io_bus->register_region(*this, IO_INPUT_STATUS_1_MDA + delta, 1, this,
                                        (io_read_byte_proc_t)&VGA::io_vga_read_byte,
@@ -915,8 +927,7 @@ void VGA::reset_fb()
         return;
     }
 
-     memory_bus->unregister_mmio(_mmio);
-    _mmio = NULL;
+    unmap_lagacy_fb();
 
     if (!fb_accesibel) {
         VGA_D_MESSAGE("unmaped");
@@ -958,6 +969,7 @@ void VGA::reset_fb()
 
 void VGA::reset()
 {
+    _enabled = false;
     _last_io_delta = ~0;
     _mmap_state = ~0;
     _vga_active = false;
@@ -994,9 +1006,6 @@ void VGA::reset()
     _caret_tick = 0;
     _caret_visable = false;
 
-    reset_io();
-    reset_fb();
-
     _vbe_reg_index = 0;
     memset(_vbe_regs, 0, sizeof(_vbe_regs));
     _vbe_regs[VBE_REG_VIDEO_MEMORY_64K] = VBE_VRAM_SIZE / (64 * KB);
@@ -1010,7 +1019,10 @@ void VGA::reset()
 
     _dirty = true;
 
-    remap_io_regions();
+    unmap_lagacy_io();
+    unmap_lagacy_fb();
+
+    PCIDevice::reset();
 }
 
 static uint8_t v_retrace = 0;
@@ -1662,7 +1674,7 @@ static const uint8_t edid_data[] = {
 
 uint16_t VGA::io_read_word(uint16_t port)
 {
-    port -= _pci_device->get_region_address(VGA_PCI_IO_REGION);
+    port -= get_region_address(VGA_PCI_IO_REGION);
 
     switch (port) {
     case IO_PORT_VBE_REG_SELECT:
@@ -1807,7 +1819,7 @@ void VGA::update_one_effective_palette(uint index)
 
 void VGA::io_write_word(uint16_t port, uint16_t val)
 {
-    port -= _pci_device->get_region_address(VGA_PCI_IO_REGION);
+    port -= get_region_address(VGA_PCI_IO_REGION);
 
     switch (port) {
     case IO_PORT_VBE_REG_SELECT:
@@ -1947,5 +1959,35 @@ bool VGA::stop()
     _update_timer->disarm();
 
     return true;
+}
+
+
+void VGA::on_io_enabled()
+{
+    Lock lock(_mutex);
+
+    if (_enabled) {
+        return;
+    }
+
+    _enabled = true;
+
+    reset_io();
+    reset_fb();
+}
+
+
+void VGA::on_io_disabled()
+{
+    Lock lock(_mutex);
+
+    if (!_enabled) {
+        return;
+    }
+
+    unmap_lagacy_io();
+    unmap_lagacy_fb();
+
+    _enabled = false;
 }
 
