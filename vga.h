@@ -27,7 +27,7 @@
 #ifndef _H_VGA
 #define _H_VGA
 
-#include "vm_part.h"
+#include "pci_device.h"
 #include "threads.h"
 
 class NoxVM;
@@ -35,7 +35,6 @@ class Timer;
 class PhysicalRam;
 class MMIORegion;
 class VGABackEndImp;
-class PCIDevice;
 
 class SharedBuf: public NonCopyable {
 public:
@@ -71,11 +70,14 @@ public:
     virtual void detach() = 0;
 };
 
-class VGA: public VMPart {
+class VGA: public PCIDevice {
 public:
     VGA(NoxVM& nox);
     virtual ~VGA();
 
+    VGABackEnd* attach_front_end(VGAFrontEnd* front_and);
+
+protected:
     virtual void reset();
     virtual bool start();
     virtual bool stop();
@@ -83,7 +85,8 @@ public:
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 
-    VGABackEnd* attach_front_end(VGAFrontEnd* front_and);
+    virtual void on_io_enabled();
+    virtual void on_io_disabled();
 
 private:
     uint8_t io_vga_read_byte(uint16_t port);
@@ -102,6 +105,8 @@ private:
     void update_caret();
     void update();
     void update_vga();
+    void unmap_lagacy_io();
+    void unmap_lagacy_fb();
     void reset_io();
     void reset_fb();
     void blank_screen();
@@ -141,16 +146,17 @@ private:
 private:
     Mutex _mutex;
     Timer* _update_timer;
+    IORegion* _region0;
     IORegion* _region1;
     IORegion* _region2;
     PhysicalRam* _physical_ram;
-    PCIDevice* _pci_device;
     uint8_t* _vram;
     uint8_t* _vga_vram_end;
     uint8_t* _vbe_vram_end;
     MMIORegion* _mmio;
     uint8_t _last_io_delta;
     uint8_t _mmap_state;
+    bool _enabled;
     bool _vga_active;
     bool _vga_draw_logic;
 
