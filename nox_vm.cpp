@@ -565,15 +565,14 @@ uint8_t NoxVM::a20_port_read(uint16_t port)
 void NoxVM::misc_port_write(uint16_t port, uint8_t val)
 {
     _misc_port = val & 0x0f;
-    _pit->set_gate_level(2, !!(_misc_port & 0x1));
-    _speaker->set_level((_misc_port >> 1) & 1, _misc_port & 1);
+    _pit->set_gate_level(2, _misc_port & 0x01);
+    _speaker->set_level((_misc_port >> 1) & 0x01, _misc_port & 0x01);
 }
 
 
 uint8_t NoxVM::misc_port_read(uint16_t port)
 {
     _misc_port ^= 0x10;
-    //todo: get gate level from pit
     return _misc_port | (_pit->get_output_level(2) ? 0x20 : 0);
 }
 
