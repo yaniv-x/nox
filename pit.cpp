@@ -89,6 +89,14 @@ enum {
 };
 
 
+enum {
+    TIMER_FLAGS_GATE = (1 << 0),
+    TIMER_FLAGS_COUNTING = (1 << 1),
+    TIMER_FLAGS_UNFREEZE_ON_START = (1 << 2),
+    TIMER_FLAGS_VALID_PROG_VAL = (1 << 2),
+};
+
+
 PIT::PIT(NoxVM& nox)
     : VMPart("pit", nox)
 {
@@ -107,6 +115,18 @@ PIT::~PIT()
 {
     delete _timers[0].irq_wire;
     _timers[0].timer->destroy();
+}
+
+
+inline bool PIT::counting(PICTimer& timer)
+{
+    return !!(timer.flags & TIMER_FLAGS_COUNTING);
+}
+
+
+inline bool PIT::gate_level(PICTimer& timer)
+{
+    return !!(timer.flags & TIMER_FLAGS_GATE);
 }
 
 
@@ -176,10 +196,14 @@ inline void PIT::set_counter_mode(PICTimer& timer, uint8_t val)
     timer.counter_output = 0;
     timer.start_time = 0;
     timer.end_time = 0;
+    timer.freeze_time = 0;
     timer.programed_val = 0;
     timer.output = timer.mode == 0 ? 0 : 1;
     timer.null = 1;
     timer.ticks = 0;
+
+    timer.flags &= ~(TIMER_FLAGS_COUNTING | TIMER_FLAGS_UNFREEZE_ON_START |
+                     TIMER_FLAGS_VALID_PROG_VAL);
 
     switch (timer.rw_mode) {
     case RW_MODE_LSB:
@@ -282,6 +306,10 @@ inline bool PIT::update_interval(PICTimer& timer, uint shift)
 
 void PIT::update_timer(PICTimer& timer)
 {
+    if (!counting(timer)) {
+        return;
+    }
+
     switch (timer.mode) {
     case 2:
         if (update_interval(timer, 0) && timer.irq_wire) {
@@ -289,6 +317,7 @@ void PIT::update_timer(PICTimer& timer)
         }
         break;
     case 0:
+    case 1:
         if (update_one_shot(timer)) {
             timer.output = 1;
         }
@@ -299,14 +328,10 @@ void PIT::update_timer(PICTimer& timer)
         }
         break;
     case 4:
+    case 5:
         if (update_one_shot(timer) && timer.irq_wire) {
             timer.irq_wire->drop();
         }
-        break;
-    case 5:
-    case 1:
-        W_MESSAGE_SOME(10, "timer %u: mode %u is not implemnted", &timer - _timers, timer.mode);
-        timer.counter_output = 0;
         break;
     default:
         D_MESSAGE("invalid timer mode %u", timer.mode);
@@ -328,9 +353,12 @@ void PIT::set_interval_counter(PICTimer& timer, uint shift)
 
     timer.ticks = 0;
     timer.null = 0;
+    timer.counter_output = timer.bcd ? to_bcd(timer.programed_val) : timer.programed_val;
     timer.output = 1;
+    timer.flags |= TIMER_FLAGS_COUNTING;
     timer.start_time = get_monolitic_time();
     timer.end_time = TICK * (timer.programed_val >> shift) + timer.start_time;
+    timer.freeze_time = 0;
 
     if (timer.timer) {
         timer.timer->arm(timer.end_time - timer.start_time, true);
@@ -342,9 +370,12 @@ void PIT::set_one_shout_counter(PICTimer& timer, uint output)
 {
     timer.ticks = 0;
     timer.null = 0;
+    timer.counter_output = timer.bcd ? to_bcd(timer.programed_val) : timer.programed_val;
     timer.output = output;
+    timer.flags |= TIMER_FLAGS_COUNTING;
     timer.start_time = get_monolitic_time();
     timer.end_time = TICK * timer.programed_val + timer.start_time;
+    timer.freeze_time = 0;
 
     if (timer.timer) {
         timer.timer->arm(timer.end_time - timer.start_time, false);
@@ -355,6 +386,7 @@ void PIT::set_one_shout_counter(PICTimer& timer, uint output)
 void PIT::set_counter(PICTimer& timer, uint val)
 {
     timer.programed_val = timer.bcd ? from_bcd(val) : val;
+    timer.flags |= TIMER_FLAGS_VALID_PROG_VAL;
 
     if (timer.programed_val == 0) {
         timer.programed_val = timer.bcd ? 10000 : 1 << 16;
@@ -368,19 +400,35 @@ void PIT::set_counter(PICTimer& timer, uint val)
     case 2:
         // timer.programed_val == 1 is illegal in mode 2
         set_interval_counter(timer, 0);
+
+        if (!gate_level(timer)) {
+            freeze(timer);
+        }
         break;
     case 3:
         set_interval_counter(timer, 1);
+
+        if (!gate_level(timer)) {
+            freeze(timer);
+        }
         break;
     case 0:
         set_one_shout_counter(timer, 0);
+
+        if (!gate_level(timer)) {
+            freeze(timer);
+        }
         break;
     case 4:
         set_one_shout_counter(timer, 1);
+
+        if (!gate_level(timer)) {
+            freeze(timer);
+        }
         break;
     case 5:
-    case 1: // hardware triggers will never hapend so the
-            // counter will never be loaded (check if set_gate_level can trigget it?)
+    case 1:
+        // will be triggered by gate
         break;
     default:
         D_MESSAGE("invalid timer mode %u", timer.mode);
@@ -471,9 +519,77 @@ uint8_t PIT::io_read_byte(uint16_t port)
 }
 
 
-void PIT::set_gate_level(uint timer, bool high)
+void PIT::on_gate_raise(PICTimer& timer)
 {
-    D_MESSAGE_SOME(10, "impliment me");
+    timer.flags |= TIMER_FLAGS_GATE;
+
+    switch (timer.mode) {
+    case 0:
+    case 4:
+         unfreeze(timer);
+         break;
+    case 1:
+        if (!(timer.flags & TIMER_FLAGS_VALID_PROG_VAL)) {
+            W_MESSAGE("mode 1 counter is not set");
+        }
+        set_one_shout_counter(timer, 0);
+        break;
+    case 2:
+    case 3:
+        set_interval_counter(timer, 0);
+        break;
+    case 5:
+        if (!(timer.flags & TIMER_FLAGS_VALID_PROG_VAL)) {
+            W_MESSAGE("mode 5 counter is not set");
+        }
+        set_one_shout_counter(timer, 1);
+        break;
+    default:
+        PANIC("invalid mode");
+    }
+
+    if (timer.irq_wire) {
+        timer.irq_wire->set_level(timer.output);
+    }
+}
+
+
+
+void PIT::on_gate_drop(PICTimer& timer)
+{
+    timer.flags &= ~TIMER_FLAGS_GATE;
+    switch (timer.mode) {
+    case 0:
+    case 2:
+    case 3:
+    case 4:
+        freeze(timer);
+        break;
+    case 1:
+    case 5:
+        break;
+    default:
+        PANIC("invalid mode");
+    }
+}
+
+void PIT::set_gate_level(uint timer_id, bool high)
+{
+    ASSERT(timer_id < 4);
+
+    PICTimer& timer = _timers[timer_id];
+
+    Lock lock(_mutex);
+
+    if (gate_level(timer) == high) {
+        return;
+    }
+
+    if (high) {
+        on_gate_raise(timer);
+    } else {
+        on_gate_drop(timer);
+    }
 }
 
 
@@ -496,6 +612,8 @@ void PIT::reset(PICTimer& pic_timer)
     void* opaque = pic_timer.cb_opaque;
 
     memset(&pic_timer, 0, sizeof(pic_timer));
+
+    pic_timer.flags = TIMER_FLAGS_GATE;
 
     if (timer) {
         timer->disarm();
@@ -520,6 +638,43 @@ void PIT::set_state_callback(uint timer_id, state_cb_t cb, void *opaque)
 }
 
 
+void PIT::freeze(PICTimer& timer)
+{
+    if (!counting(timer)) {
+        return;
+    }
+
+    update_timer(timer);
+    timer.flags &= ~TIMER_FLAGS_COUNTING;
+    timer.freeze_time = get_monolitic_time();
+
+    if (timer.timer) {
+        timer.timer->suspend();
+    }
+}
+
+
+void PIT::unfreeze(PICTimer& timer)
+{
+    if (!timer.freeze_time) {
+        return;
+    }
+
+    nox_time_t now = get_monolitic_time();
+    nox_time_t delta =  now - timer.freeze_time;
+    timer.freeze_time = 0;
+    timer.flags |= TIMER_FLAGS_COUNTING;
+
+    if (timer.timer) {
+        timer.timer->resume();
+    }
+
+    ASSERT(timer.start_time);
+    timer.start_time += delta;
+    timer.end_time += delta;
+}
+
+
 void PIT::reset()
 {
     for (int i = 0; i < NUM_TIMERS; i++) {
@@ -532,11 +687,12 @@ void PIT::reset()
 
 void PIT::stop(PICTimer& pic_timer)
 {
-    if (!pic_timer.timer) {
+    if (!counting(pic_timer)) {
         return;
     }
 
-    pic_timer.timer->suspend();
+    freeze(pic_timer);
+    pic_timer.flags |= TIMER_FLAGS_UNFREEZE_ON_START;
 }
 
 
@@ -552,11 +708,12 @@ bool PIT::stop()
 
 void PIT::start(PICTimer& pic_timer)
 {
-    if (!pic_timer.timer) {
+    if (!(pic_timer.flags & TIMER_FLAGS_UNFREEZE_ON_START)) {
         return;
     }
 
-    pic_timer.timer->resume();
+    pic_timer.flags &= ~TIMER_FLAGS_UNFREEZE_ON_START;
+    unfreeze(pic_timer);
 }
 
 

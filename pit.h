@@ -40,8 +40,8 @@ public:
     PIT(NoxVM& nox);
     virtual ~PIT();
 
-    void set_gate_level(uint timer, bool high); // use Wire object
-    bool get_output_level(uint timer); // use Wire object
+    void set_gate_level(uint timer, bool high);
+    bool get_output_level(uint timer);
 
     virtual void reset();
     virtual bool start();
@@ -58,6 +58,7 @@ private:
     struct PICTimer {
         uint mode;
         uint rw_mode;
+        uint flags; // todo: fold more state bits into flags
         uint bcd;
         uint output;
         uint null;
@@ -67,6 +68,7 @@ private:
         nox_time_t start_time;
         uint64_t ticks;
         nox_time_t end_time;
+        nox_time_t freeze_time;
         uint programed_val;
         uint read_flip;
         uint write_filp;
@@ -103,6 +105,12 @@ private:
     void reset(PICTimer& timer);
     void start(PICTimer& timer);
     void stop(PICTimer& timer);
+    void freeze(PICTimer& timer);
+    void unfreeze(PICTimer& timer);
+    bool counting(PICTimer& timer);
+    bool gate_level(PICTimer& timer);
+    void on_gate_raise(PICTimer& timer);
+    void on_gate_drop(PICTimer& timer);
 
 private:
     Mutex _mutex;
