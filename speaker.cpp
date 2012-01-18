@@ -97,7 +97,7 @@ static uint conver_samples_run(double n)
 void Speaker::pit_cb(uint mode, uint counter)
 {
     if (mode != 3) {
-        W_MESSAGE_SOME(10, "timer mode %u is not implemented", _timer_mode);
+        W_MESSAGE_SOME(10, "timer mode %u is not implemented", mode);
     }
 
     Lock lock(_mutex);
