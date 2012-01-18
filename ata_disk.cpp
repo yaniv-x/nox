@@ -591,7 +591,7 @@ public:
                                                          // and IDENTIFY DEVICE response is complete
 
         set_ata_str(&_identity[ATA_ID_OFFSET_SERIAL], ATA_ID_SERIAL_NUM_CHARS / 2,
-                    "NOXHD000000000000001");
+                    "NxHD0000000000000001");
         set_ata_str(&_identity[ATA_ID_OFFSET_REVISION], ATA_ID_REVISION_NUM_CHARS / 2, "1.0.0");
         set_ata_str(&_identity[ATA_ID_OFFSET_MODEL], ATA_ID_MODEL_NUM_CHARS / 2, "Nox HD");
 
