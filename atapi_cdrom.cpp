@@ -60,6 +60,10 @@ enum {
     CDROM_NUM_BLOCKS = MAX_BUNCH,
 };
 
+#define DVD9_MAX_SIZE 8547993600UL
+#define CD80_MAX_SIZE 737280000
+#define MAX_MEDIA_SIZE DVD9_MAX_SIZE
+
 
 enum {
     LOCK_STATE_MASK = (1 << 0),
@@ -162,9 +166,10 @@ public:
                                                          // subcommand to spin-up after power-up
                                                          // and IDENTIFY DEVICE response is complete
 
-        set_ata_str(&_identity[ATA_ID_OFFSET_SERIAL], ATA_ID_SERIAL_NUM_CHARS / 2, "0");
+        set_ata_str(&_identity[ATA_ID_OFFSET_SERIAL], ATA_ID_SERIAL_NUM_CHARS / 2,
+                    "NxDVD000000000000001");
         set_ata_str(&_identity[ATA_ID_OFFSET_REVISION], ATA_ID_REVISION_NUM_CHARS / 2, "1.0.0");
-        set_ata_str(&_identity[ATA_ID_OFFSET_MODEL], ATA_ID_MODEL_NUM_CHARS / 2, "Nox CD");
+        set_ata_str(&_identity[ATA_ID_OFFSET_MODEL], ATA_ID_MODEL_NUM_CHARS / 2, "Nox DVD");
 
         _identity[ATA_ID_OFFSET_CAP1] = ATA_ID_CAP1_DMA_MASK |
                                         ATAPI_ID_CAP1_MBZ |
@@ -686,6 +691,10 @@ ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
     if (file_name.size()) {
         try {
             _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, true));
+            if (_media->get_size() > MAX_MEDIA_SIZE) {
+                 W_MESSAGE("size exceed dvd size");
+                 _media.reset(NULL);
+            }
         } catch (...) {
             W_MESSAGE("loading media failed");
         }
@@ -771,6 +780,17 @@ void ATAPICdrom::eject_command(AdminReplyContext* context)
 }
 
 
+void ATAPICdrom::update_profile()
+{
+    if (!_mounted_media) {
+        _profile = MMC_PROFILE_NON;
+        return;
+    }
+
+    _profile = (_mounted_media->get_size() > CD80_MAX_SIZE) ? MMC_PROFILE_DVDROM :
+                                                              MMC_PROFILE_CDROM;
+}
+
 void ATAPICdrom::reset(bool cold)
 {
     D_MESSAGE("");
@@ -781,6 +801,7 @@ void ATAPICdrom::reset(bool cold)
     _sense_add = SCSI_SENSE_ADD_NO_ADDITIONAL_SENSE_INFORMATION;
     _cdrom_state = 0;
     _mounted_media = _media.get();
+    update_profile();
 }
 
 
@@ -1063,7 +1084,7 @@ void ATAPICdrom::scsi_inquiry(uint8_t* packet)
     buf[4] = SCSI_INQUIRY_STD_LENGTH - 5;
 
     set_scsi_left_str(&buf[8], 8, "Nox");      // VENDOR ID
-    set_scsi_left_str(&buf[16], 16, "NoxCD");    // PRODUCT ID
+    set_scsi_left_str(&buf[16], 16, "NxDVD");    // PRODUCT ID
     set_scsi_left_str(&buf[32], 4, "0");         // PRODUCT REVISION
 
     memcpy(task->get_data(), buf, length);
@@ -1242,7 +1263,10 @@ void ATAPICdrom::scsi_mode_sense(uint8_t* packet)
         start_task(task.get());
         break;
     }
-    case 0x1b: //Reserved
+    // case 0X01: for random readable feature set, mandatory if PP == 1
+    // case 0X1a: for power managment feature set, mandatory (SPC-3)
+    // case 0X1d: for timout feature set, mandatory
+    case 0x1b: // according to MMC-4 is reserved
         D_MESSAGE("abort on page 0x%x subpage 0x%x", page_code, subpage_code);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_FIELD_IN_CDB);
         break;
@@ -1646,14 +1670,17 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
     buf.put_uint32(0); //length
     buf.put_uint8(0);  //reserved
     buf.put_uint8(0);  //reserved
-    buf.put_uint16(media ? revers_unit16(MMC_PROFILE_CDROM) : 0); //current profile
+    buf.put_uint16(_profile);
 
     if (feature_add_test(MMC_FEATURE_PROFILE_LIST, start, rt, true)) {
         buf.put_uint16(revers_unit16(MMC_FEATURE_PROFILE_LIST));
         buf.put_uint8(0x3); // currenr | persistent, version == 0
-        buf.put_uint8(4);  // aditional length
+        buf.put_uint8(8);  // aditional length (num profiles * 4)
         buf.put_uint16(revers_unit16(MMC_PROFILE_CDROM));
-        buf.put_uint8(media ? 1 : 0);  // not current?
+        buf.put_uint8((_profile == MMC_PROFILE_CDROM) ? 1 : 0);  // current?
+        buf.put_uint8(0);  // reserved
+        buf.put_uint16(revers_unit16(MMC_PROFILE_DVDROM));
+        buf.put_uint8((_profile == MMC_PROFILE_DVDROM) ? 1 : 0);  // current?
         buf.put_uint8(0);  // reserved
     }
 
@@ -1698,14 +1725,21 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
         buf.put_uint8(0); // reserved
     }
 
-    if (feature_add_test(MMC_FEATURE_CD_READ, start, rt, media)) {
+    if (feature_add_test(MMC_FEATURE_CD_READ, start, rt, _profile == MMC_PROFILE_CDROM)) {
         buf.put_uint16(revers_unit16(MMC_FEATURE_CD_READ));
-        buf.put_uint8(media ? 0x9 : 0x8); // current? | not persistent, version == 2
+        buf.put_uint8((_profile == MMC_PROFILE_CDROM) ? 0x9 : 0x8); // current? | not persistent,
+                                                                    // version == 2
         buf.put_uint8(4);  // aditional length
         buf.put_uint8(0); // DAP C2 and CD-Text are not set
         buf.put_uint8(0); // reserved
         buf.put_uint8(0); // reserved
         buf.put_uint8(0); // reserved
+    }
+
+    if (feature_add_test(MMC_FEATURE_DVD_READ, start, rt, _profile == MMC_PROFILE_DVDROM)) {
+        buf.put_uint16(revers_unit16(MMC_FEATURE_DVD_READ));
+        buf.put_uint8((_profile == MMC_PROFILE_DVDROM) ? 1 : 0);
+        buf.put_uint8(0);  // aditional length
     }
 
     if (feature_add_test(MMC_FEATURE_POWER_MANAGMENET, start, rt, true)) {
@@ -1722,6 +1756,16 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
         buf.put_uint8(0); // reserved
         buf.put_uint16(revers_unit16(0)); // unit length (When the Group3 bit is set to 0,
                                           //              Unit Length field is not valid)
+    }
+
+    if (feature_add_test(MMC_FEATURE_RT_STREAM, start, rt, _profile == MMC_PROFILE_DVDROM)) {
+        buf.put_uint16(revers_unit16(MMC_FEATURE_RT_STREAM));
+        buf.put_uint8((_profile == MMC_PROFILE_DVDROM) ? 0x0d : 0x0c); // currenr ? | version == 3
+        buf.put_uint8(4);  // aditional length.
+        buf.put_uint8(0); // support non
+        buf.put_uint8(0); // reserved
+        buf.put_uint8(0); // reserved
+        buf.put_uint8(0); // reserved
     }
 
     *(uint32_t*)buf.base() = revers_unit32(buf.position() - 8);
@@ -1999,7 +2043,7 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     // status unless a higher priority status as defined by the logical unit is also pending.
 
     switch (packet[0]) {
-    case MMC_CMD_READ:
+    case MMC_CMD_READ_10:
         mmc_read(packet);
         break;
     case SCSI_CMD_TEST_UNIT_READY:
@@ -2035,7 +2079,62 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     case MMC_CMD_MECHANISM_STATUS:
         mmc_mechanisim_status(packet);
         break;
+    case MMC_CMD_SEND_EVENT:
+        D_MESSAGE("MMC_CMD_SEND_EVENT is part of the morphing set, aborting");
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case MMC_CMD_READ_CD:
+        if (_profile == MMC_PROFILE_CDROM) {
+            D_MESSAGE("MMC_CMD_READ_CD is part of the read cd set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case MMC_CMD_READ_CD_MSF:
+        if (_profile == MMC_PROFILE_CDROM) {
+            D_MESSAGE("MMC_CMD_READ_CD_MSF is part of the read cd set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+     case MMC_CMD_READ_12:
+        if (_profile == MMC_PROFILE_DVDROM) {
+            D_MESSAGE("MMC_CMD_READ_12 is part of the read dvd set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case MMC_CMD_READ_DVD_STRUCT:
+        if (_profile == MMC_PROFILE_DVDROM) {
+            D_MESSAGE("MMC_CMD_READ_DVD_STRUCT is part of the read dvd set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
     case MMC_CMD_GET_PERFORMANCE:
+        if (_profile == MMC_PROFILE_DVDROM) {
+            D_MESSAGE("MMC_CMD_GET_PERFORMANCE is part of the rt stream set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case MMC_CMD_SET_READ_AHEAD:
+        if (_profile == MMC_PROFILE_DVDROM) {
+            D_MESSAGE("MMC_CMD_SET_READ_AHEAD is part of the rt stream set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case MMC_CMD_SET_SPEED:
+        if (_profile == MMC_PROFILE_DVDROM) {
+            D_MESSAGE("MMC_CMD_SET_SPEED is part of the rt stream set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case MMC_CMD_SET_STREAMING:
+        if (_profile == MMC_PROFILE_DVDROM) {
+            D_MESSAGE("MMC_CMD_SET_STREAMING is part of the rt stream set, aborting");
+        }
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
+    case SCSI_CMD_MODE_SELECT:
+        D_MESSAGE("SCSI_CMD_MODE_SELECT is part of the core set, aborting");
+        packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
+        break;
     case MMC_CMD_READ_DISC_INFORMATION:
     case MMC_CMD_REPORT_KEY:
     case MMC_CMD_READ_SUBCHANNEL:
@@ -2265,6 +2364,7 @@ void ATAPICdrom::_open_tray()
     _cdrom_state &= ~(MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK |
                       ATTENTION_REMOVE_REQUEST);
     _mounted_media = NULL;
+    update_profile();
 }
 
 
@@ -2285,6 +2385,8 @@ void ATAPICdrom::_close_tray()
         D_MESSAGE("new media");
         _cdrom_state |= MEW_MEDIA_EVENT_MASK | ATTENTION_MEDIA_MASK;
     }
+
+    update_profile();
 }
 
 
@@ -2367,6 +2469,13 @@ void ATAPICdrom::set_media(const std::string& file_name)
 
     try {
         _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, true));
+
+        if (_media->get_size() > MAX_MEDIA_SIZE) {
+            W_MESSAGE("size exceed dvd size");
+            _media.reset(NULL);
+            return;
+        }
+
     } catch (...) {
         D_MESSAGE("failed");
         return;

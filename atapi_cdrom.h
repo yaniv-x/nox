@@ -87,10 +87,12 @@ private:
     void set_media(const std::string& file_name);
     uint get_not_present_sens_add();
     bool handle_attention_condition();
+    void update_profile();
 
 private:
     std::auto_ptr<BlockDevice> _media;
     BlockDevice* _mounted_media;
+    uint16_t _profile;
     Mutex _media_lock;
     Atomic _media_refs;
 
