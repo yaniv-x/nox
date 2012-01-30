@@ -29,6 +29,7 @@
 #include "io_bus.h"
 #include "pic.h"
 #include "application.h"
+#include "pm_controller.h"
 
 enum {
     CMOD_OFFSET_SHUTDOWN = 0x0f,
@@ -258,6 +259,7 @@ bool CMOS::lazy_update(nox_time_t now)
             _reg_c |= REG_C_INTERRUPT_FLAG_MASK;
             _irq_wire.raise();
             reschedule_alarm(now);
+            get_nox().get_pm_controller().alarm();
         }
 
         return true;
@@ -306,6 +308,10 @@ void CMOS::update_cycle()
     if (_date.tm_hour == _hours_alarm && _date.tm_min == _minutes_alarm &&
                                                           _date.tm_sec == _seconds_alarm) {
         _reg_c |= REG_C_ALARM_FLAG_MASK;
+
+        if (interrupt_on_alarm()) {
+            get_nox().get_pm_controller().alarm();
+        }
     }
 
     _reg_c |= REG_C_INTERRUPT_FLAG_MASK | REG_C_UPDATE_FLAG_MASK;

@@ -24,32 +24,49 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_PCI
-#define _H_PCI
+#ifndef _H_PM_CONTROLLER
+#define _H_PM_CONTROLLER
 
-#define NOX_PCI_VENDOR_ID 0x1aaa
+#include "pci_device.h"
 
-#define NOX_PCI_DEV_ID_HOST_BRIDGE 0x0001
-#define NOX_PCI_DEV_ID_ISA_BRIDGE 0x0010
-#define NOX_PCI_DEV_ID_VGA 0x0100
-#define NOX_PCI_DEV_ID_IDE 0x0110
+class NoxVM;
+class Timer;
 
-#define PCI_CLASS_MASS_STORAGE 0x01
-#define PCI_MASS_STORAGE_SUBCLASS_IDE 0x01
-#define PCI_IDE_PROGIF_BUS_MASTER_BIT 7
+class PMController : public PCIDevice {
+public:
+    PMController(NoxVM& vm);
+    void alarm();
 
-#define PCI_CLASS_DISPLAY 0x03
-#define PCI_DISPLAY_SUBCLASS_VGA 0x00
-#define PCI_VGA_INTERFACE_VGACOMPAT 0x00
+protected:
+    virtual uint get_hard_id();
 
-#define PCI_CLASS_BRIDGE 0x06
-#define PCI_SUBCLASS_BRIDGE_HOST 0x00
-#define PCI_SUBCLASS_BRIDGE_ISA 0x01
+    virtual void reset();
+    virtual bool start();
+    virtual bool stop();
 
-#define PCI_CLASS_SYSTEM 0x08
-#define PCI_SUBCLASS_SYSTEM_OTHER 0x80
+private:
+    uint16_t io_read_word(uint16_t port);
+    uint32_t io_read_dword(uint16_t port);
+    void io_write_byte(uint16_t port, uint8_t val);
+    void io_write_word(uint16_t port, uint16_t val);
 
-#define PCI_IO_MIN_SIZE 4
+    nox_time_t next_flip_delta();
+    void timer_cb();
+    void update_timer();
+    void update_irq_level();
+    void do_sleep(uint type);
+
+private:
+    NoxVM& _vm;
+    Mutex _mutex;
+    Timer* _timer;
+    uint16_t _state;
+    uint16_t _enable;
+    uint16_t _control;
+    uint32_t _timer_val;
+    nox_time_t _base_time;
+    nox_time_t _freeze_time;
+};
 
 #endif
 

@@ -49,6 +49,7 @@ class AdminReplyContext;
 class Speaker;
 class FirmwareFile;
 class CPU;
+class PMController;
 
 
 class NoxVM: public VMPart {
@@ -62,6 +63,7 @@ public:
     IOBus& get_io_bus() { return *_io_bus.get();}
     CPU* get_cpu(uint id);
     PIT& get_pit() { return *_pit.get();}
+    PMController& get_pm_controller() { return *_pm_controller.get();}
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}
 
     void set_ram_size(uint32_t ram_size);
@@ -71,6 +73,8 @@ public:
 
     typedef void (*compleation_routin_t)(void *, bool ok);
     void vm_reset();
+    void vm_power_off();
+    void vm_sleep();
     void vm_start(compleation_routin_t cb, void* opaque);
     void vm_stop(compleation_routin_t cb, void* opaque);
     void vm_restart(compleation_routin_t cb, void* opaque);
@@ -137,6 +141,7 @@ private:
     std::auto_ptr<PCIBus> _pci;
     std::auto_ptr<PCIHost> _pci_host;
     std::auto_ptr<ISABridge> _eisa_bridge;
+    std::auto_ptr<PMController> _pm_controller;
     std::auto_ptr<CMOS> _cmos;
     std::auto_ptr<DMA> _dma;
     std::auto_ptr<PIT> _pit;
@@ -190,7 +195,17 @@ public:
 
 class ResetException: public std::exception {
 public:
-    virtual const char* what() const throw () {return "reset exception: implement me!!!";}
+    virtual const char* what() const throw () {return "reset exception";}
+};
+
+class SoftOffException: public std::exception {
+public:
+    virtual const char* what() const throw () {return "soft off exception";}
+};
+
+class SleepException: public std::exception {
+public:
+    virtual const char* what() const throw () {return "sleep exception";}
 };
 
 #endif

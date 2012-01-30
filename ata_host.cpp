@@ -483,16 +483,16 @@ void ATAHost::on_io_enabled()
 
 void ATAHost::on_io_disabled()
 {
-    _channel_0_wire->dettach_dest();
-    _channel_1_wire->dettach_dest();
+    _channel_0_wire->detach_dest();
+    _channel_1_wire->detach_dest();
     _bus_master_io_base = 0;
 }
 
 
 void ATAHost::reset()
 {
-    _channel_0_wire->dettach_dest();
-    _channel_1_wire->dettach_dest();
+    _channel_0_wire->detach_dest();
+    _channel_1_wire->detach_dest();
     memset(_bus_master_regs, 0, sizeof(_bus_master_regs));
     _bus_master_io_base = 0;
     PCIDevice::reset();

@@ -48,6 +48,7 @@ nox_SOURCES =					\
     speaker.cpp             \
     firmware_file.cpp       \
     gdb_target.cpp          \
+    pm_controller.cpp       \
 	run_loop.cpp
 
 INCLUDES =												\

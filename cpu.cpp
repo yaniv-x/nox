@@ -1322,6 +1322,10 @@ void CPU::run()
                 run_loop();
             } catch (ResetException& e) {
                 get_nox().vm_restart(NULL, NULL);
+            } catch (SoftOffException& e) {
+                get_nox().vm_power_off();
+            } catch (SleepException& e) {
+                get_nox().vm_sleep();
             }
             break;
         case TERMINATE:
