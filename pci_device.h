@@ -65,6 +65,7 @@ public:
 
     void set_interrupt_level(uint level);
     bool set_irq(uint pin, uint irq);
+    void set_irq_mask(uint16_t mask);
 
     class Region;
 
@@ -123,6 +124,7 @@ private:
     Region* _regions[NUM_BARS];
     Wire _interrupt_line;
     PCIFirmware* _firmware;
+    uint16_t _irq_mask;
 
     friend class PCIBus;
 };

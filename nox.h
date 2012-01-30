@@ -38,10 +38,33 @@
 #define NOX_PCI_VENDOR_ID 0x1aaa
 #define NOX_PCI_DEV_ID_HOST_BRIDGE 0x0001
 #define NOX_PCI_DEV_HOST_BRIDGE_REV 1
+#define NOX_PCI_DEV_ID_PM_CONTROLLER 0x0010
+#define NOX_PCI_DEV_PM_CONTROLLER_REV 1
 #define NOX_ADDRESS_LINES 52
 #define NOX_PCI_IRQ_LINES_MASK 0xdef8 // exclude: PIT, keyboard, PIC slave, RTC, and DMA
 #define NOX_PCI_IRQ_EXCLUSIVE_MASK (NOX_PCI_IRQ_LINES_MASK & ~(0xd000)) // exclude: mouse, and
                                                                             //          lagacy ide
+
+enum {
+    HOST_BRIDGE_SLOT = 0,
+    ISA_BRIDGE_SLOT = 1,
+    PM_CONTROLLER_SLOT = 2,
+};
+
+
+enum {
+    PM_IO_STATUS = 0x00,
+    PM_IO_ENABLE = PM_IO_STATUS + 2,
+    PM_IO_CONTROL = 0x04,
+    PM_IO_RESET = 0x06,
+    PM_IO_TIMER = 0x08,
+
+    PM_IO_END = 0x0c,
+
+    PM_RESET_MAGIC = 0xbf,
+    PM_IRQ_LINE = 9,
+};
+
 
 enum {
     PLATFORM_IO_LOCK = 0x00,

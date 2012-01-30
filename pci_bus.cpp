@@ -217,8 +217,8 @@ void PCIBus::io_write_config_dword(uint16_t port, uint32_t val)
 static inline bool is_reserved_slot(uint id)
 {
     // reserving some slots
-    // 0 is the host-bridge, 1 is eisa-bridge, others are reservd for future usus
-    return id == 2 || id > 29;
+    // 0 is the host-bridge, 1 is eisa-bridge, 2 is pm_controller others are reservd for future usus
+    return id == 3 || id > 29;
 }
 
 

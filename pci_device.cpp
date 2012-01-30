@@ -634,6 +634,7 @@ PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t de
     : VMPart(name, bus)
     , _interrupt_line (*this)
     , _firmware (NULL)
+    , _irq_mask(NOX_PCI_IRQ_LINES_MASK)
 {
     if (vendor == 0 || vendor == ~0) {
         THROW("invalid vendor id");
@@ -810,14 +811,21 @@ void PCIDevice::set_interrupt_level(uint level)
 }
 
 
+void PCIDevice::set_irq_mask(uint16_t mask)
+{
+    ASSERT((mask & ~NOX_PCI_IRQ_LINES_MASK) == 0);
+    _irq_mask = mask;
+}
+
+
 bool PCIDevice::set_irq(uint pin, uint irq)
 {
-    if (!((1 << irq) & NOX_PCI_IRQ_LINES_MASK)) {
-        return false;
-    }
-
     if (pin != 0x0a) {
         return true;
+    }
+
+    if (!((1 << irq) & _irq_mask)) {
+        return false;
     }
 
     Lock lock(_mutex);
@@ -1292,6 +1300,7 @@ void PCIDevice::reset()
     }
 
     _interrupt_line.reset();
+    _interrupt_line.detach_dest();
 
     if (_firmware) {
         _firmware->reload();

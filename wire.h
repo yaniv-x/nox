@@ -46,13 +46,13 @@ public:
 
     virtual ~Wire()
     {
-        dettach_dest();
+        detach_dest();
     }
 
     void set_dest(VMPart& part, void* opaque, void_callback_t raised, void_callback_t droped,
                   void_callback_t detach)
     {
-        dettach_dest();
+        detach_dest();
 
         Lock lock(_mutex);
         _dest = &part;
@@ -62,7 +62,7 @@ public:
         _detach_cb = detach;
     }
 
-    void dettach_dest()
+    void detach_dest()
     {
         Lock lock(_mutex);
 

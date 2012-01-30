@@ -44,6 +44,7 @@
 #include "cmos.h"
 #include "keyboard.h"
 #include "vga.h"
+#include "pm_controller.h"
 #include "display.h"
 #include "admin_server.h"
 #include "pci.h"
@@ -102,8 +103,7 @@ public:
         memory_bus->release_physical_ram(_ram);
     }
 
-    virtual uint get_hard_id() { return 0;}
-
+    virtual uint get_hard_id() { return HOST_BRIDGE_SLOT;}
 
     uint8_t* get_ram_ptr() { return memory_bus->get_physical_ram_ptr(_ram);}
 
@@ -145,7 +145,7 @@ public:
         bus.add_device(*this);
     }
 
-    virtual uint get_hard_id() { return 1;}
+    virtual uint get_hard_id() { return ISA_BRIDGE_SLOT;}
 };
 
 
@@ -207,6 +207,7 @@ NoxVM::NoxVM()
     , _pci (new PCIBus(*this))
     , _pci_host (new PCIHost(*_pci.get()))
     , _eisa_bridge (new ISABridge(*_pci.get()))
+    , _pm_controller (new PMController(*this))
     , _cmos (new CMOS(*this))
     , _dma (new DMA(*this))
     , _pit (new PIT(*this))
@@ -1364,7 +1365,6 @@ public:
 };
 
 
-
 bool ResetRequest::test(NoxVM& vm)
 {
     switch (vm.get_state()) {
@@ -1389,5 +1389,29 @@ void NoxVM::vm_restart(compleation_routin_t cb, void* opaque)
         AutoRef<StateChngeTask> task(new StateChngeTask(*this));
         application->add_task(task.get());
     }
+}
+
+
+static void ower_off_compleation(void *, bool ok)
+{
+    if (!ok) {
+        W_MESSAGE("power off failed");
+        return;
+    }
+
+    application->quit();
+}
+
+
+void NoxVM::vm_power_off()
+{
+    vm_down(ower_off_compleation, NULL);
+}
+
+
+void NoxVM::vm_sleep()
+{
+    D_MESSAGE("todo: implemanet power state");
+    vm_stop(NULL, NULL);
 }
 
