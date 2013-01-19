@@ -1286,6 +1286,7 @@ void ATADisk::do_command(uint8_t command)
     case ATA_CMD_READ_NATIVE_MAX_ADDRESS:
     case ATA_CMD_PACKET:
     case ATA_CMD_GET_MEDIA_STATUS:
+    case ATA_CMD_SECURITY_FREEZE_LOCK:
         command_abort_error();
         break;
     default:

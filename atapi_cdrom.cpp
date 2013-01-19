@@ -2138,6 +2138,8 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     case MMC_CMD_READ_DISC_INFORMATION:
     case MMC_CMD_REPORT_KEY:
     case MMC_CMD_READ_SUBCHANNEL:
+    case MMC_CMD_SYNCHRONIZE_CACHE:
+    case MMC_CMD_PAUSE_RESUME:
         D_MESSAGE("abort command 0x%x", packet[0]);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
         break;
