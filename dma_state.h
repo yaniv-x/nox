@@ -51,7 +51,7 @@ public:
 
 protected:
     DMAState() {}
-    ~DMAState() {}
+    virtual ~DMAState() {}
 };
 
 #endif

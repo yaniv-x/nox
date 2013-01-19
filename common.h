@@ -35,6 +35,7 @@
 #include <limits.h>
 #include <auto_ptr.h>
 #include <string.h>
+#include <unistd.h>
 #include <string>
 #include <list>
 #include <vector>

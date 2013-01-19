@@ -30,7 +30,7 @@
 class NonCopyable {
 protected:
     NonCopyable () {}
-    ~NonCopyable () {}
+    virtual ~NonCopyable () {}
 
 private:
     NonCopyable (const NonCopyable &);
