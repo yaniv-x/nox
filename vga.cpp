@@ -238,7 +238,7 @@ public:
     {
     }
 
-    ~VGABackEndImp()
+    virtual ~VGABackEndImp()
     {
         _fb->unref();
     }
@@ -626,6 +626,35 @@ static inline uint32_t rgb555_to_rgb888(uint32_t color)
 }
 
 
+void VGA::vbe_update_4bpp(uint32_t* dest)
+{
+    uint32_t stride = _vbe_regs[VBE_REG_VIRT_WIDTH];
+    uint now = _vbe_regs[VBE_REG_X_OFFSET] + _vbe_regs[VBE_REG_Y_OFFSET] * stride;
+    uint end = now + _height * stride;
+    uint gap = stride - _width;
+
+    ASSERT(stride >= _width);
+
+    uint start_offset = now / 8 * 4;
+    uint end_offset = end / 8 * 4;
+
+    if (end_offset < start_offset || end_offset > VBE_VRAM_SIZE) {
+        D_MESSAGE("invalid area");
+        return;
+    }
+
+    while (now < end) {
+        uint line_end = now +_width;
+
+        for (; now < line_end; now++) {
+            *dest++ =  _effective_palette[fetch_pix_16(_vram, now)].color;
+        }
+
+        now += gap;
+    }
+}
+
+
 void VGA::update()
 {
     Lock lock(_mutex);
@@ -654,6 +683,9 @@ void VGA::update()
     case 15:
         src_pixel_bytes = 2;
         break;
+    case 4:
+        vbe_update_4bpp(dest);
+        return;
     default:
         src_pixel_bytes = 1;
     }
@@ -1015,6 +1047,9 @@ void VGA::reset()
     _edid_offset = ~0;
     _vba_palette_expect_red = false;
 
+    _window_start = _vram;
+    _window_end = _vga_vram_end;
+
     memset(_latch, 0, sizeof(_latch));
 
     _dirty = true;
@@ -1339,9 +1374,9 @@ VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 
 inline void VGA::vram_read_mode_1(uint32_t src, uint8_t& dest)
 {
-    uint8_t* quad = _vram + (src << 2);
+    uint8_t* quad = _window_start + (src << 2);
 
-    if (quad + 4 < _vram || quad + 4 > _vga_vram_end) {
+    if (quad + 4 < _window_start || quad + 4 > _window_end) {
         D_MESSAGE("out of bounds");
         dest = 0xff;
         return;
@@ -1405,6 +1440,8 @@ void VGA::conditional_mode_change()
         return;
     }
 
+    ASSERT(_window_start == _vram && _window_end == _vga_vram_end);
+
     if (!is_crt_active()) {
         if (_vga_active) {
             _vga_active = false;
@@ -1457,7 +1494,7 @@ void VGA::conditional_mode_change()
 
 inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 {
-    if (_vram + offset < _vram || _vram + offset >= _vga_vram_end) {
+    if (_window_start + offset < _window_start || _window_start + offset >= _window_end) {
         D_MESSAGE("out of bounds");
         dest = 0xff;
         return;
@@ -1465,7 +1502,7 @@ inline void VGA::vram_load_one(uint32_t offset, uint8_t& dest)
 
     uint32_t plan = offset & 0x03;
     uint32_t* ptr32 = (uint32_t*)_latch;
-    *ptr32 = *(uint32_t*)(_vram + offset - plan);
+    *ptr32 = *(uint32_t*)(_window_start + offset - plan);
     dest = _latch[plan];
 }
 
@@ -1492,7 +1529,7 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
         return;
     }
 
-    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
+    if (is_vbe_active() && _vbe_regs[VBE_REG_DEPTH] != 4) {
         src += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
 
         ASSERT(_vram + src >= _vram && _vram + src + length >= _vram + src &&
@@ -1517,7 +1554,8 @@ void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 
 inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
 {
-    if (_vram + offset < _vram || _vram + offset >= _vga_vram_end) {
+    if (_window_start + offset < _window_start || _window_start + offset >= _window_end) {
+        D_MESSAGE("out of bounds");
         return;
     }
 
@@ -1546,12 +1584,12 @@ inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
             break;
         }
 
-        _vram[offset] = (val & _graphics_regs[GRAPHICS_REG_MASK]) |
-                        (_vram[offset] & ~_graphics_regs[GRAPHICS_REG_MASK]);
+        _window_start[offset] = (val & _graphics_regs[GRAPHICS_REG_MASK]) |
+                                (_window_start[offset] & ~_graphics_regs[GRAPHICS_REG_MASK]);
         break;
     }
     case 1:
-        _vram[offset] = _latch[offset & 0x03];
+        _window_start[offset] = _latch[offset & 0x03];
         break;
     case 2: {
         uint plan = offset & 0x03;
@@ -1560,14 +1598,14 @@ inline void VGA::vram_store_byte(uint64_t offset, uint8_t val)
         } else {
             val = 0;
         }
-        _vram[offset] = (val & _graphics_regs[GRAPHICS_REG_MASK]) |
-                        (_latch[offset & 0x03] & ~_graphics_regs[GRAPHICS_REG_MASK]);
+        _window_start[offset] = (val & _graphics_regs[GRAPHICS_REG_MASK]) |
+                                (_latch[offset & 0x03] & ~_graphics_regs[GRAPHICS_REG_MASK]);
         break;
     }
     case 3:
         D_MESSAGE_SOME(10, "implement me %u",
                   _graphics_regs[GRAPHICS_REG_MODE] & GRAPHICS_MODE_WRITE_MODE_MASK);
-        _vram[offset] = val;
+        _window_start[offset] = val;
         break;
     }
 }
@@ -1635,7 +1673,9 @@ void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
         return;
     }
 
-    if (_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_ENABLE) {
+    if (is_vbe_active() && _vbe_regs[VBE_REG_DEPTH] != 4) { // assuming that all other modes can
+                                                            // be marked as NOT_VGA_COMPATIBLE in
+                                                            // vga bios mode info (vbetables.h)
 
         dest += uint64_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
 
@@ -1753,6 +1793,20 @@ void VGA::propagate_fb()
 }
 
 
+void VGA::update_vga_window()
+{
+    if (!is_vbe_active()) {
+        _window_start = _vram;
+        _window_end = _vga_vram_end;
+        return;
+    }
+
+    _window_start = _vram + uint32_t(_vbe_regs[VBE_REG_BANK]) * 64 * KB;
+    ASSERT(_window_start >= _vram && _window_start < _vbe_vram_end);
+    _window_end = MIN(_window_start + VGA_VRAM_SIZE, _vbe_vram_end);
+}
+
+
 void VGA::enable_vbe()
 {
     VGA_D_MESSAGE("");
@@ -1766,7 +1820,7 @@ void VGA::enable_vbe()
     }
 
     if (!(_vbe_regs[VBE_REG_COMMAND] & VBE_COMMAND_LINEAR)) {
-         D_MESSAGE("VBE_COMMAND_LINEAR is not set");
+        D_MESSAGE("VBE_COMMAND_LINEAR is not set bpp=%u", _vbe_regs[VBE_REG_DEPTH]);
     }
 
     _palette_shift = (_vbe_regs[VBE_REG_COMMAND] & VBE_DISPI_8BIT_DAC) ? 0 : 2;
@@ -1780,6 +1834,8 @@ void VGA::enable_vbe()
     _width = _vbe_regs[VBE_REG_X_RES];
     _height = _vbe_regs[VBE_REG_Y_RES];
 
+    update_vga_window();
+
     propagate_fb();
 }
 
@@ -1789,11 +1845,13 @@ void VGA::disable_vbe()
     VGA_D_MESSAGE("");
     bool active = !!(_crt_regs[CRT_REG_MODE] & CRT_MODE_ACTIVE_MASK);
 
+    update_vga_window();
+    _palette_shift = 2;
+
     if (!active) {
         return;
     }
 
-    _palette_shift = 2;
     conditional_mode_change();
 }
 
@@ -1872,6 +1930,7 @@ void VGA::io_write_word(uint16_t port, uint16_t val)
             }
 
             _vbe_regs[VBE_REG_BANK] = val;
+            update_vga_window();
             break;
         case VBE_REG_X_OFFSET:
             _vbe_regs[VBE_REG_X_OFFSET] = val;
