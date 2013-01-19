@@ -103,6 +103,7 @@ private:
     void show_caret();
     void hide_caret();
     void update_caret();
+    void vbe_update_4bpp(uint32_t* dest);
     void update();
     void update_vga();
     void unmap_lagacy_io();
@@ -120,6 +121,7 @@ private:
     void propagate_fb();
     void nofify_vbe_fb_config();
     void update_one_effective_palette(uint index);
+    void update_vga_window();
 
     void vram_load_one(uint32_t offset, uint8_t& dest);
     void vram_read_mode_0(uint32_t src, uint8_t& dest);
@@ -153,6 +155,8 @@ private:
     uint8_t* _vram;
     uint8_t* _vga_vram_end;
     uint8_t* _vbe_vram_end;
+    uint8_t* _window_start;
+    uint8_t* _window_end;
     MMIORegion* _mmio;
     uint8_t _last_io_delta;
     uint8_t _mmap_state;
