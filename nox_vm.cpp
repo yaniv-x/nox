@@ -158,6 +158,10 @@ public:
     {
     }
 
+    virtual ~StateChangeRequest()
+    {
+    }
+
     void notify(bool ok)
     {
         if (_cb) {

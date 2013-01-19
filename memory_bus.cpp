@@ -52,6 +52,7 @@ static inline bool is_valid_page_range(page_address_t start, uint64_t num_pages)
 
 class MemoryBus::Internal {
 public:
+    virtual ~Internal() {}
     virtual void on_unmapped() = 0;
     virtual uint8_t* get_direct() = 0; // todo: add ref to memory object
 };
