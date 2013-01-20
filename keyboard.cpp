@@ -172,8 +172,8 @@ KbdController::KbdController(NoxVM& nox)
                                           (io_read_byte_proc_t)&KbdController::io_read_status,
                                           (io_write_byte_proc_t)&KbdController::io_write_command));
 
-    pic->wire(_keyboard_output.irq_wire, KBD_IRQ);
-    pic->wire(_mouse_output.irq_wire, MOUSE_IRQ);
+    irq_wire(_keyboard_output.irq_wire, KBD_IRQ);
+    irq_wire(_mouse_output.irq_wire, MOUSE_IRQ);
 }
 
 

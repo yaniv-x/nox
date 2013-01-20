@@ -149,7 +149,7 @@ CMOS::CMOS(NoxVM& vm)
     _reg_a = (REG_A_DIVIDER_NORMAL << REG_A_DIVIDER_SHIFT) | REG_A_RATE_DEFAULT,
     _reg_b = 0;
 
-    pic->wire(_irq_wire, RTC_IRQ);
+    irq_wire(_irq_wire, RTC_IRQ);
 }
 
 

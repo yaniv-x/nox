@@ -44,6 +44,8 @@
 #define NOX_PCI_IRQ_LINES_MASK 0xdef8 // exclude: PIT, keyboard, PIC slave, RTC, and DMA
 #define NOX_PCI_IRQ_EXCLUSIVE_MASK (NOX_PCI_IRQ_LINES_MASK & ~(0xd000)) // exclude: mouse, and
                                                                             //          lagacy ide
+#define IO_APIC_ADDRESS 0xfec00000
+
 
 enum {
     HOST_BRIDGE_SLOT = 0,
@@ -94,6 +96,7 @@ enum {
     PLATFORM_REG_ABOVE_4G_PAGES,
     PLATFORM_REG_WRITE_POS,
     PLATFORM_REG_READ_POS,
+    PLATFORM_REG_NUM_CPUS,
 };
 
 enum {

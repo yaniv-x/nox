@@ -36,6 +36,7 @@
 #include "dma.h"
 #include "place_holder.h"
 #include "pic.h"
+#include "io_apic.h"
 #include "pit.h"
 #include "pci_bus.h"
 #include "ata_host.h"
@@ -208,6 +209,7 @@ NoxVM::NoxVM()
     , _mem_bus (new MemoryBus(*this))
     , _holder (new PlaceHolder(*this))
     , _pic (new PIC(*this))
+    , _io_apic (new IOApic(*this))
     , _pci (new PCIBus(*this))
     , _pci_host (new PCIHost(*_pci.get()))
     , _eisa_bridge (new ISABridge(*_pci.get()))
@@ -709,6 +711,8 @@ uint32_t NoxVM::platform_port_read_dword(uint16_t port)
         }
         case PLATFORM_REG_ABOVE_4G_PAGES:
             return _high_ram ? _mem_bus->get_physical_ram_size(_high_ram) >> GUEST_PAGE_SHIFT : 0;
+        case PLATFORM_REG_NUM_CPUS:
+            return _num_cpus;
         default:
             D_MESSAGE("unexpected register 0x%x", _platform_reg_index);
             return 0;
@@ -822,8 +826,12 @@ void NoxVM::load_bios()
 
 void NoxVM::init_cpus()
 {
+    if (_num_cpus > MAX_CPUS) {
+        THROW("too many cpus %u", _num_cpus);
+    }
+
     for (int i = 0; i < _num_cpus; i++) {
-        _dynamic_parts.push_back(new CPU(*this, i));
+        _dynamic_parts.push_back(new CPU(*this));
     }
 }
 

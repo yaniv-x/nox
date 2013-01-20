@@ -49,6 +49,7 @@ nox_SOURCES =					\
     firmware_file.cpp       \
     gdb_target.cpp          \
     pm_controller.cpp       \
+    io_apic.cpp             \
 	run_loop.cpp
 
 INCLUDES =												\

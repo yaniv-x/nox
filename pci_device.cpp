@@ -835,7 +835,7 @@ bool PCIDevice::set_irq(uint pin, uint irq)
         _interrupt_line.drop();
     }
 
-    pic->wire(_interrupt_line, irq);
+    irq_wire(_interrupt_line, irq);
 
     if (output) {
         _interrupt_line.raise();

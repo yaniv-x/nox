@@ -476,8 +476,8 @@ void ATAHost::io_bus_maste_write(uint16_t port, uint8_t val)
 
 void ATAHost::on_io_enabled()
 {
-    pic->wire(*_channel_0_wire, ATA0_IRQ);
-    pic->wire(*_channel_1_wire, ATA1_IRQ);
+    irq_wire(*_channel_0_wire, ATA0_IRQ);
+    irq_wire(*_channel_1_wire, ATA1_IRQ);
 }
 
 
