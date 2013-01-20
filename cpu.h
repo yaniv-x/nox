@@ -30,6 +30,8 @@
 #include "vm_part.h"
 #include "threads.h"
 
+#define MAX_CPUS 255
+
 class NoxVM;
 class IOBus;
 class Timer;
@@ -79,8 +81,8 @@ struct CPURegs {
 
 class CPU: public VMPart {
 public:
-    CPU(NoxVM& vm, uint id);
-    ~CPU();
+    CPU(NoxVM& vm);
+    virtual ~CPU();
 
     virtual void load(InStream &stream) {}
     virtual void power() {}
@@ -99,6 +101,12 @@ public:
     void enter_debug_mode(void_callback_t cb, void* opaque);
     void exit_debug_mode();
     void trigger_debug_trap();
+
+    static void apic_deliver_interrupt_physical(uint vector, uint dest, bool level);
+    static void apic_deliver_interrupt_logical(uint vector, uint dest, bool level);
+    static void apic_deliver_interrupt_lowest(uint vector, uint dest, bool level);
+    static void apic_deliver_nmi_physical(uint dest);
+    static void apic_deliver_nmi_logical(uint dest);
 
     enum Command {
         WAIT,
@@ -141,8 +149,9 @@ private:
     void apic_write(uint32_t offset, uint32_t n, uint8_t* src);
     void apic_read(uint32_t offset, uint32_t n, uint8_t* dest);
     void handle_mmio();
+    void nmi();
 
-    void apic_eoi();
+    int apic_eoi();
     void apic_update_error();
     void apic_set_spurious(uint32_t val);
     void apic_command(uint32_t val);
@@ -150,6 +159,7 @@ private:
     void apic_update_timer();
     void apic_rearm_timer();
     void apic_reset();
+    bool apic_in_logical_dest(uint dest);
     bool is_apic_enabled();
     bool is_apic_soft_enabled();
     uint get_interrupt();
@@ -157,7 +167,7 @@ private:
     uint get_direct_interrupt();
     bool is_dirct_interrupt_pending();
     void set_apic_address(address_t address);
-    void apic_put_irr(int irr);
+    void apic_put_irr(int irr, bool level);
     void sync_tpr();
     void apic_timer_cb();
 
@@ -194,6 +204,7 @@ private:
     Condition _trap_condition;
     bool (CPU::*_trap)();
     uint32_t _version_information;
+    Mutex _apic_mutex;
     address_t _apic_address;
     address_t _apic_start;
     address_t _apic_end;

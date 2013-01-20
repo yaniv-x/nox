@@ -36,9 +36,12 @@
 #include "io_bus.h"
 #include "memory_bus.h"
 #include "application.h"
+#include "io_apic.h"
 
 
 __thread CPU* vcpu = NULL;
+static CPU* cpus[MAX_CPUS] = {0};
+static uint num_cpus = 0;
 
 
 enum {
@@ -130,6 +133,13 @@ static inline void clear_bit(uint32_t* reg, uint index)
 }
 
 
+static inline bool test_bit(uint32_t* reg, uint index)
+{
+    uint offset = index & 0x1f;
+    return !!(reg[index >> 5] & (1 << offset));
+}
+
+
 static inline int find_high_interrupt(uint32_t* reg)
 {
     for (int i = 7; i >= 0; i--) {
@@ -179,9 +189,9 @@ static void init_sig_usr1()
 }
 
 
-CPU::CPU(NoxVM& vm, uint id)
+CPU::CPU(NoxVM& vm)
     : VMPart ("cpu", vm)
-    , _id (id)
+    , _id (num_cpus++)
     , _cpu_state (INITIALIZING)
     , _state_change_target (INVALID)
     , _command (WAIT)
@@ -199,6 +209,8 @@ CPU::CPU(NoxVM& vm, uint id)
     , _debug_opaque (NULL)
     , _debug_trap (false)
 {
+    ASSERT(_id < MAX_CPUS);
+    cpus[_id] = this;
     init_sig_usr1();
 
     pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
@@ -261,7 +273,33 @@ void CPU::setup_cpuid()
         struct kvm_cpuid_entry2* entries = cpuid_info.cpuid2.entries;
         if (entries[i].function == 1) {
             _version_information = entries[i].eax;
-            break;
+            entries[i].ecx &= ~(1 << 21);
+            entries[i].ebx &= 0xffff; // clera apic id and cpu count
+            entries[i].ebx |= (_id << 24);
+            entries[i].edx &= ~(1 << 28); // clear HTT
+            entries[i].edx |= (1 << 9); // indicates APIC exists and is enabled
+            D_MESSAGE("cpuid.1 0x%x 0x%x 0x%x 0x%x",
+                      entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
+        }
+
+        if (entries[i].function == 0x80000001) {
+            entries[i].ecx &= ~(1 << 3); // no extended APIC
+            entries[i].edx |= (1 << 9);  // indicates APIC exists and is enabled
+            D_MESSAGE("cpuid.0x80000001 0x%x 0x%x 0x%x 0x%x",
+                      entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
+        }
+
+        if (entries[i].function == 0x80000008) {
+            entries[i].ecx &= ~0xff; // set NC = 0 => num cores == 1
+            entries[i].ecx &= ~(0x0f << 12); // set ApicIdCoreIdSize = 0
+            D_MESSAGE("cpuid.0x80000008 0x%x 0x%x 0x%x 0x%x",
+                      entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
+        }
+
+        if (entries[i].function == 0x8000001e) {
+            entries[i].eax = 0; // clear ExtendedApicId
+            D_MESSAGE("cpuid.0x8000001e 0x%x 0x%x 0x%x 0x%x",
+                      entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
         }
     }
 
@@ -579,8 +617,13 @@ void CPU::debug_untrap()
 
 bool CPU::halt_trap()
 {
-    return !_kvm_run->if_flag || !pic->interrupt_test();
-    //todo : resume only in case we can push interrupt
+    if (_need_timer_update) {
+        _need_timer_update = false;
+        apic_update_timer();
+    }
+
+    //fixme : handle nmi
+    return !_kvm_run->if_flag || !interrupt_test();
 }
 
 
@@ -592,24 +635,32 @@ void CPU::set_halt_trap()
 }
 
 
-inline void CPU::apic_eoi()
+inline int CPU::apic_eoi()
 {
     // (A write to the EOI register must not be included in the handler routine for
     // an NMI, SMI, INIT, ExtINT, or SIPI.)
 
-    ASSERT(_current_interrupt == find_high_interrupt(_apic_regs + APIC_OFFSET_ISR));
+    int current = _current_interrupt;
 
-    if (_current_interrupt == -1) {
+    ASSERT(current == find_high_interrupt(_apic_regs + APIC_OFFSET_ISR));
+
+    if (current == -1) {
         D_MESSAGE("nothing to clean");
     } else {
-        clear_bit(_apic_regs + APIC_OFFSET_ISR, _current_interrupt);
+        clear_bit(_apic_regs + APIC_OFFSET_ISR, current);
 
-        // handle TMR here
+        if (test_bit(_apic_regs + APIC_OFFSET_TMR, current)) {
+            clear_bit(_apic_regs + APIC_OFFSET_TMR, current);
+        } else {
+            current = -1;
+        }
     }
 
     _current_interrupt = find_high_interrupt(_apic_regs + APIC_OFFSET_ISR);
 
     apic_update_priority();
+
+    return current;
 }
 
 
@@ -712,10 +763,23 @@ void CPU::apic_set_timer(uint32_t val)
 }
 
 
-void CPU::apic_put_irr(int irr)
+void CPU::apic_put_irr(int irr, bool level)
 {
+    if (irr < 16) {
+        D_MESSAGE("0-15 are reserved");
+        // todo: post error interrupt
+        return;
+
+    }
+
     set_bit(&_apic_regs[APIC_OFFSET_IRR], irr);
-    // set or clear TMR bit here
+
+    if (level) {
+        set_bit(&_apic_regs[APIC_OFFSET_TMR], irr);
+    } else {
+        clear_bit(&_apic_regs[APIC_OFFSET_TMR], irr);
+    }
+
     apic_update_priority_irr(irr);
     _test_interrupts = true;
 }
@@ -733,6 +797,8 @@ void CPU::apic_update_timer()
 
     delta /= _apic_timer_div;
 
+    Lock lock(_apic_mutex);
+
     if (delta < _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT]) {
         _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] -= delta;
         return;
@@ -748,7 +814,7 @@ void CPU::apic_update_timer()
     }
 
     if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
-        apic_put_irr(_apic_regs[APIC_OFFSET_LVT_TIMER] & 0xff);
+        apic_put_irr(_apic_regs[APIC_OFFSET_LVT_TIMER] & 0xff, false);
     }
 }
 
@@ -763,10 +829,18 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
     uint32_t val = *(uint32_t*)src;
     offset >>= 4;
 
+    Lock lock(_apic_mutex);
+
     switch (offset) {
-    case APIC_OFFSET_EOI:
-        apic_eoi();
+    case APIC_OFFSET_EOI: {
+        int vector = apic_eoi();
+
+        if (vector != -1) {
+            lock.unlock();
+            io_apic->eoi(vector);
+        }
         break;
+    }
     case APIC_OFFSET_TPR:
         _apic_regs[APIC_OFFSET_TPR] = val & 0xff;
         apic_update_priority();
@@ -1141,7 +1215,20 @@ uint CPU::get_interrupt()
 
 bool CPU::interrupt_test()
 {
-    // need more code here
+    if (is_apic_enabled()) {
+
+        if (is_dirct_interrupt_pending()) {
+            return true;
+        }
+
+        if (is_apic_soft_enabled()) {
+            int irr = find_high_interrupt(_apic_regs + APIC_OFFSET_IRR);
+
+            if (irr != -1 && (irr >> 4) > (_apic_regs[APIC_OFFSET_PROCESSOR_PRIORITY] >> 4)) {
+                return true;
+            }
+        }
+    }
 
     return pic->interrupt_test();
 }
@@ -1176,6 +1263,7 @@ inline void CPU::sync_tpr()
         return;
     }
 
+    Lock lock(_apic_mutex);
     _apic_regs[APIC_OFFSET_TPR] = _kvm_run->cr8 << 4;
 
     apic_update_priority();
@@ -1438,9 +1526,110 @@ void CPU::output_trigger()
 }
 
 
-void CPU::CPU::apic_timer_cb()
+void CPU::apic_timer_cb()
 {
     _need_timer_update = true;
     output_trigger();
+}
+
+
+void CPU::apic_deliver_interrupt_physical(uint vector, uint dest, bool level)
+{
+    if (dest < num_cpus) {
+        Lock lock(cpus[dest]->_apic_mutex);
+        cpus[dest]->apic_put_irr(vector, level);
+        lock.unlock();
+        cpus[dest]->output_trigger();
+    } else if (dest == 0xff) {
+        for (uint i = 0; i < num_cpus; i++) {
+            Lock lock(cpus[i]->_apic_mutex);
+            cpus[i]->apic_put_irr(vector, level);
+            lock.unlock();
+            cpus[i]->output_trigger();
+        }
+    } else {
+        D_MESSAGE("invalid cpu id");
+    }
+}
+
+
+inline bool CPU::apic_in_logical_dest(uint dest)
+{
+    uint32_t logical_dest = _apic_regs[APIC_OFFSET_LOGICAL_DEST];
+
+    if (!_apic_regs[APIC_OFFSET_DEST_FORMAT]) { // cluster
+        return  ((logical_dest >> (APIC_ID_SHIFT + 4)) == (dest >> 4)) ?
+                                    !!((logical_dest >> APIC_ID_SHIFT) & dest & 0xf) : false;
+    } else {
+        return !!((logical_dest >> APIC_ID_SHIFT) & dest & 0xff);
+    }
+}
+
+
+void CPU::apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
+{
+    for (uint i = 0; i < num_cpus; i++) {
+        if (cpus[i]->apic_in_logical_dest(dest)) {
+            Lock lock(cpus[i]->_apic_mutex);
+            cpus[i]->apic_put_irr(vector, level);
+            lock.unlock();
+            cpus[i]->output_trigger();
+        }
+    }
+}
+
+
+void CPU::apic_deliver_interrupt_lowest(uint vector, uint dest, bool level)
+{
+    uint lowest = ~0;
+    uint target = ~0;
+
+    for (uint i = 0; i < num_cpus; i++) {
+        if (!cpus[i]->apic_in_logical_dest(dest)) {
+            continue;
+        }
+
+        if (cpus[i]->_apic_regs[APIC_OFFSET_ARBITRATION_PRIORITY] <= lowest) {
+            lowest = cpus[i]->_apic_regs[APIC_OFFSET_ARBITRATION_PRIORITY];
+            target = i;
+        }
+    }
+
+    if (target < num_cpus) {
+        Lock lock(cpus[target]->_apic_mutex);
+        cpus[target]->apic_put_irr(vector, level);
+        lock.unlock();
+        cpus[target]->output_trigger();
+    }
+}
+
+
+void CPU::apic_deliver_nmi_physical(uint dest)
+{
+    if (dest < num_cpus) {
+        cpus[dest]->nmi();
+    } else if (dest == 0xff) {
+        for (uint i = 0; i < num_cpus; i++) {
+            cpus[i]->nmi();
+        }
+    } else {
+        D_MESSAGE("invalid cpu id");
+    }
+}
+
+
+void CPU::apic_deliver_nmi_logical(uint dest)
+{
+    for (uint i = 0; i < num_cpus; i++) {
+        if (cpus[i]->apic_in_logical_dest(dest)) {
+             cpus[i]->nmi();
+        }
+    }
+}
+
+
+void CPU::nmi()
+{
+    W_MESSAGE("implement me!!!")
 }
 

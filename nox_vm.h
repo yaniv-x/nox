@@ -36,6 +36,7 @@ class PhysicalRam;
 class DMA;
 class PlaceHolder;
 class PIC;
+class IOApic;
 class PIT;
 class PCIBus;
 class PCIHost;
@@ -138,6 +139,7 @@ private:
     std::auto_ptr<MemoryBus> _mem_bus;
     std::auto_ptr<PlaceHolder> _holder;
     std::auto_ptr<PIC> _pic;
+    std::auto_ptr<IOApic> _io_apic;
     std::auto_ptr<PCIBus> _pci;
     std::auto_ptr<PCIHost> _pci_host;
     std::auto_ptr<ISABridge> _eisa_bridge;

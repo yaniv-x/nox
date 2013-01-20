@@ -50,7 +50,6 @@ public:
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 
-    void wire(Wire& wire, uint pin);
     uint get_interrupt();
     bool interrupt_test();
     void attach_notify_target(void_callback_t proc, void* opaque);
@@ -103,6 +102,7 @@ private:
     void update_output_pin(Lock& lock);
     void notify_output();
 
+    void wire(Wire& wire, uint pin);
     void raise(uint8_t pin);
     void drop(uint8_t pin);
 
@@ -114,6 +114,7 @@ private:
     void* _notify_opaque;
 
     friend class PICPinBond;
+    friend void irq_wire(Wire&, uint);
 };
 
 enum {
@@ -121,6 +122,9 @@ enum {
     WIRE_LEVEL_MASK = (1 << 6),
     WIRE_PIN_MASK = WIRE_LEVEL_MASK - 1,
 };
+
+
+void irq_wire(Wire& wire, uint pin);
 
 extern PIC* pic;
 

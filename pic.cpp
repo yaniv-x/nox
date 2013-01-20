@@ -28,6 +28,7 @@
 #include "nox_vm.h"
 #include "io_bus.h"
 #include "wire.h"
+#include "io_apic.h"
 
 enum {
     IO_PIC1 = 0x20,
@@ -405,11 +406,13 @@ public:
 
     void raised()
     {
+        io_apic->raise(_pin);
         pic->raise(_pin);
     }
 
     void droped()
     {
+        io_apic->drop(_pin);
         pic->drop(_pin);
     }
 
@@ -639,5 +642,15 @@ void PIC::reset()
     _output_pin = false;
     memset(_chips, 0, sizeof(_chips));
     remap_io_regions();
+}
+
+
+void irq_wire(Wire& wire, uint pin)
+{
+    if (pin < PIC::NUM_IRQ * PIC::NUM_CHIPS) {
+        pic->wire(wire, pin);
+    } else {
+        io_apic->wire(wire, pin);
+    }
 }
 

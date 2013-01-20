@@ -107,7 +107,7 @@ PIT::PIT(NoxVM& nox)
     memset(_timers, 0, sizeof(_timers));
     _timers[0].timer = application->create_timer((void_callback_t)&PIT::timer_proc, this);
     _timers[0].irq_wire = new Wire(*this);
-    pic->wire(*_timers[0].irq_wire, 0);
+    irq_wire(*_timers[0].irq_wire, 0);
 }
 
 
