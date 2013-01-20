@@ -102,6 +102,10 @@ public:
     void exit_debug_mode();
     void trigger_debug_trap();
 
+    void __apic_deliver_interrupt_logical(uint vector, uint dest, bool level);
+    void __apic_deliver_interrupt_all(uint vector, bool level);
+    void __apic_deliver_interrupt_exclude(uint vector, bool level);
+
     static void apic_deliver_interrupt_physical(uint vector, uint dest, bool level);
     static void apic_deliver_interrupt_logical(uint vector, uint dest, bool level);
     static void apic_deliver_interrupt_lowest(uint vector, uint dest, bool level);
@@ -140,6 +144,7 @@ private:
     void setup_cpuid();
     void save_init_msrs();
     void create();
+    void force_exec_loop();
     void output_trigger();
     void trap_wait();
     bool halt_trap();
@@ -150,11 +155,16 @@ private:
     void apic_read(uint32_t offset, uint32_t n, uint8_t* dest);
     void handle_mmio();
     void nmi();
+    void __reset();
 
     int apic_eoi();
     void apic_update_error();
     void apic_set_spurious(uint32_t val);
-    void apic_command(uint32_t val);
+
+    void populate_dest_mask(uint dest, bool logical);
+    void apic_command_init(uint32_t cmd_low);
+    void apic_command_fixed(uint32_t cmd_low);
+    void apic_command(uint32_t cmd_low);
     void apic_set_timer(uint32_t val);
     void apic_update_timer();
     void apic_rearm_timer();
@@ -192,7 +202,7 @@ private:
     struct kvm_run* _kvm_run;
     int _vcpu_mmap_size;
     AutoArray<uint8_t> _init_msrs;
-    bool _execution_break;
+    uint _execution_break;
     IOBus& _io_bus;
     Thread _thread;
     bool _executing;
@@ -217,6 +227,7 @@ private:
     void_callback_t _debug_cb;
     void* _debug_opaque;
     bool _debug_trap;
+    uint32_t _cpu_dest_mask[ALIGN(MAX_CPUS, 32) / 32];
 };
 
 
