@@ -34,6 +34,7 @@
 #include "pic.h"
 #include "application.h"
 #include "firmware_file.h"
+#include "pci.h"
 
 
 // The following section, from PCI spec, explain the mechanism for getting
@@ -61,57 +62,6 @@
 
 
 //#define PCI_STRICT
-
-
-enum {
-    PCI_CONF_VENDOR = 0x00,
-    PCI_CONF_DEVICE = 0x02,
-    PCI_CONF_COMMAND = 0x04,
-    PCI_CONF_STATUS = 0x06,
-    PCI_CONF_REVISION = 0x08,
-    PCI_CONF_CLASS = 0x09,
-    PCI_CONF_CACHE_LINE = 0x0c,
-    PCI_CONF_CACHE_LATENCY = 0x0d,
-    PCI_CONF_BAR_0 = 0x10,
-    PCI_CONF_BAR_1 = 0x14,
-    PCI_CONF_BAR_2 = 0x18,
-    PCI_CONF_BAR_3 = 0x1c,
-    PCI_CONF_BAR_4 = 0x20,
-    PCI_CONF_BAR_5 = 0x24,
-    PCI_CONF_SUBSYS_VENDOR = 0x2c,
-    PCI_CONF_SUBSYS_ID = 0x2e,
-    PCI_CONF_ROM_ADDRESS = 0x30,
-    PCI_CONF_INTERRUPT_LINE = 0x3c,
-    PCI_CONF_INTERRUPT_PIN = 0x3d,
-
-    PCI_COMMAND_MASK = ~((1 << 7) | ~((1 << 11) - 1)),
-    PCI_COMMAND_ENABLE_IO = (1 << 0),
-    PCI_COMMAND_ENABLE_MEM = (1 << 1),
-    PCI_COMMAND_DISABLE_INTERRUPT = (1 << 10),
-
-    PCI_STATUS_RESET_MASK = (1 << 8) | ~((1 << 11) - 1),
-    PCI_STATUS_INTERRUPT_MASK = (1 << 3),
-    PCI_STATUS_66MHZ_MASK = (1 << 5),
-
-    PCI_IO_MIN_SIZE = 4,
-    PCI_IO_MAX_SIZE = 256,
-
-    PCI_MEM_MIN_SIZE = 16,
-
-    PCI_BAR_IO_MASK = (1 << 0),
-    PCI_BAR_PREFATCH_MASK = (1 << 3),
-    PCI_BAR_MEM_TYPE_64BITS = 2,
-    PCI_BAR_MEM_TYPE_SHIFT = 1,
-
-    PCI_ROM_MAX_SIZE = 16 * MB,
-    PCI_ROM_MIN_SIZE = GUEST_PAGE_SIZE, // PCI spec min is (1 << 11)
-    PCI_ROM_ENABLE_MASK = 0x1,
-    PCI_ROM_FIRST_ADDRESS_BIT = 11,
-    PCI_ROM_ADDRESS_MASK = ~((1 << PCI_ROM_FIRST_ADDRESS_BIT) - 1),
-    PCI_ROM_MASK = PCI_ROM_ADDRESS_MASK | PCI_ROM_ENABLE_MASK,
-
-    PCI_INTTERUPT_PIN_A = 1,
-};
 
 
 #define  PCI_MEM_MAX_SIZE_32 (1U << 31)
@@ -634,7 +584,6 @@ PCIDevice::PCIDevice(const char* name, PCIBus& bus, uint16_t vendor, uint16_t de
     : VMPart(name, bus)
     , _interrupt_line (*this)
     , _firmware (NULL)
-    , _irq_mask(NOX_PCI_IRQ_LINES_MASK)
 {
     if (vendor == 0 || vendor == ~0) {
         THROW("invalid vendor id");
@@ -811,57 +760,25 @@ void PCIDevice::set_interrupt_level(uint level)
 }
 
 
-void PCIDevice::set_irq_mask(uint16_t mask)
-{
-    ASSERT((mask & ~NOX_PCI_IRQ_LINES_MASK) == 0);
-    _irq_mask = mask;
-}
-
-
-bool PCIDevice::set_irq(uint pin, uint irq)
-{
-    if (pin != 0x0a) {
-        return true;
-    }
-
-    if (!((1 << irq) & _irq_mask)) {
-        return false;
-    }
-
-    Lock lock(_mutex);
-    uint output = _interrupt_line.output();
-
-    if (output) {
-        _interrupt_line.drop();
-    }
-
-    irq_wire(_interrupt_line, irq);
-
-    if (output) {
-        _interrupt_line.raise();
-    }
-
-    return true;
-}
-
-
 uint8_t PCIDevice::read_config_byte(uint index, uint offset)
 {
     ASSERT(offset < 4);
-    return *reg8(offset + (index << 2));
+
+    offset += (index << 2);
+    return (offset < GENERIC_CONFIG_SIZE) ? *reg8(offset) : 0;
 }
 
 
 uint16_t PCIDevice::read_config_word(uint index, uint offset)
 {
     ASSERT(offset < 3);
-    return *reg16(offset + (index << 2));
+    return (uint16_t(read_config_byte(index, offset + 1)) << 8) | read_config_byte(index, offset);
 }
 
 
 uint32_t PCIDevice::read_config_dword(uint index)
 {
-    return _config_space[index];
+    return (uint32_t(read_config_word(index, 2)) << 16) | read_config_word(index, 0);
 }
 
 
@@ -1300,7 +1217,6 @@ void PCIDevice::reset()
     }
 
     _interrupt_line.reset();
-    _interrupt_line.detach_dest();
 
     if (_firmware) {
         _firmware->reload();

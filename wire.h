@@ -46,13 +46,13 @@ public:
 
     virtual ~Wire()
     {
-        detach_dest();
+        detach_dest(false);
     }
 
     void set_dest(VMPart& part, void* opaque, void_callback_t raised, void_callback_t droped,
                   void_callback_t detach)
     {
-        detach_dest();
+        detach_dest(true);
 
         Lock lock(_mutex);
         _dest = &part;
@@ -60,11 +60,19 @@ public:
         _raised_cb = raised;
         _droped_cb = droped;
         _detach_cb = detach;
+
+        if (output()) {
+            _raised_cb(_opaque);
+        }
     }
 
-    void detach_dest()
+    void detach_dest(bool may_drop)
     {
         Lock lock(_mutex);
+
+        if (may_drop && output()) {
+            _droped_cb(_opaque);
+        }
 
         if (_detach_cb) {
             _detach_cb(_opaque);

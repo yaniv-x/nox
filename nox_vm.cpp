@@ -108,7 +108,94 @@ public:
 
     uint8_t* get_ram_ptr() { return memory_bus->get_physical_ram_ptr(_ram);}
 
-private:
+    enum {
+        INTERRUPT_CONFIG_BASE = 0x40,
+
+        LINK = 0,
+        IRQ,
+        STATE,
+        DISA,
+
+        INTERRUPT_CONFIG_ERROR_MASK = 0x01,
+        INTERRUPT_CONFIG_ENABLE_MASK = 0x02,
+    };
+
+protected:
+    virtual uint8_t read_config_byte(uint index, uint offset)
+    {
+        if (index != INTERRUPT_CONFIG_BASE / 4) {
+            return PCIDevice::read_config_byte(index, offset);
+        }
+
+        ASSERT(offset < 4);
+
+        return ((uint8_t*)&_config_space)[offset];
+    }
+
+    virtual void write_config_byte(uint index, uint offset, uint8_t val)
+    {
+        if (index != INTERRUPT_CONFIG_BASE / 4) {
+            PCIDevice::write_config_byte(index, offset, val);
+            return;
+        }
+
+        uint32_t current = _config_space;
+        uint8_t* regs = (uint8_t*)&current;
+
+        switch (offset) {
+        case LINK: {
+            if (val >= NOX_PCI_NUM_INT_LINKS) {
+                regs[STATE] |= INTERRUPT_CONFIG_ERROR_MASK;
+                break;
+            }
+
+            regs[LINK] = val;
+            regs[STATE] &= ~(INTERRUPT_CONFIG_ERROR_MASK | INTERRUPT_CONFIG_ENABLE_MASK);
+
+            PCIBus* bus = (PCIBus*)get_container();
+            uint8_t irq;
+            bool enabled;
+
+            bus->get_link_state(val, irq, enabled);
+
+            if (enabled) {
+                regs[STATE] |= INTERRUPT_CONFIG_ENABLE_MASK;
+            }
+
+            regs[IRQ] = irq;
+            break;
+        }
+        case IRQ: {
+            PCIBus* bus = (PCIBus*)get_container();
+
+            if (!bus->set_link_irq(regs[LINK], val)) {
+                regs[STATE] |= INTERRUPT_CONFIG_ERROR_MASK;
+                break;
+            }
+
+            regs[IRQ] = val;
+            regs[STATE] &= ~INTERRUPT_CONFIG_ERROR_MASK;
+            regs[STATE] |= INTERRUPT_CONFIG_ENABLE_MASK;
+            break;
+        }
+        case DISA: {
+            if (val != 0) {
+                W_MESSAGE("DISA: ignoring 0x%x", val);
+                break;
+            }
+
+            PCIBus* bus = (PCIBus*)get_container();
+            bus->disable_link(regs[LINK]);
+            regs[STATE] &= ~(INTERRUPT_CONFIG_ERROR_MASK | INTERRUPT_CONFIG_ENABLE_MASK);
+            break;
+        }
+        default:
+            PANIC("invalid offset");
+        }
+
+        _config_space = current;
+    }
+
     uint8_t io_read_byte(uint16_t port)
     {
         return get_nox().platform_port_read_byte(port - get_region_address(0));
@@ -129,9 +216,17 @@ private:
         get_nox().platform_port_write_dword(port - get_region_address(0), val);
     }
 
+    virtual void reset()
+    {
+        PCIDevice::reset();
+        _config_space = 0;
+    }
+
 private:
     PhysicalRam* _ram;
+    uint32_t _config_space;
 };
+
 
 
 class ISABridge : public PCIDevice {
@@ -648,8 +743,9 @@ static void replace_none_printable(char* str)
 void NoxVM::do_platform_command(uint8_t val)
 {
     switch (val) {
-    case PALTFORM_CMD_SET_PCI_IRQ: {
+    case PLATFORM_CMD_SET_PCI_IRQ: {
         PCmdSetIRQ* args = (PCmdSetIRQ*)_pci_host->get_ram_ptr();
+        W_MESSAGE("PLATFORM_CMD_SET_PCI_IRQ is obsolete");
         args->ret_val = pci_bus->set_irq(args->bus, args->device, args->pin, args->irq);
         break;
     }
