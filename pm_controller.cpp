@@ -88,7 +88,6 @@ PMController::PMController(NoxVM& vm)
                   (io_write_word_proc_t)&PMController::io_write_word,
                   (io_read_dword_proc_t)&PMController::io_read_dword);
 
-    set_irq_mask(1 << PM_IRQ_LINE);
     pci_bus->add_device(*this);
 }
 

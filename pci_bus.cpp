@@ -29,6 +29,8 @@
 #include "io_bus.h"
 #include "pci_device.h"
 #include "pci.h"
+#include "nox.h"
+#include "pic.h"
 
 PCIBus* pci_bus = NULL;
 
@@ -46,12 +48,140 @@ enum {
     ADDRESS_BUS_BITS = 8,
     ADDRESS_ENABLED_MASK = (1 << 31),
     ADDRESS_MASK = ~((1 << 2) - 1),
+};
 
+
+class InterruptLink: public VMPart {
+public:
+    typedef std::list<Wire* > WireList;
+
+    InterruptLink(PCIBus& bus, uint8_t default_irq)
+        : VMPart("interrupt-link", bus)
+        , _default_irq (default_irq)
+        , _irq (default_irq)
+        , _enabled (false)
+    {
+    }
+
+    void disable()
+    {
+        Lock lock(_mutex);
+
+        if (!_enabled) {
+            return;
+        }
+
+        WireList::iterator iter = _input_wires.begin();
+
+        for (; iter != _input_wires.end(); iter++) {
+            Wire* wire = *iter;
+            wire->detach_dest(true);
+        }
+
+        _enabled = false;
+    }
+
+    void attach(Wire& wire)
+    {
+        Lock lock(_mutex);
+
+        _input_wires.push_back(&wire);
+
+        if (!_enabled) {
+            return;
+        }
+
+        irq_wire(wire, _irq);
+    }
+
+    bool set_irq(uint8_t irq)
+    {
+        Lock lock(_mutex);
+
+        if (!((1 << irq) & NOX_PCI_IRQ_EXCLUSIVE_MASK)) {
+            return false;
+        }
+
+        if (_enabled && (irq == _irq)) {
+            return true;
+        }
+
+        _irq = irq;
+
+        WireList::iterator iter = _input_wires.begin();
+
+        for (; iter != _input_wires.end(); iter++) {
+            Wire* wire = *iter;
+            irq_wire(*wire, _irq);
+        }
+
+        _enabled = true;
+
+        return true;
+    }
+
+    bool is_enabled()
+    {
+        return _enabled;
+    }
+
+    uint8_t get_irq()
+    {
+        return _irq;
+    }
+
+    void assign_default_irq()
+    {
+    }
+
+protected:
+    virtual void reset()
+    {
+        WireList::iterator iter = _input_wires.begin();
+
+        for (; iter != _input_wires.end(); iter++) {
+            Wire* wire = *iter;
+            wire->detach_dest(false);
+        }
+
+        _enabled =false;
+        _irq = _default_irq;
+    }
+
+    virtual bool start()
+    {
+        return true;
+    }
+
+    virtual bool stop()
+    {
+        return true;
+    }
+
+    virtual void power()
+    {
+    }
+
+    virtual void save(OutStream& stream)
+    {
+    }
+
+    virtual void load(InStream& stream)
+    {
+    }
+
+private:
+    Mutex _mutex;
+    uint8_t _default_irq;
+    uint8_t _irq;
+    bool _enabled;
+    WireList _input_wires;
 };
 
 
 PCIBus::PCIBus(NoxVM& nox)
     : VMPart ("pci", nox)
+    , _interrupt_links (NOX_PCI_NUM_INT_LINKS)
 {
     ASSERT(pci_bus == NULL);
 
@@ -72,19 +202,32 @@ PCIBus::PCIBus(NoxVM& nox)
 
     memset(_devices, 0, sizeof(_devices));
 
+    uint32_t irq_mask = NOX_PCI_IRQ_EXCLUSIVE_MASK & ~(1 << PM_IRQ_LINE);
+    uint32_t default_irq = 0;
+
+    for (uint i = 0; i < NOX_PCI_NUM_INT_LINKS; i++) {
+
+        do {
+            default_irq = (default_irq + 1) % 32;
+        } while (!((1 << default_irq) & irq_mask));
+
+        _interrupt_links[i] = new InterruptLink(*this, default_irq);
+    }
+
     pci_bus = this;
 }
 
 
 PCIBus::~PCIBus()
 {
-    delete _devices[0];
-    delete _devices[1];
-
     for (uint i = 1; i < PCI_MAX_DEVICES; i++) {
         if (_devices[i]) {
             D_MESSAGE("leak");
         }
+    }
+
+    for (uint i = 0; i < NOX_PCI_NUM_INT_LINKS; i++) {
+        delete _interrupt_links[i];
     }
 
     pci_bus = NULL;
@@ -217,8 +360,42 @@ void PCIBus::io_write_config_dword(uint16_t port, uint32_t val)
 static inline bool is_reserved_slot(uint id)
 {
     // reserving some slots
-    // 0 is the host-bridge, 1 is eisa-bridge, 2 is pm_controller others are reservd for future usus
-    return id == 3 || id > 29;
+    return id == 2 || id == 3 || id > 29;
+}
+
+
+InterruptLink* PCIBus::pci_pin_to_link(uint slot, uint pin)
+{
+    uint link_id = (slot + pin) % NOX_PCI_NUM_INT_LINKS;
+    return _interrupt_links[link_id];
+}
+
+
+void PCIBus::attach_device(uint slot, PCIDevice& device)
+{
+    if (slot >= NOX_PCI_NUM_SLOTS) {
+        E_MESSAGE("no slot for %s", device.get_name().c_str());
+        return;
+    }
+
+    _devices[slot] = &device;
+
+    uint8_t interrupt_pin = *device.reg8(PCI_CONF_INTERRUPT_PIN);
+
+    if (!interrupt_pin) {
+        return;
+    }
+
+    InterruptLink* link;
+
+    if (*device.reg16(PCI_CONF_VENDOR) == NOX_PCI_VENDOR_ID &&
+        *device.reg16(PCI_CONF_DEVICE) == NOX_PCI_DEV_ID_PM_CONTROLLER) {
+        ASSERT(slot == PM_CONTROLLER_SLOT);
+        irq_wire(device.get_wire(), PM_IRQ_LINE);
+    } else {
+        link = pci_pin_to_link(slot, interrupt_pin);
+        link->attach(device.get_wire());
+    }
 }
 
 
@@ -230,33 +407,26 @@ void PCIBus::add_device(PCIDevice& device)
 
     if (index < PCI_MAX_DEVICES) {
         if (is_reserved_slot(index) || _devices[index]) {
-            THROW("can't allocate hardwired slot");
+            THROW("can't satisfy slot requirement for %s", device.get_name().c_str());
+        }
+    } else if ((index = device.get_preferd_id()) >= PCI_MAX_DEVICES || is_reserved_slot(index) ||
+                                                                       _devices[index]) {
+        if (index < PCI_MAX_DEVICES) {
+            I_MESSAGE("can't allocate preferd slotfor %s", device.get_name().c_str());
         }
 
-        _devices[index] = &device;
-
-        return;
-    }
-
-    index = device.get_preferd_id();
-
-    if (index < PCI_MAX_DEVICES && !is_reserved_slot(index) && !_devices[index]) {
-        _devices[index] = &device;
-        return;
-    }
-
-    for (index = 0; index < PCI_MAX_DEVICES; index++) {
-        if (!_devices[index] && !is_reserved_slot(index)) {
-            if (device.get_preferd_id() < PCI_MAX_DEVICES) {
-                I_MESSAGE("can't allocate preferd slot");
+        for (index = 0; index < PCI_MAX_DEVICES; index++) {
+            if (!_devices[index] && !is_reserved_slot(index)) {
+                break;
             }
+        }
 
-            _devices[index] = &device;
-            return;
+        if (index == PCI_MAX_DEVICES) {
+            THROW("out if pci slots");
         }
     }
 
-    THROW("out if pci slots");
+    attach_device(index, device);
 }
 
 
@@ -275,11 +445,49 @@ void PCIBus::remove_device(PCIDevice& device)
 
 bool PCIBus::set_irq(uint bus, uint device, uint pin, uint irq)
 {
-    if (bus != 0 || !_devices[device]) {
+    if (bus != 0 || device >= NOX_PCI_NUM_SLOTS) {
         return false;
     }
 
-    return _devices[device]->set_irq(pin, irq);
+    if (device == PM_CONTROLLER_SLOT && pin == 0x0a) {
+        return (irq == PM_IRQ_LINE) ? true : false;
+    }
+
+    pin -= 0x0a;
+
+    if (pin > 3) {
+        return false;
+    }
+
+    InterruptLink* link = pci_pin_to_link(device, pin);
+
+    return link->set_irq(irq);
+
+}
+
+
+void PCIBus::get_link_state(uint id, uint8_t& irq, bool& enabled)
+{
+    ASSERT(id < NOX_PCI_NUM_INT_LINKS);
+
+    irq = _interrupt_links[id]->get_irq();
+    enabled = _interrupt_links[id]->is_enabled();
+}
+
+
+bool PCIBus::set_link_irq(uint id, uint8_t irq)
+{
+    ASSERT(id < NOX_PCI_NUM_INT_LINKS);
+
+    return _interrupt_links[id]->set_irq(irq);
+}
+
+
+void PCIBus::disable_link(uint id)
+{
+    ASSERT(id < NOX_PCI_NUM_INT_LINKS);
+
+    _interrupt_links[id]->disable();
 }
 
 

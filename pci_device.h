@@ -64,8 +64,6 @@ public:
     uint get_preferd_id() { return ~0;}
 
     void set_interrupt_level(uint level);
-    bool set_irq(uint pin, uint irq);
-    void set_irq_mask(uint16_t mask);
 
     class Region;
 
@@ -80,16 +78,17 @@ protected:
     virtual void on_io_enabled() {}
     virtual void on_io_disabled() {}
 
+    virtual uint8_t read_config_byte(uint index, uint offset);
+    virtual uint16_t read_config_word(uint index, uint offset);
+    virtual uint32_t read_config_dword(uint index);
+
+    virtual void write_config_byte(uint index, uint offset, uint8_t val);
+    virtual void write_config_word(uint index, uint offset, uint16_t val);
+    virtual void write_config_dword(uint index, uint32_t val);
+
 private:
     void load_firmware(uint16_t vendor, uint16_t device, uint8_t revision);
 
-    uint8_t read_config_byte(uint index, uint offset);
-    uint16_t read_config_word(uint index, uint offset);
-    uint32_t read_config_dword(uint index);
-
-    void write_config_byte(uint index, uint offset, uint8_t val);
-    void write_config_word(uint index, uint offset, uint16_t val);
-    void write_config_dword(uint index, uint32_t val);
     void write_bar(uint reg_index, uint32_t val);
 
     uint32_t get_rom_size();
@@ -114,17 +113,17 @@ private:
     Wire& get_wire() { return _interrupt_line;}
 
     enum {
-        CONFIG_SPACE_SIZE = 64,
+        GENERIC_CONFIG_SIZE = 0x40,
+        GENERIC_CONFIG_WORDS = GENERIC_CONFIG_SIZE / 4,
         NUM_BARS = 6,
     };
 
 private:
     Mutex _mutex;
-    uint32_t _config_space[CONFIG_SPACE_SIZE];
     Region* _regions[NUM_BARS];
     Wire _interrupt_line;
     PCIFirmware* _firmware;
-    uint16_t _irq_mask;
+    uint32_t _config_space[GENERIC_CONFIG_WORDS];
 
     friend class PCIBus;
 };
