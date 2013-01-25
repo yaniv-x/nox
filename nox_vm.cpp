@@ -70,7 +70,7 @@ enum {
     MID_RAM_MAX_ADDRESS = 0xc0000000, // is hardcoded in bochs bios, is dynamic in case of
                                       // nox bios
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
-
+    HIGH_BIOS_SIZE = MB,
     BIOS_FOOTER_SIZE = 16,
 };
 
@@ -97,6 +97,15 @@ public:
         add_mem_region(1, _ram, false);
 
         bus.add_device(*this);
+
+        ASSERT(NOX_HOST_BRIDGE_BIOS_OFFSET == (CONFIG_BASE_INDEX + CONFIG_WORD_BIOS) * 4);
+        ASSERT(NOX_HOST_BRIDGE_STEERING_OFFSET == (CONFIG_BASE_INDEX + CONFIG_WORD_STEERING) * 4);
+        ASSERT(NOX_STEERING_LINK == LINK);
+        ASSERT(NOX_STEERING_IRQ == IRQ);
+        ASSERT(NOX_STEERING_STATE == STATE);
+        ASSERT(NOX_STEERING_DISABLE == DISABLE);
+        ASSERT(NOX_STEERING_ERROR_MASK == STEERING_ERROR_MASK);
+        ASSERT(NOX_STEERING_ENABLE_MASK == STEERING_ENABLE_MASK);
     }
 
     ~PCIHost()
@@ -109,48 +118,53 @@ public:
     uint8_t* get_ram_ptr() { return memory_bus->get_physical_ram_ptr(_ram);}
 
     enum {
-        INTERRUPT_CONFIG_BASE = 0x40,
+        CONFIG_BASE_OFFSET = PCIDevice::CONFIG_SIZE,
+        CONFIG_BASE_INDEX = CONFIG_BASE_OFFSET / 4,
+
+        CONFIG_WORD_STEERING = 0,
+        CONFIG_WORD_BIOS,
+        NUM_CONFIG_WORDS,
 
         LINK = 0,
         IRQ,
         STATE,
-        DISA,
+        DISABLE,
 
-        INTERRUPT_CONFIG_ERROR_MASK = 0x01,
-        INTERRUPT_CONFIG_ENABLE_MASK = 0x02,
+        STEERING_ERROR_MASK = 0x01,
+        STEERING_ENABLE_MASK = 0x02,
     };
 
 protected:
     virtual uint8_t read_config_byte(uint index, uint offset)
     {
-        if (index != INTERRUPT_CONFIG_BASE / 4) {
+        if (index != CONFIG_BASE_INDEX + CONFIG_WORD_STEERING) {
             return PCIDevice::read_config_byte(index, offset);
         }
 
         ASSERT(offset < 4);
 
-        return ((uint8_t*)&_config_space)[offset];
+        return ((uint8_t*)&_conf_regs[CONFIG_WORD_STEERING])[offset];
     }
 
     virtual void write_config_byte(uint index, uint offset, uint8_t val)
     {
-        if (index != INTERRUPT_CONFIG_BASE / 4) {
+        if (index != CONFIG_BASE_INDEX + CONFIG_WORD_STEERING) {
             PCIDevice::write_config_byte(index, offset, val);
             return;
         }
 
-        uint32_t current = _config_space;
+        uint32_t current = _conf_regs[CONFIG_WORD_STEERING];
         uint8_t* regs = (uint8_t*)&current;
 
         switch (offset) {
         case LINK: {
             if (val >= NOX_PCI_NUM_INT_LINKS) {
-                regs[STATE] |= INTERRUPT_CONFIG_ERROR_MASK;
+                regs[STATE] |= STEERING_ERROR_MASK;
                 break;
             }
 
             regs[LINK] = val;
-            regs[STATE] &= ~(INTERRUPT_CONFIG_ERROR_MASK | INTERRUPT_CONFIG_ENABLE_MASK);
+            regs[STATE] &= ~(STEERING_ERROR_MASK | STEERING_ENABLE_MASK);
 
             PCIBus* bus = (PCIBus*)get_container();
             uint8_t irq;
@@ -159,7 +173,7 @@ protected:
             bus->get_link_state(val, irq, enabled);
 
             if (enabled) {
-                regs[STATE] |= INTERRUPT_CONFIG_ENABLE_MASK;
+                regs[STATE] |= STEERING_ENABLE_MASK;
             }
 
             regs[IRQ] = irq;
@@ -169,31 +183,50 @@ protected:
             PCIBus* bus = (PCIBus*)get_container();
 
             if (!bus->set_link_irq(regs[LINK], val)) {
-                regs[STATE] |= INTERRUPT_CONFIG_ERROR_MASK;
+                regs[STATE] |= STEERING_ERROR_MASK;
                 break;
             }
 
             regs[IRQ] = val;
-            regs[STATE] &= ~INTERRUPT_CONFIG_ERROR_MASK;
-            regs[STATE] |= INTERRUPT_CONFIG_ENABLE_MASK;
+            regs[STATE] &= ~STEERING_ERROR_MASK;
+            regs[STATE] |= STEERING_ENABLE_MASK;
             break;
         }
-        case DISA: {
+        case DISABLE: {
             if (val != 0) {
-                W_MESSAGE("DISA: ignoring 0x%x", val);
+                W_MESSAGE("DISABLE: ignoring 0x%x", val);
                 break;
             }
 
             PCIBus* bus = (PCIBus*)get_container();
             bus->disable_link(regs[LINK]);
-            regs[STATE] &= ~(INTERRUPT_CONFIG_ERROR_MASK | INTERRUPT_CONFIG_ENABLE_MASK);
+            regs[STATE] &= ~(STEERING_ERROR_MASK | STEERING_ENABLE_MASK);
             break;
         }
         default:
             PANIC("invalid offset");
         }
 
-        _config_space = current;
+        _conf_regs[CONFIG_WORD_STEERING] = current;
+    }
+
+    virtual void write_config_dword(uint index, uint32_t val)
+    {
+        if (index != CONFIG_BASE_INDEX + CONFIG_WORD_BIOS) {
+            PCIDevice::write_config_dword(index, val);
+            return;
+        }
+
+        _conf_regs[CONFIG_WORD_BIOS] = val;
+    }
+
+    virtual uint32_t read_config_dword(uint index)
+    {
+        if (index != CONFIG_BASE_INDEX + CONFIG_WORD_BIOS) {
+            return PCIDevice::read_config_dword(index);
+        }
+
+        return _conf_regs[CONFIG_WORD_BIOS];
     }
 
     uint8_t io_read_byte(uint16_t port)
@@ -219,12 +252,12 @@ protected:
     virtual void reset()
     {
         PCIDevice::reset();
-        _config_space = 0;
+        memset(_conf_regs, 0, sizeof(_conf_regs));
     }
 
 private:
     PhysicalRam* _ram;
-    uint32_t _config_space;
+    uint32_t _conf_regs[NUM_CONFIG_WORDS];
 };
 
 
@@ -871,6 +904,8 @@ void NoxVM::init_ram()
     uint64_t uma_ram_size = MB - MID_RAM_START;
     uint64_t mid_range_size = MIN(ram_size, MID_RAM_MAX_ADDRESS - MB) + uma_ram_size;
 
+    ASSERT(MID_RAM_MAX_ADDRESS < IO_APIC_ADDRESS);
+
     _mid_ram = _mem_bus->alloc_physical_ram(*this, mid_range_size >> GUEST_PAGE_SHIFT, "mid ram");
     ram_size -= mid_range_size - uma_ram_size;
 
@@ -879,8 +914,12 @@ void NoxVM::init_ram()
                                                  "high ram");
     }
 
-    _high_bios = _mem_bus->alloc_physical_ram(*this, MB >> GUEST_PAGE_SHIFT, "high bios");
-    _free_high_bios_pages = MB >> GUEST_PAGE_SHIFT;
+    _high_bios = _mem_bus->alloc_physical_ram(*this,
+                                              HIGH_BIOS_SIZE >> GUEST_PAGE_SHIFT,
+                                              "high bios");
+    _free_high_bios_pages = HIGH_BIOS_SIZE >> GUEST_PAGE_SHIFT;
+
+    ASSERT(4ULL * GB - HIGH_BIOS_SIZE  > LOCAL_APIC_ADDRESS);
 
     alloc_high_bios_pages(1);
 }

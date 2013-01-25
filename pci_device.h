@@ -86,6 +86,10 @@ protected:
     virtual void write_config_word(uint index, uint offset, uint16_t val);
     virtual void write_config_dword(uint index, uint32_t val);
 
+    enum {
+        CONFIG_SIZE = 0x40,
+    };
+
 private:
     void load_firmware(uint16_t vendor, uint16_t device, uint8_t revision);
 
@@ -113,8 +117,7 @@ private:
     Wire& get_wire() { return _interrupt_line;}
 
     enum {
-        GENERIC_CONFIG_SIZE = 0x40,
-        GENERIC_CONFIG_WORDS = GENERIC_CONFIG_SIZE / 4,
+        GENERIC_CONFIG_WORDS = CONFIG_SIZE / 4,
         NUM_BARS = 6,
     };
 
