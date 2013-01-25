@@ -41,11 +41,26 @@
 #define NOX_PCI_DEV_ID_PM_CONTROLLER 0x0010
 #define NOX_PCI_DEV_PM_CONTROLLER_REV 1
 #define NOX_ADDRESS_LINES 52
-#define NOX_PCI_IRQ_LINES_MASK 0xdef8 // exclude: PIT, keyboard, PIC slave, RTC, and DMA
-#define NOX_PCI_IRQ_EXCLUSIVE_MASK (NOX_PCI_IRQ_LINES_MASK & ~(0xd000)) // exclude: mouse, and
-                                                                            //          lagacy ide
-#define NOX_PCI_NUM_SLOTS 16
-#define NOX_PCI_NUM_INT_LINKS 4
+
+// DSDT.asl dependency block
+    #define NOX_PCI_IRQ_LINES_MASK 0xdef8 // exclude: PIT, keyboard, PIC slave, RTC, and DMA
+    #define NOX_PCI_IRQ_EXCLUSIVE_MASK (NOX_PCI_IRQ_LINES_MASK & ~(0xd000)) // exclude: mouse,
+                                                                                // and lagacy ide
+    #define NOX_PCI_NUM_SLOTS 16
+    #define NOX_PCI_NUM_INT_LINKS 4
+    #define NOX_PCI_DEV_TO_LINK(devic, pin) \
+        (((devic) + (pin)) % NOX_PCI_NUM_INT_LINKS)
+
+    #define NOX_HOST_BRIDGE_STEERING_OFFSET 0x40
+    #define NOX_STEERING_LINK 0
+    #define NOX_STEERING_IRQ 1
+    #define NOX_STEERING_STATE 2
+    #define NOX_STEERING_DISABLE 3
+    #define NOX_STEERING_ERROR_MASK (1 << 0)
+    #define NOX_STEERING_ENABLE_MASK (1 << 1)
+
+    #define NOX_HOST_BRIDGE_BIOS_OFFSET 0x44
+// DSDT.asl dependency block end
 
 #define IO_APIC_ADDRESS 0xfec00000
 #define LOCAL_APIC_ADDRESS 0xfee00000

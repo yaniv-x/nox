@@ -366,7 +366,7 @@ static inline bool is_reserved_slot(uint id)
 
 InterruptLink* PCIBus::pci_pin_to_link(uint slot, uint pin)
 {
-    uint link_id = (slot + pin) % NOX_PCI_NUM_INT_LINKS;
+    uint link_id = NOX_PCI_DEV_TO_LINK(slot, pin);
     return _interrupt_links[link_id];
 }
 

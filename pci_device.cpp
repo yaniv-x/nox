@@ -765,7 +765,7 @@ uint8_t PCIDevice::read_config_byte(uint index, uint offset)
     ASSERT(offset < 4);
 
     offset += (index << 2);
-    return (offset < GENERIC_CONFIG_SIZE) ? *reg8(offset) : 0;
+    return (offset < CONFIG_SIZE) ? *reg8(offset) : 0;
 }
 
 
