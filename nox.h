@@ -60,6 +60,10 @@
     #define NOX_STEERING_ENABLE_MASK (1 << 1)
 
     #define NOX_HOST_BRIDGE_BIOS_OFFSET 0x44
+
+    #define NOX_PM1_SLP_TYPE_WORKING 0
+    #define NOX_PM1_SLP_TYPE_SLEEP 1
+    #define NOX_PM1_SLP_TYPE_SOFT_OFF 5
 // DSDT.asl dependency block end
 
 #define IO_APIC_ADDRESS 0xfec00000
