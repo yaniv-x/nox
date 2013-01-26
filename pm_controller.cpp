@@ -175,14 +175,13 @@ uint16_t PMController::io_read_word(uint16_t port)
 
 void PMController::do_sleep(uint type)
 {
-    // type valuse are from ASPC \Sx. need to be defined in nox.h
     switch (type) {
-    case 0: //working
+    case NOX_PM1_SLP_TYPE_WORKING:
         D_MESSAGE("nop");
         break;
-    case 1: //s1 sleep
+    case NOX_PM1_SLP_TYPE_SLEEP:
         throw SleepException();
-    case 2: //s5 soft off
+    case NOX_PM1_SLP_TYPE_SOFT_OFF:
         throw SoftOffException();
     default:
         D_MESSAGE("invalid sleep type 0x%x", type);
