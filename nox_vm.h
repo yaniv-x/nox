@@ -109,6 +109,8 @@ private:
     void set_down();
     void set_debug();
     void set_freeze_state();
+    void freeze_vm() { VMPart::freeze_all(); }
+    void unfreeze_vm() { VMPart::unfreeze_all(); }
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
@@ -170,6 +172,7 @@ private:
     bool _cdrom;
     std::string _cdrom_file_name;
     bool _boot_from_cdrom;
+    bool _sleep_on_start;
 
     bool _nmi_mask;
     uint8_t _misc_port;

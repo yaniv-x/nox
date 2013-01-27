@@ -47,6 +47,9 @@ public:
         READY,
         STARTING,
         RUNNING,
+        ABOUT_TO_SLEEP,
+        BACK_TO_SLEEP,
+        SLEEPING,
         FREEZING,
         FREEZED,
         DEBUGGING,
@@ -64,6 +67,8 @@ protected:
     virtual void reset() = 0;
     virtual bool start() = 0;
     virtual bool stop() = 0;
+    virtual void freeze() {}
+    virtual void unfreeze() {}
     virtual void power() = 0;
     virtual void save(OutStream& stream) = 0;
     virtual void load(InStream& stream) = 0;
@@ -83,6 +88,8 @@ private:
     bool start_childrens();
     bool start_all();
     void reset_childrens();
+    void freeze_all();
+    void unfreeze_all();
     void reset_all();
     void down_all();
     void debug_all();
