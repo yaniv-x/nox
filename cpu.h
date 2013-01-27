@@ -101,6 +101,8 @@ public:
     void enter_debug_mode(void_callback_t cb, void* opaque);
     void exit_debug_mode();
     void trigger_debug_trap();
+    bool pending_sleep_request();
+    void clear_sleep_request();
 
     void __apic_deliver_interrupt_logical(uint vector, uint dest, bool level);
     void __apic_deliver_interrupt_all(uint vector, bool level);

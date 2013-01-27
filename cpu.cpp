@@ -148,6 +148,7 @@ enum {
 enum {
     EXECUTION_BREAK_ADMIN_BIT = 1,
     EXECUTION_BREAK_INIT_BIT,
+    EXECUTION_BREAK_SLEEP_BIT,
 };
 
 
@@ -561,6 +562,8 @@ void CPU::__reset()
 
     _trap = NULL;
     _debug_trap = false;
+    __sync_and_and_fetch(&_execution_break,
+                         ~((1 << EXECUTION_BREAK_SLEEP_BIT) | (1 << EXECUTION_BREAK_INIT_BIT)));
 }
 
 
@@ -1496,9 +1499,12 @@ void CPU::run_loop()
     for (;;) {
         if (_execution_break) {
             if (_execution_break & (1 << EXECUTION_BREAK_INIT_BIT)) {
-                __sync_and_and_fetch(&_execution_break, ~(1 << EXECUTION_BREAK_INIT_BIT));
                 __reset();
                 continue;
+            }
+
+            if (_execution_break & (1 << EXECUTION_BREAK_SLEEP_BIT)) {
+                throw SleepException();
             }
             break;
         }
@@ -1628,7 +1634,8 @@ void CPU::run()
             } catch (SoftOffException& e) {
                 get_nox().vm_power_off();
             } catch (SleepException& e) {
-                get_nox().vm_sleep();
+                __sync_or_and_fetch(&_execution_break, (1 << EXECUTION_BREAK_SLEEP_BIT));
+                get_nox().vm_sleep(*this);
             }
             break;
         case TERMINATE:
@@ -1665,6 +1672,19 @@ bool CPU::start()
     }
 
     return false;
+}
+
+
+bool CPU::pending_sleep_request()
+{
+    return _execution_break & (1 << EXECUTION_BREAK_SLEEP_BIT);
+}
+
+
+void CPU::clear_sleep_request()
+{
+    ASSERT(get_state() == VMPart::SLEEPING);
+    __sync_and_and_fetch(&_execution_break, ~(1 << EXECUTION_BREAK_SLEEP_BIT));
 }
 
 
