@@ -143,15 +143,15 @@ void VMPart::debug_all()
 }
 
 
-void VMPart::set_stopped_all()
+void VMPart::set_state_all(State state)
 {
     VMParts::iterator iter = _parts.begin();
 
     for (; iter != _parts.end(); iter++) {
-        (*iter)->set_stopped_all();
+        (*iter)->set_state_all(state);
     }
 
-    _state = STOPPED;
+    _state = state;
 }
 
 
@@ -170,8 +170,8 @@ void VMPart::transition_done()
     case STARTING:
         _state = RUNNING;
         break;
-    case STOPPING:
-        _state = STOPPED;
+    case FREEZING:
+        _state = FREEZED;
         break;
     default:
         PANIC("unexpected state");
@@ -186,7 +186,7 @@ bool VMPart::start_all()
     switch (_state) {
     case RUNNING:
         break;
-    case STOPPED:
+    case FREEZED:
     case READY:
         _state = STARTING;
         if (start()) {
@@ -226,16 +226,16 @@ bool VMPart::stop_all()
 
     switch (_state) {
     case RUNNING:
-        _state = STOPPING;
+        _state = FREEZING;
 
         if (!stop()) {
             break;
         }
 
-        _state = STOPPED;
-    case STOPPED:
+        _state = FREEZED;
+    case FREEZED:
         return true;
-    case STOPPING:
+    case FREEZING:
         break;
     default:
         D_MESSAGE("unexpected %u", get_state());

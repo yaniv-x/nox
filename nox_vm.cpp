@@ -555,7 +555,7 @@ void NoxVM::reset_bios_stuff()
 
 void NoxVM::reset()
 {
-    ASSERT(_state == INIT_DONE || _state == READY || _state == STOPPED);
+    ASSERT(_state == INIT_DONE || _state == READY || _state == FREEZED);
 
     _state = RESETING;
 
@@ -613,7 +613,7 @@ void NoxVM::suspend_command(AdminReplyContext* context)
 
     CommandReply* r = new CommandReply(context);
 
-    vm_stop((compleation_routin_t)&CommandReply::reply, r);
+    vm_freeze((compleation_routin_t)&CommandReply::reply, r);
 }
 
 
@@ -1114,13 +1114,13 @@ bool NoxVM::start()
 
 bool NoxVM::stop()
 {
-    _state = STOPPING;
+    _state = FREEZING;
 
     if (!stop_childrens()) {
         return false;
     }
 
-    _state = STOPPED;
+    _state = FREEZED;
     return true;
 }
 
@@ -1176,7 +1176,7 @@ bool StartRequest::test(NoxVM& vm)
 {
     switch (vm.get_state()) {
     case VMPart::READY:
-    case VMPart::STOPPED:
+    case VMPart::FREEZED:
     case VMPart::RUNNING:
         return true;
     default:
@@ -1188,10 +1188,8 @@ bool StartRequest::start(NoxVM& vm)
 {
     switch (vm.get_state()) {
     case VMPart::READY:
-    case VMPart::STOPPED:
+    case VMPart::FREEZED:
         return vm.start();
-    case VMPart::SHUTING_DOWN:
-    case VMPart::DOWN:
     case VMPart::RUNNING:
         return true;
     default:
@@ -1220,9 +1218,9 @@ void NoxVM::vm_start(NoxVM::compleation_routin_t cb, void* opaque)
 }
 
 
-class StopRequest: public NoxVM::StateChangeRequest {
+class FreezeRequest: public NoxVM::StateChangeRequest {
 public:
-    StopRequest(NoxVM::compleation_routin_t cb, void* opaque);
+    FreezeRequest(NoxVM::compleation_routin_t cb, void* opaque);
 
     virtual bool test(NoxVM& vm);
     virtual bool start(NoxVM& vm);
@@ -1230,16 +1228,16 @@ public:
 };
 
 
-StopRequest::StopRequest(NoxVM::compleation_routin_t cb, void* opaque)
+FreezeRequest::FreezeRequest(NoxVM::compleation_routin_t cb, void* opaque)
     : NoxVM::StateChangeRequest(cb, opaque)
 {
 }
 
-bool StopRequest::test(NoxVM& vm)
+bool FreezeRequest::test(NoxVM& vm)
 {
     switch (vm.get_state()) {
     case VMPart::READY:
-    case VMPart::STOPPED:
+    case VMPart::FREEZED:
     case VMPart::SHUTING_DOWN:
     case VMPart::DOWN:
     case VMPart::RUNNING:
@@ -1249,11 +1247,11 @@ bool StopRequest::test(NoxVM& vm)
     }
 }
 
-bool StopRequest::start(NoxVM& vm)
+bool FreezeRequest::start(NoxVM& vm)
 {
     switch (vm.get_state()) {
     case VMPart::READY:
-    case VMPart::STOPPED:
+    case VMPart::FREEZED:
     case VMPart::SHUTING_DOWN:
     case VMPart::DOWN:
         return true;
@@ -1266,17 +1264,17 @@ bool StopRequest::start(NoxVM& vm)
 }
 
 
-bool StopRequest::cont(NoxVM& vm)
+bool FreezeRequest::cont(NoxVM& vm)
 {
     return vm.stop();
 }
 
 
-void NoxVM::vm_stop(NoxVM::compleation_routin_t cb, void* opaque)
+void NoxVM::vm_freeze(NoxVM::compleation_routin_t cb, void* opaque)
 {
     Lock lock(_vm_state_mutex);
 
-    _stat_change_req_list.push_back(new StopRequest(cb, opaque));
+    _stat_change_req_list.push_back(new FreezeRequest(cb, opaque));
 
     if (_stat_change_req_list.size() == 1) {
         AutoRef<StateChngeTask> task(new StateChngeTask(*this));
@@ -1295,7 +1293,7 @@ public:
     virtual bool test(NoxVM& vm)
     {
         switch (vm.get_state()) {
-        case VMPart::STOPPED:
+        case VMPart::FREEZED:
         case VMPart::DEBUGGING:
             return true;
         default:
@@ -1306,7 +1304,7 @@ public:
     virtual bool start(NoxVM& vm)
     {
         switch (vm.get_state()) {
-        case VMPart::STOPPED:
+        case VMPart::FREEZED:
             vm.set_debug();
             return true;
         case VMPart::DEBUGGING:
@@ -1335,7 +1333,7 @@ void NoxVM::vm_debug(NoxVM::compleation_routin_t cb, void* opaque)
 {
     Lock lock(_vm_state_mutex);
 
-    _stat_change_req_list.push_back(new StopRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new FreezeRequest(NULL, NULL));
     _stat_change_req_list.push_back(new DebugRequest(cb, opaque));
 
     if (_stat_change_req_list.size() == 2) {
@@ -1367,7 +1365,7 @@ public:
     {
         switch (vm.get_state()) {
         case VMPart::DEBUGGING:
-            vm.set_stopped();
+            vm.set_freeze_state();
             return true;
         case VMPart::RUNNING:
             return true;
@@ -1399,9 +1397,9 @@ void NoxVM::vm_debug_cont(NoxVM::compleation_routin_t cb, void* opaque)
 }
 
 
-void NoxVM::set_stopped()
+void NoxVM::set_freeze_state()
 {
-    set_stopped_all();
+    set_state_all(VMPart::FREEZED);
 }
 
 
@@ -1421,7 +1419,7 @@ public:
 bool DownRequest::test(NoxVM& vm)
 {
     switch (vm.get_state()) {
-    case VMPart::STOPPED:
+    case VMPart::FREEZED:
     case VMPart::DOWN:
         return true;
     default:
@@ -1440,7 +1438,7 @@ void NoxVM::vm_down(compleation_routin_t cb, void* opaque)
 {
     Lock lock(_vm_state_mutex);
 
-    _stat_change_req_list.push_back(new StopRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new FreezeRequest(NULL, NULL));
     _stat_change_req_list.push_back(new DownRequest(cb, opaque));
 
     if (_stat_change_req_list.size() == 2) {
@@ -1517,7 +1515,7 @@ bool ResetRequest::test(NoxVM& vm)
     switch (vm.get_state()) {
     case VMPart::INIT_DONE:
     case VMPart::READY:
-    case VMPart::STOPPED:
+    case VMPart::FREEZED:
         return true;
     default:
         return false;
@@ -1528,7 +1526,7 @@ bool ResetRequest::test(NoxVM& vm)
 void NoxVM::vm_restart(compleation_routin_t cb, void* opaque)
 {
     Lock lock(_vm_state_mutex);
-    _stat_change_req_list.push_back(new StopRequest(NULL, NULL));
+    _stat_change_req_list.push_back(new FreezeRequest(NULL, NULL));
     _stat_change_req_list.push_back(new ResetRequest());
     _stat_change_req_list.push_back(new StartRequest(cb, opaque));
 
@@ -1559,6 +1557,6 @@ void NoxVM::vm_power_off()
 void NoxVM::vm_sleep()
 {
     D_MESSAGE("todo: implemanet power state");
-    vm_stop(NULL, NULL);
+    vm_freeze(NULL, NULL);
 }
 

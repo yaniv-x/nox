@@ -77,7 +77,7 @@ public:
     void vm_power_off();
     void vm_sleep();
     void vm_start(compleation_routin_t cb, void* opaque);
-    void vm_stop(compleation_routin_t cb, void* opaque);
+    void vm_freeze(compleation_routin_t cb, void* opaque);
     void vm_restart(compleation_routin_t cb, void* opaque);
     void vm_down(compleation_routin_t cb, void* opaque);
     void vm_debug(NoxVM::compleation_routin_t cb, void* opaque);
@@ -108,7 +108,7 @@ private:
 #endif
     void set_down();
     void set_debug();
-    void set_stopped();
+    void set_freeze_state();
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);
@@ -180,7 +180,7 @@ private:
 
     std::list<StateChangeRequest*> _stat_change_req_list;
 
-    friend class StopRequest;
+    friend class FreezeRequest;
     friend class StartRequest;
     friend class ResetRequest;
     friend class DownRequest;
