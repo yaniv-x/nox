@@ -30,6 +30,7 @@
 #include "nox.h"
 #include "pci.h"
 #include "application.h"
+#include "admin_server.h"
 
 #define PM_TIMER_HZ 3579545
 
@@ -89,6 +90,32 @@ PMController::PMController(NoxVM& vm)
                   (io_read_dword_proc_t)&PMController::io_read_dword);
 
     pci_bus->add_device(*this);
+    register_admin_commands();
+}
+
+
+void PMController::register_admin_commands()
+{
+    AdminServer* admin = application->get_admin();
+
+    va_type_list_t output_args(2);
+
+    output_args[0] = VA_UINT32_T;
+    output_args[1] = VA_UTF8_T;
+
+    va_names_list_t output_names(2);
+
+    output_names[0] = "result";
+    output_names[1] = "error-string";
+
+
+    admin->register_command("power", "power button", "???",
+                            empty_va_type_list, empty_names_list, output_args, output_names,
+                            (admin_command_handler_t)&PMController::power_button, this);
+
+    admin->register_command("sleep", "sleep button", "???",
+                            empty_va_type_list, empty_names_list, output_args, output_names,
+                            (admin_command_handler_t)&PMController::sleep_button, this);
 }
 
 
@@ -129,6 +156,8 @@ bool PMController::start()
         update_timer();
         _timer->arm(next_flip_delta(), true);
     }
+
+    update_irq_level();
 
     return PCIDevice::start();
 }
@@ -289,6 +318,49 @@ void PMController::alarm()
 {
     Lock lock(_mutex);
     _state |= PM_STATUS_RTC;
-    update_irq_level();
+
+    if (get_state() == VMPart::RUNNING) {
+        update_irq_level();
+    } else {
+        ASSERT(get_state() == VMPart::SLEEPING);
+        _state |= PM_STATUS_WAKEUP;
+        get_nox().vm_start(NULL, NULL);
+    }
+}
+
+
+void PMController::button_press_common(AdminReplyContext* context, uint button)
+{
+    RLock state_lock(get_nox().get_state_lock());
+
+    Lock lock(_mutex);
+
+    switch (get_state()) {
+    case VMPart::RUNNING:
+        _state |= button;
+        update_irq_level();
+        break;
+    case VMPart::SLEEPING:
+        _state |= PM_STATUS_WAKEUP | button;
+        get_nox().vm_start(NULL, NULL);
+        break;
+    default:
+        context->command_reply(1, "failed");
+        return;
+    }
+
+    context->command_reply(0, "");
+}
+
+
+void PMController::power_button(AdminReplyContext* context)
+{
+    button_press_common(context, PM_STATUS_POWER_BUTTON);
+}
+
+
+void PMController::sleep_button(AdminReplyContext* context)
+{
+    button_press_common(context, PM_STATUS_SLEEP_BUTTON);
 }
 
