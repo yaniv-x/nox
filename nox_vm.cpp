@@ -363,6 +363,7 @@ NoxVM::NoxVM()
 #endif
     , _cdrom (false)
     , _boot_from_cdrom (false)
+    , _sleep_on_start (false)
 {
     add_io_region(_io_bus->register_region(*this, IO_PORT_A20, 1, this,
                                            (io_read_byte_proc_t)&NoxVM::a20_port_read,
@@ -570,6 +571,7 @@ void NoxVM::reset()
     _platform_write_pos = 0;
     _platform_read_pos = 0;
     _nmi_mask = true;
+    _sleep_on_start = false;
 
     _mem_bus->map_physical_ram(_low_ram, 0, false);
     _mem_bus->map_physical_ram(_mid_ram, MID_RAM_START >> GUEST_PAGE_SHIFT, false);
@@ -1114,13 +1116,13 @@ bool NoxVM::start()
 
 bool NoxVM::stop()
 {
-    _state = FREEZING;
+    _state = ABOUT_TO_SLEEP;
 
     if (!stop_childrens()) {
         return false;
     }
 
-    _state = FREEZED;
+    _state = SLEEPING;
     return true;
 }
 
@@ -1178,6 +1180,7 @@ bool StartRequest::test(NoxVM& vm)
     case VMPart::READY:
     case VMPart::FREEZED:
     case VMPart::RUNNING:
+    case VMPart::SLEEPING:
         return true;
     default:
         return false;
@@ -1187,8 +1190,14 @@ bool StartRequest::test(NoxVM& vm)
 bool StartRequest::start(NoxVM& vm)
 {
     switch (vm.get_state()) {
-    case VMPart::READY:
     case VMPart::FREEZED:
+        if (vm._sleep_on_start) {
+            vm._sleep_on_start = false;
+            vm.unfreeze_vm();
+            return true;
+        }
+    case VMPart::READY:
+    case VMPart::SLEEPING:
         return vm.start();
     case VMPart::RUNNING:
         return true;
@@ -1241,6 +1250,7 @@ bool FreezeRequest::test(NoxVM& vm)
     case VMPart::SHUTING_DOWN:
     case VMPart::DOWN:
     case VMPart::RUNNING:
+    case VMPart::SLEEPING:
         return true;
     default:
         return false;
@@ -1255,8 +1265,12 @@ bool FreezeRequest::start(NoxVM& vm)
     case VMPart::SHUTING_DOWN:
     case VMPart::DOWN:
         return true;
+    case VMPart::SLEEPING:
+        vm._sleep_on_start = true;
+        vm.freeze_vm();
+        return true;
     case VMPart::RUNNING:
-        return vm.stop();
+        return cont(vm);
     default:
         PANIC("unexpected state");
         return false;
@@ -1266,7 +1280,12 @@ bool FreezeRequest::start(NoxVM& vm)
 
 bool FreezeRequest::cont(NoxVM& vm)
 {
-    return vm.stop();
+    if (!vm.stop()) {
+        return false;
+    }
+
+    vm.freeze_vm();
+    return true;
 }
 
 
