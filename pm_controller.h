@@ -31,6 +31,7 @@
 
 class NoxVM;
 class Timer;
+class AdminReplyContext;
 
 class PMController : public PCIDevice {
 public:
@@ -55,6 +56,11 @@ private:
     void update_timer();
     void update_irq_level();
     void do_sleep(uint type);
+
+    void register_admin_commands();
+    void button_press_common(AdminReplyContext* context, uint button);
+    void power_button(AdminReplyContext* context);
+    void sleep_button(AdminReplyContext* context);
 
 private:
     NoxVM& _vm;
