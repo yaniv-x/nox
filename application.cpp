@@ -363,8 +363,9 @@ bool Application::init(int argc, const char** argv)
         return false;
     }
 
-    _vm->vm_reset();
     _gdb_target.reset(new GDBTarget(*_vm, *this));
+
+    _vm->vm_reset();
     _vm->vm_start(NULL, NULL);
 
     return true;

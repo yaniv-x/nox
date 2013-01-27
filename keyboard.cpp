@@ -1033,6 +1033,12 @@ static void __attribute__ ((constructor)) init_scan_codes()
 
 void KbdController::key_common(NoxKey code, uint scan_index)
 {
+    RLock state_lock(get_nox().get_state_lock());
+
+    if (get_state() != VMPart::RUNNING) {
+        return;
+    }
+
     ASSERT(scan_index < 2);
 
     Lock lock(_mutex);
@@ -1064,10 +1070,6 @@ void KbdController::key_common(NoxKey code, uint scan_index)
 
 void KbdController::key_down(NoxKey code)
 {
-    if (get_state() != VMPart::RUNNING) {
-        return;
-    }
-
     key_common(code, MAKE);
 }
 
@@ -1075,10 +1077,6 @@ static int flipflop = 0;
 
 void KbdController::key_up(NoxKey code)
 {
-    if (get_state() != VMPart::RUNNING) {
-        return;
-    }
-
     // temporary: sticky alt
     if (code == NOX_KEY_LEFT_ALT) {
         flipflop ^= 1;
@@ -1100,11 +1098,13 @@ bool KbdController::mouse_stream_test()
 
 void KbdController::mouse_motion(int dx, int dy)
 {
-    Lock lock(_mutex);
+    RLock state_lock(get_nox().get_state_lock());
 
     if (get_state() != VMPart::RUNNING) {
         return;
     }
+
+    Lock lock(_mutex);
 
     _mouse_dx += dx;
     _mouse_dy -= dy;
@@ -1119,11 +1119,13 @@ void KbdController::mouse_motion(int dx, int dy)
 
 void KbdController::mouse_button_press(MouseButton button)
 {
-    Lock lock(_mutex);
+    RLock state_lock(get_nox().get_state_lock());
 
     if (get_state() != VMPart::RUNNING) {
         return;
     }
+
+    Lock lock(_mutex);
 
     _mouse_buttons |= (1 << button);
 
@@ -1137,11 +1139,13 @@ void KbdController::mouse_button_press(MouseButton button)
 
 void KbdController::mouse_button_release(MouseButton button)
 {
-    Lock lock(_mutex);
+    RLock state_lock(get_nox().get_state_lock());
 
     if (get_state() != VMPart::RUNNING) {
         return;
     }
+
+    Lock lock(_mutex);
 
     _mouse_buttons &= ~(1 << button);
 

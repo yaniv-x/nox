@@ -34,6 +34,7 @@
 #include "admin_server.h"
 #include "dma_state.h"
 #include "memory_bus.h"
+#include "nox_vm.h"
 
 #ifdef ATA_DEBUG
 #define ATA_LOG(format, ...) D_MESSAGE(format, ## __VA_ARGS__)
@@ -2394,7 +2395,7 @@ void ATAPICdrom::_close_tray()
 
 void ATAPICdrom::eject_button_press()
 {
-    //Lock lock(get_state_mutex());
+    RLock state_lock(get_nox().get_state_lock());
 
     if (get_state() != VMPart::RUNNING) {
         return;
@@ -2423,7 +2424,7 @@ void ATAPICdrom::eject_button_press()
 
 void ATAPICdrom::open_tray()
 {
-    //Lock lock(get_state_mutex());
+    RLock state_lock(get_nox().get_state_lock());
 
     if (get_state() != VMPart::RUNNING) {
         D_MESSAGE("not running");
@@ -2448,7 +2449,7 @@ void ATAPICdrom::open_tray()
 
 void ATAPICdrom::set_media(const std::string& file_name)
 {
-    //Lock lock(get_state_mutex());
+    RLock state_lock(get_nox().get_state_lock());
 
     if (get_state() != VMPart::RUNNING) {
         D_MESSAGE("not running");
