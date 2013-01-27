@@ -284,11 +284,13 @@ public:
         : _cb (cb)
         , _opaque (opaque)
         , _started (false)
+        , _lock (NULL)
     {
     }
 
     virtual ~StateChangeRequest()
     {
+        delete _lock;
     }
 
     void notify(bool ok)
@@ -317,6 +319,21 @@ public:
         return test(vm);
     }
 
+    void lock(NoxVM& vm)
+    {
+        if (_lock) {
+            return;
+        }
+
+        _lock = new WLock(vm.get_state_lock());
+    }
+
+    void unlock()
+    {
+        delete _lock;
+        _lock = NULL;
+    }
+
 protected:
     virtual bool test(NoxVM& vm) = 0;
     virtual bool start(NoxVM& vm) = 0;
@@ -326,6 +343,7 @@ private:
     NoxVM::compleation_routin_t _cb;
     void* _opaque;
     bool _started;
+    WLock* _lock;
 };
 
 
@@ -1216,7 +1234,7 @@ bool StartRequest::cont(NoxVM& vm)
 
 void NoxVM::vm_start(NoxVM::compleation_routin_t cb, void* opaque)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new StartRequest(cb, opaque));
 
@@ -1291,7 +1309,7 @@ bool FreezeRequest::cont(NoxVM& vm)
 
 void NoxVM::vm_freeze(NoxVM::compleation_routin_t cb, void* opaque)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new FreezeRequest(cb, opaque));
 
@@ -1350,7 +1368,7 @@ void NoxVM::set_debug()
 
 void NoxVM::vm_debug(NoxVM::compleation_routin_t cb, void* opaque)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new FreezeRequest(NULL, NULL));
     _stat_change_req_list.push_back(new DebugRequest(cb, opaque));
@@ -1404,7 +1422,7 @@ public:
 
 void NoxVM::vm_debug_cont(NoxVM::compleation_routin_t cb, void* opaque)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new DebugContRequest(NULL, NULL));
     _stat_change_req_list.push_back(new StartRequest(cb, opaque));
@@ -1455,7 +1473,7 @@ void NoxVM::set_down()
 
 void NoxVM::vm_down(compleation_routin_t cb, void* opaque)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new FreezeRequest(NULL, NULL));
     _stat_change_req_list.push_back(new DownRequest(cb, opaque));
@@ -1476,7 +1494,7 @@ void NoxVM::resume_mode_change()
 
 void NoxVM::handle_state_request()
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     if (_stat_change_req_list.empty()) {
         D_MESSAGE("empty");
@@ -1486,6 +1504,8 @@ void NoxVM::handle_state_request()
     StateChangeRequest* request = _stat_change_req_list.front();
 
     lock.unlock();
+
+    request->lock(*this);
 
     if (!request->verify_start_condition(*this)) {
         request->notify(false);
@@ -1497,6 +1517,8 @@ void NoxVM::handle_state_request()
         request->notify(true);
     }
 
+    request->unlock();
+
     lock.lock();
 
     _stat_change_req_list.pop_front();
@@ -1506,13 +1528,6 @@ void NoxVM::handle_state_request()
          AutoRef<StateChngeTask> task(new StateChngeTask(*this));
          application->add_task(task.get());
     }
-}
-
-
-void NoxVM::vm_reset()
-{
-    Lock lock(_vm_state_mutex);
-    reset();
 }
 
 
@@ -1542,9 +1557,21 @@ bool ResetRequest::test(NoxVM& vm)
 }
 
 
+void NoxVM::vm_reset()
+{
+    Lock lock(_state_request_mutex);
+    _stat_change_req_list.push_back(new ResetRequest());
+
+    if (_stat_change_req_list.size() == 1) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
 void NoxVM::vm_restart(compleation_routin_t cb, void* opaque)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
     _stat_change_req_list.push_back(new FreezeRequest(NULL, NULL));
     _stat_change_req_list.push_back(new ResetRequest());
     _stat_change_req_list.push_back(new StartRequest(cb, opaque));
@@ -1619,7 +1646,7 @@ bool SleepRequest::cont(NoxVM& vm)
 
 void NoxVM::vm_sleep(CPU& initiator)
 {
-    Lock lock(_vm_state_mutex);
+    Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new SleepRequest(initiator));
 

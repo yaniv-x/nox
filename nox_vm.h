@@ -66,6 +66,7 @@ public:
     PIT& get_pit() { return *_pit.get();}
     PMController& get_pm_controller() { return *_pm_controller.get();}
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}
+    RWLock& get_state_lock() { return _state_lock;}
 
     void set_ram_size(uint32_t ram_size);
     void set_hard_disk(const char* file_name, bool read_only);
@@ -135,7 +136,8 @@ private:
     void alloc_high_bios_pages(uint num_pages/*, uint8_t** ptr, page_address_t* address*/);
 
 private:
-    Mutex _vm_state_mutex;
+    RWLock _state_lock;
+    Mutex _state_request_mutex;
     std::auto_ptr<KVM> _kvm;
     std::auto_ptr<IOBus> _io_bus;
     std::auto_ptr<MemoryBus> _mem_bus;
