@@ -1573,9 +1573,59 @@ void NoxVM::vm_power_off()
 }
 
 
-void NoxVM::vm_sleep()
+class SleepRequest: public NoxVM::StateChangeRequest {
+public:
+    SleepRequest(CPU& initiator);
+
+    virtual bool test(NoxVM& vm);
+    virtual bool start(NoxVM& vm);
+    virtual bool cont(NoxVM& vm);
+
+private:
+    CPU& _initiator;
+};
+
+
+SleepRequest::SleepRequest(CPU& initiator)
+    : NoxVM::StateChangeRequest(NULL, NULL)
+    , _initiator (initiator)
 {
-    D_MESSAGE("todo: implemanet power state");
-    vm_freeze(NULL, NULL);
+}
+
+bool SleepRequest::test(NoxVM& vm)
+{
+    return vm.get_state() == VMPart::RUNNING &&  _initiator.pending_sleep_request();
+}
+
+bool SleepRequest::start(NoxVM& vm)
+{
+    if (vm.get_state() != VMPart::RUNNING) {
+        PANIC("unexpected state");
+    }
+
+    return cont(vm);
+}
+
+
+bool SleepRequest::cont(NoxVM& vm)
+{
+    if (!vm.stop()) {
+        return false;
+    }
+
+    _initiator.clear_sleep_request();
+    return true;
+}
+
+void NoxVM::vm_sleep(CPU& initiator)
+{
+    Lock lock(_vm_state_mutex);
+
+    _stat_change_req_list.push_back(new SleepRequest(initiator));
+
+    if (_stat_change_req_list.size() == 1) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
 }
 
