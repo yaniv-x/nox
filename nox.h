@@ -49,7 +49,7 @@
     #define NOX_PCI_NUM_SLOTS 16
     #define NOX_PCI_NUM_INT_LINKS 4
     #define NOX_PCI_DEV_TO_LINK(devic, pin) \
-        (((devic) + (pin)) % NOX_PCI_NUM_INT_LINKS)
+        (((devic) + ((pin) - 1)) % NOX_PCI_NUM_INT_LINKS)
 
     #define NOX_HOST_BRIDGE_STEERING_OFFSET 0x40
     #define NOX_STEERING_LINK 0
