@@ -1132,6 +1132,20 @@ void ATADisk::do_idle_immediate()
 }
 
 
+void ATADisk::do_sleep()
+{
+    set_power_mode(POWER_SLEEP);
+    raise();
+}
+
+
+void ATADisk::do_check_power_mode()
+{
+    _count = get_power_mode();
+    raise();
+}
+
+
 void ATADisk::do_command(uint8_t command)
 {
     // in device 0 only configurations: a write to the command register shall be ignored,
@@ -1235,13 +1249,9 @@ void ATADisk::do_command(uint8_t command)
     case ATA_CMD_IDENTIFY_PACKET_DEVICE:
         command_abort_error();
         break;
-#if 0
     case ATA_CMD_CHECK_POWER_MODE:
-        _status = STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
-        _count = get_ata_power_state();
-        raise();
+        do_check_power_mode();
         break;
-#endif
     case ATA_CMD_IDLE_IMMEDIATE:
         do_idle_immediate();
         break;
@@ -1268,10 +1278,10 @@ void ATADisk::do_command(uint8_t command)
     case ATA_CMD_SET_MULTIPLE_MODE:
         do_set_multi_mode();
         break;
-#if 0
     case ATA_CMD_SLEEP:
         do_sleep();
         break;
+#if 0
     case ATA_CMD_STANDBY:
         do_standby();
         break;

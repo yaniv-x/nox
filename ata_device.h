@@ -112,10 +112,10 @@ protected:
     void drop();
 
     enum PowerState {
-        POWER_ACTIVE,
-        POWER_IDLE,
-        POWER_STANDBY,
-        POWER_SLEEP,
+        POWER_ACTIVE = 0xff,
+        POWER_IDLE = 0x80,
+        POWER_STANDBY = 0x00,
+        POWER_SLEEP = 0xfff1,
     };
 
     PowerState get_power_mode() { return _power_mode;}

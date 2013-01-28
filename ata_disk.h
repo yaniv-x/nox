@@ -78,6 +78,8 @@ private:
     void do_flush();
     void do_idle_immediate();
     void do_standby_immediate();
+    void do_sleep();
+    void do_check_power_mode();
 
 private:
     std::auto_ptr<BlockDevice> _block_dev;
