@@ -69,7 +69,6 @@ protected:
     virtual bool stop() = 0;
     virtual void freeze() {}
     virtual void unfreeze() {}
-    virtual void power() = 0;
     virtual void save(OutStream& stream) = 0;
     virtual void load(InStream& stream) = 0;
     virtual void down() {}

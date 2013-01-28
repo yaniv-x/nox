@@ -158,10 +158,6 @@ protected:
         return true;
     }
 
-    virtual void power()
-    {
-    }
-
     virtual void save(OutStream& stream)
     {
     }
