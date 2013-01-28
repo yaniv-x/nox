@@ -382,14 +382,12 @@ void PCIBus::attach_device(uint slot, PCIDevice& device)
         return;
     }
 
-    InterruptLink* link;
-
     if (*device.reg16(PCI_CONF_VENDOR) == NOX_PCI_VENDOR_ID &&
         *device.reg16(PCI_CONF_DEVICE) == NOX_PCI_DEV_ID_PM_CONTROLLER) {
         ASSERT(slot == PM_CONTROLLER_SLOT);
         irq_wire(device.get_wire(), PM_IRQ_LINE);
     } else {
-        link = pci_pin_to_link(slot, interrupt_pin);
+        InterruptLink* link = pci_pin_to_link(slot, interrupt_pin);
         link->attach(device.get_wire());
     }
 }
@@ -449,9 +447,9 @@ bool PCIBus::set_irq(uint bus, uint device, uint pin, uint irq)
         return (irq == PM_IRQ_LINE) ? true : false;
     }
 
-    pin -= 0x0a;
+    pin -= 0x0a + 1;
 
-    if (pin > 3) {
+    if (pin < 1 || pin > 4) {
         return false;
     }
 
