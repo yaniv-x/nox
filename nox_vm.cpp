@@ -1145,12 +1145,6 @@ bool NoxVM::stop()
 }
 
 
-void NoxVM::power()
-{
-
-}
-
-
 void NoxVM::save(OutStream& stream)
 {
 

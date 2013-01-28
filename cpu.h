@@ -85,7 +85,6 @@ public:
     virtual ~CPU();
 
     virtual void load(InStream &stream) {}
-    virtual void power() {}
     virtual void reset();
     virtual void save(OutStream &stream) {}
     virtual bool start();

@@ -46,7 +46,6 @@ public:
     virtual void reset();
     virtual bool start() { return true;}
     virtual bool stop() { return true;}
-    virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 

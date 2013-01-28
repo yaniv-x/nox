@@ -149,7 +149,6 @@ public:
     void reset() {}
     bool start() { return true;}
     bool stop() { return true;}
-    void power() {}
     void save(OutStream& stream) {}
     void load(InStream& stream) {}
 

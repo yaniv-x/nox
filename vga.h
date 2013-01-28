@@ -81,7 +81,6 @@ protected:
     virtual void reset();
     virtual bool start();
     virtual bool stop();
-    virtual void power() {}
     virtual void save(OutStream& stream) {}
     virtual void load(InStream& stream) {}
 
