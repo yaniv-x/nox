@@ -82,8 +82,8 @@ private:
     void add_part(VMPart* chaild);
     void remove_part(VMPart* chaild);
 
-    bool stop_childrens();
-    bool stop_all();
+    bool stop_childrens(State pre, State post);
+    bool stop_all(State pre, State post);
     bool start_childrens();
     bool start_all();
     void reset_childrens();

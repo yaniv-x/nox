@@ -92,7 +92,7 @@ public:
 protected:
     virtual void reset();
     virtual bool start();
-    virtual bool stop();
+    virtual bool stop() { return true;}
     virtual void save(OutStream& stream);
     virtual void load(InStream& stream);
 
@@ -111,6 +111,7 @@ private:
     void set_freeze_state();
     void freeze_vm() { VMPart::freeze_all(); }
     void unfreeze_vm() { VMPart::unfreeze_all(); }
+    bool stop(bool freeze);
 
     void a20_port_write(uint16_t port, uint8_t val);
     uint8_t a20_port_read(uint16_t port);

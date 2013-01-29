@@ -141,7 +141,7 @@ void VMPart::freeze_all()
 
     _state = FREEZING;
 
-    unfreeze();
+    freeze();
 
     _state = FREEZED;
 }
@@ -196,6 +196,7 @@ void VMPart::reset_childrens()
     }
 }
 
+
 void VMPart::transition_done()
 {
     switch (_state) {
@@ -204,6 +205,9 @@ void VMPart::transition_done()
         break;
     case ABOUT_TO_SLEEP:
         _state = SLEEPING;
+        break;
+    case FREEZING:
+        _state = FREEZED;
         break;
     default:
         PANIC("unexpected state");
@@ -251,39 +255,32 @@ bool VMPart::start_childrens()
 }
 
 
-bool VMPart::stop_all()
+bool VMPart::stop_all(State pre, State post)
 {
-    if (!stop_childrens()) {
+    if (!stop_childrens(pre, post)) {
         return false;
     }
 
-    switch (_state) {
-    case RUNNING:
-        _state = ABOUT_TO_SLEEP;
+    if (_state == RUNNING) {
+        _state = pre;
 
-        if (!stop()) {
-            break;
+        if (stop()) {
+            _state = post;
         }
-
-        _state = SLEEPING;
-    case SLEEPING:
-        return true;
-    case ABOUT_TO_SLEEP:
-        break;
-    default:
-        D_MESSAGE("unexpected %u", get_state());
     }
 
-    return false;
+    ASSERT(_state == pre || _state == post);
+
+    return _state == post;
 }
 
 
-bool VMPart::stop_childrens()
+bool VMPart::stop_childrens(State pre, State post)
 {
     VMParts::reverse_iterator iter = _parts.rbegin();
 
     for (; iter != _parts.rend(); iter++) {
-        if (!(*iter)->stop_all()) {
+        if (!(*iter)->stop_all(pre, post)) {
             return false;
         }
     }

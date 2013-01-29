@@ -1132,16 +1132,10 @@ bool NoxVM::start()
 }
 
 
-bool NoxVM::stop()
+bool NoxVM::stop(bool freeze)
 {
-    _state = ABOUT_TO_SLEEP;
-
-    if (!stop_childrens()) {
-        return false;
-    }
-
-    _state = SLEEPING;
-    return true;
+    return stop_all((freeze) ? FREEZING : ABOUT_TO_SLEEP,
+                    (freeze) ? FREEZED : SLEEPING);
 }
 
 
@@ -1282,7 +1276,7 @@ bool FreezeRequest::start(NoxVM& vm)
         vm.freeze_vm();
         return true;
     case VMPart::RUNNING:
-        return cont(vm);
+        return vm.stop(true);
     default:
         PANIC("unexpected state");
         return false;
@@ -1292,12 +1286,7 @@ bool FreezeRequest::start(NoxVM& vm)
 
 bool FreezeRequest::cont(NoxVM& vm)
 {
-    if (!vm.stop()) {
-        return false;
-    }
-
-    vm.freeze_vm();
-    return true;
+    return vm.stop(true);
 }
 
 
@@ -1630,7 +1619,7 @@ bool SleepRequest::start(NoxVM& vm)
 
 bool SleepRequest::cont(NoxVM& vm)
 {
-    if (!vm.stop()) {
+    if (!vm.stop(false)) {
         return false;
     }
 
