@@ -185,5 +185,7 @@ inline char* copy_cstr(const char* str)
 
 void read_all(int fd, off_t from, void* in_dest, size_t size);
 
+bool is_amd_proccesor();
+
 #endif
 
