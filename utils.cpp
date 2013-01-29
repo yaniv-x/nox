@@ -117,3 +117,31 @@ void read_all(int fd, off_t from, void* in_dest, size_t size)
     }
 }
 
+
+static void append_four_bytes(std::string& str, uint32_t four_bytes)
+{
+    uint64_t tmp = four_bytes;
+    char* tmp_str = (char*)&tmp;
+    tmp_str[4] = 0;
+
+    str += tmp_str;
+}
+
+
+bool is_amd_proccesor()
+{
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+
+    cpuid(0, eax, ebx, ecx, edx);
+
+    std::string vendor;
+    append_four_bytes(vendor, ebx);
+    append_four_bytes(vendor, edx);
+    append_four_bytes(vendor, ecx);
+
+    return vendor == "AuthenticAMD";
+}
+

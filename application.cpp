@@ -213,6 +213,12 @@ void split_option_arg(const std::string& str, InnerArgs& args)
 
 bool Application::init(int argc, const char** argv)
 {
+    if (!is_amd_proccesor()) {
+        E_MESSAGE("unsupported CPU");
+        set_exit_code(ERROR_USUPPORTED_CPU);
+        return false;
+    }
+
     OptionsParser parser;
 
     parser.set_front_positional_minmax(1, 1);
