@@ -119,7 +119,7 @@ protected:
     };
 
     PowerState get_power_mode() { return _power_mode;}
-    void set_power_mode(PowerState mode) { _power_mode = mode;}
+    virtual void set_power_mode(PowerState mode) { _power_mode = mode;}
     void set_state_and_notify(uint state);
     void notify_command_done();
     void command_abort_error();

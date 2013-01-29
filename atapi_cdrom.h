@@ -44,6 +44,7 @@ protected:
     virtual void set_signature();
     virtual void do_command(uint8_t command);
     virtual void reset(bool cold);
+    virtual void set_power_mode(PowerState mode);
 
 private:
     void _packet_cmd_done(uint status, uint sense, uint sense_add, DMAState* dma = NULL);
@@ -56,6 +57,11 @@ private:
 
     void handle_packet(uint8_t* packet);
     uint max_pio_transfer_bytes();
+
+
+    uint notify_operational(uint8_t* buf);
+    uint notify_power(uint8_t* buf);
+    uint notify_media(uint8_t* buf);
 
     void mmc_read_capacity(uint8_t* packet);
     void mmc_read(uint8_t* packet);
@@ -88,6 +94,7 @@ private:
     uint get_not_present_sens_add();
     bool handle_attention_condition();
     void update_profile();
+    uint get_mmc_power_mode();
 
 private:
     std::auto_ptr<BlockDevice> _media;

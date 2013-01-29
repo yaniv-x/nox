@@ -77,6 +77,7 @@ enum {
     ATTENTION_PARAMETERS_MASK = (1 << 7),
     ATTENTION_MEDIA_MASK = (1 << 8),
     ATTENTION_REMOVE_REQUEST = (1 << 9),
+    POWER_CHANGED_MASK = (1 << 10),
 };
 
 
@@ -198,8 +199,7 @@ public:
 
         _identity[ATA_ID_OFFSET_CMD_SET_1] = ATA_ID_CMD_SET_1_NOP_MASK |
                                              ATA_ID_CMD_SET_1_PACKET |
-                                             ATA_ID_CMD_SET_1_DEVICE_RESET |
-                                             ATA_ID_CMD_SET_1_POWR_MANAG;
+                                             ATA_ID_CMD_SET_1_DEVICE_RESET;
         _identity[ATA_ID_OFFSET_CMD_SET_1_ENABLE] = _identity[ATA_ID_OFFSET_CMD_SET_1];
 
         _identity[ATA_ID_OFFSET_CMD_SET_2] = ATA_ID_CMD_SET_2_ONE_MASK |
@@ -803,6 +803,35 @@ void ATAPICdrom::reset(bool cold)
     _cdrom_state = 0;
     _mounted_media = _media.get();
     update_profile();
+}
+
+
+uint ATAPICdrom::get_mmc_power_mode()
+{
+    switch (get_power_mode()) {
+    case ATADevice::POWER_ACTIVE:
+        return MMC_POWER_ACTIVE;
+    case ATADevice::POWER_IDLE:
+        return MMC_POWER_IDLE;
+    case ATADevice::POWER_STANDBY:
+        return MMC_POWER_STANDBY;
+    case ATADevice::POWER_SLEEP:
+        return MMC_POWER_SLEEP;
+    }
+
+    PANIC("invalid type %u", get_power_mode());
+    return 0;
+}
+
+
+void ATAPICdrom::set_power_mode(PowerState mode)
+{
+    if (get_power_mode() == mode) {
+        return;
+    }
+
+    set_power_mode(mode);
+    _cdrom_state |= POWER_CHANGED_MASK;
 }
 
 
@@ -1823,6 +1852,72 @@ void ATAPICdrom::mmc_prevent_allow_removal(uint8_t* packet)
     packet_cmd_sucess();
 }
 
+
+uint ATAPICdrom::notify_operational(uint8_t* buf)
+{
+    uint16_t* ptr16;
+
+    ptr16 = (uint16_t*)&buf[0];
+    *ptr16 = revers_unit16(4);
+    buf[2] = MMC_NOTIFY_OPERATIONAL_CLASS;
+    buf[5] = (_cdrom_state & ACTIVE_PERSISTENT_LOCK_MASK) ? (1 << 7) : 0;
+
+    if ((_cdrom_state & OPERATIONAL_EVENT_MASK)) {
+        D_MESSAGE("op");
+        buf[4] = 2;                 // Logical Unit has changed Operational state
+        ptr16 = (uint16_t*)&buf[6];
+        *ptr16 = revers_unit16(1);  // Feature Change
+        _cdrom_state &= ~OPERATIONAL_EVENT_MASK;
+    }
+
+    return 8;
+}
+
+uint ATAPICdrom::notify_power(uint8_t* buf)
+{
+    uint16_t* ptr16;
+
+    ptr16 = (uint16_t*)&buf[0];
+    *ptr16 = revers_unit16(4);
+    buf[2] = MMC_NOTIFY_POWER_CLASS;
+    buf[5] = get_mmc_power_mode();
+
+    if ((_cdrom_state & EJECT_EVENT_MASK)) {
+        D_MESSAGE("power");
+        _cdrom_state &= ~EJECT_EVENT_MASK;
+        buf[4] = 2; //PwrChg-Successful
+    }
+
+    return 8;
+}
+
+uint ATAPICdrom::notify_media(uint8_t* buf)
+{
+    uint16_t* ptr16;
+
+    ptr16 = (uint16_t*)&buf[0];
+    *ptr16 = revers_unit16(4);
+    buf[2] = MMC_NOTIFY_MEDIA_CLASS;
+
+    if ((_cdrom_state & EJECT_EVENT_MASK)) {
+        D_MESSAGE("eject");
+        buf[4] = 1;             // EjectRequest
+        _cdrom_state &= ~EJECT_EVENT_MASK;
+    } else if ((_cdrom_state & MEW_MEDIA_EVENT_MASK)){
+        buf[4] = 2;             // NewMedia
+        _cdrom_state &= ~MEW_MEDIA_EVENT_MASK;
+        D_MESSAGE("new");
+        if ((_cdrom_state & PERSISTENT_LOCK_MASK)) {
+            D_MESSAGE("active");
+            _cdrom_state |= ACTIVE_PERSISTENT_LOCK_MASK;
+        }
+    }
+
+    buf[5] = (_mounted_media ? (1 << 1) : 0) |  ((_cdrom_state & TRAY_DOR_OPEN_MASK) ? 1 : 0);
+
+    return 8;
+}
+
 void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
 {
     if ((packet[9] & 1) /*link bit is set*/) {
@@ -1853,14 +1948,12 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
         return;
     }
 
-    uint8_t request_mask = packet[4];
-
     if (length == 0) {
         packet_cmd_sucess();
         return;
     }
 
-    bool report = length > 4;
+    uint8_t request_mask = packet[4];
 
     #define MAX_NOTIFICTION_SIZE 8
 
@@ -1868,65 +1961,29 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
 
     memset(buf, 0, sizeof(buf));
 
-    buf[3] = MMC_NOTIFY_OPERATIONAL_MASK | MMC_NOTIFY_MEDIA_MASK;
+    buf[3] = MMC_NOTIFY_OPERATIONAL_MASK | MMC_NOTIFY_MEDIA_MASK | MMC_NOTIFY_POWER_CLASS;
     request_mask &= buf[3];
 
-    if (!request_mask) {
-        buf[2] = 0x80;
-        report = false;
-        D_MESSAGE("empty");
-    }
-
-    if (!report) {
+    if (length <= 4 || !request_mask) {
+        if (!request_mask) {
+            D_MESSAGE("empty");
+            buf[2] = 0x80;
+        }
         length = MIN(length, 4);
     } else if ((request_mask & MMC_NOTIFY_OPERATIONAL_MASK) &&
                                                         (_cdrom_state & OPERATIONAL_EVENT_MASK)) {
-        D_MESSAGE("op");
-        ptr16 = (uint16_t*)&buf[0];
-        *ptr16 = revers_unit16(4);
-        buf[2] = MMC_NOTIFY_OPERATIONAL_CLASS;
-        buf[4] = 2;                 // Logical Unit has changed Operational state
-        buf[5] = (_cdrom_state & ACTIVE_PERSISTENT_LOCK_MASK) ? (1 << 7) : 0;
-        ptr16 = (uint16_t*)&buf[6];
-        *ptr16 = revers_unit16(1);  // Feature Change
-        _cdrom_state &= ~OPERATIONAL_EVENT_MASK;
-        length = MIN(length, 8);
+        length = MIN(notify_operational(buf), length);
+    } else if ((request_mask & MMC_NOTIFY_POWER_MASK) && (_cdrom_state & POWER_CHANGED_MASK)) {
+        length = MIN(notify_power(buf), length);
     } else if ((request_mask & MMC_NOTIFY_MEDIA_MASK) &&
                                      (_cdrom_state & (MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK))) {
-        ptr16 = (uint16_t*)&buf[0];
-        *ptr16 = revers_unit16(4);
-        buf[2] = MMC_NOTIFY_MEDIA_CLASS;
-        if ((_cdrom_state & EJECT_EVENT_MASK)) {
-            D_MESSAGE("eject");
-            buf[4] = 1;             // EjectRequest
-            _cdrom_state &= ~EJECT_EVENT_MASK;
-        } else {
-            buf[4] = 2;             // NewMedia
-            _cdrom_state &= ~MEW_MEDIA_EVENT_MASK;
-            D_MESSAGE("new");
-            if ((_cdrom_state & PERSISTENT_LOCK_MASK)) {
-                D_MESSAGE("active");
-                _cdrom_state |= ACTIVE_PERSISTENT_LOCK_MASK;
-            }
-        }
-
-        buf[5] = (_mounted_media ? (1 << 1) : 0) |  ((_cdrom_state & TRAY_DOR_OPEN_MASK) ? 1 : 0);
-
-        length = MIN(length, 8);
+        length = MIN(notify_media(buf), length);
     } else if ((request_mask & MMC_NOTIFY_OPERATIONAL_MASK)) {
-        // not sure if it is necessary to put no change event
-        ptr16 = (uint16_t*)&buf[0];
-        *ptr16 = revers_unit16(4);
-        buf[2] = MMC_NOTIFY_OPERATIONAL_CLASS;
-        buf[5] = (_cdrom_state & ACTIVE_PERSISTENT_LOCK_MASK) ? (1 << 7) : 0;
-        length = MIN(length, 8);
+        length = MIN(notify_operational(buf), length);
+    } else if ((request_mask & MMC_NOTIFY_POWER_MASK)) {
+        length = MIN(notify_power(buf), length);
     } else {
-        // not sure if it is necessary to put no change event
-        ptr16 = (uint16_t*)&buf[0];
-        *ptr16 = revers_unit16(4);
-        buf[2] = MMC_NOTIFY_MEDIA_CLASS;
-        buf[5] = (_mounted_media ? (1 << 1) : 0) |  ((_cdrom_state & TRAY_DOR_OPEN_MASK) ? 1 : 0);
-        length = MIN(length, 8);
+        length = MIN(notify_media(buf), length);
     }
 
     AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
@@ -2254,25 +2311,6 @@ void ATAPICdrom::do_command(uint8_t command)
         do_device_reset();
         break;
 #if 0
-    case ATA_CMD_CHECK_POWER_MODE:
-        if (!(_status & STATUS_READY_MASK)) {
-            command_abort_error();
-        } else {
-            _status = STATUS_READY_MASK | ATA_STATUS_SEEK_COMPLEAT;
-            _count = get_ata_power_state();
-            raise();
-        }
-        break;
-    case ATA_CMD_IDLE_IMMEDIATE:
-    case ATA_CMD_IDLE:
-         if (!(_status & STATUS_READY_MASK)) {
-            command_abort_error();
-        } else {
-            // idle
-            raise();
-        }
-        break;
-
     case ATA_CMD_EXECUTE_DEVICE_DIAGNOSTIC:
         // If the host issues an EXECUTE DEVICE DIAGNOSTIC command while a device is in or going to
         // a power management mode except Sleep, then the device shall execute the EXECUTE DEVICE
@@ -2289,27 +2327,6 @@ void ATAPICdrom::do_command(uint8_t command)
             command_abort_error();
         } else {
             do_nop();
-        }
-        break;
-    case ATA_CMD_SLEEP:
-        if (!(_status & STATUS_READY_MASK)) {
-            command_abort_error();
-        } else {
-            do_sleep();
-        }
-        break;
-    case ATA_CMD_STANDBY:
-        if (!(_status & STATUS_READY_MASK)) {
-            command_abort_error();
-        } else {
-            do_standby();
-        }
-        break;
-    case ATA_CMD_STANDBY_IMMEDIATE:
-        if (!(_status & STATUS_READY_MASK)) {
-            command_abort_error();
-        } else {
-            do_standby_immediate();
         }
         break;
 #endif
@@ -2331,6 +2348,12 @@ void ATAPICdrom::do_command(uint8_t command)
     case ATA_CMD_FLUSH_CACHE:
     case ATA_CMD_FLUSH_CACHE_EXT:
     case ATA_CMD_SET_MULTIPLE_MODE:
+    case ATA_CMD_STANDBY_IMMEDIATE:
+    case ATA_CMD_STANDBY:
+    case ATA_CMD_IDLE:
+    case ATA_CMD_IDLE_IMMEDIATE:
+    case ATA_CMD_SLEEP:
+    case ATA_CMD_CHECK_POWER_MODE:
         command_abort_error();
         break;
     default:
