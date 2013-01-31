@@ -111,6 +111,14 @@ void KVM::init()
         THROW("no user memory extension");
     }
 
+    /*if (!check_extention(KVM_CAP_NMI)) {
+        THROW("no nmi extension");
+    }*/
+
+    if (!check_extention(KVM_CAP_DEBUGREGS)) {
+        THROW("no debug regs extension");
+    }
+
     if (!check_extention(KVM_CAP_SET_TSS_ADDR)) {
         THROW("no set tss extension");
     }

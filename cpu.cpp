@@ -115,7 +115,7 @@ enum {
     APIC_CMD_LOGICAL_MASK = 1 << 11,
     APIC_CMD_MODE_MASK = 1 << 15,
     APIC_CMD_LEVEL_MASK = 1 << 14,
-    APIC_CMD_VEXTOR_MASK = 0xff,
+    APIC_CMD_VECTOR_MASK = 0xff,
 
     APIC_CMD_HIGH_DEST_SHIFT = 24,
     APIC_CMD_HIGH_MASK = (0xff << APIC_CMD_HIGH_DEST_SHIFT),
@@ -149,6 +149,12 @@ enum {
     EXECUTION_BREAK_ADMIN_BIT = 1,
     EXECUTION_BREAK_INIT_BIT,
     EXECUTION_BREAK_SLEEP_BIT,
+};
+
+
+enum {
+    CR0_CD = (1 << 30),
+    CR0_NW = (1 << 29),
 };
 
 
@@ -238,6 +244,7 @@ CPU::CPU(NoxVM& vm)
     , _io_bus (vm.get_io_bus())
     , _thread ((Thread::start_proc_t)&CPU::thread_main, this)
     , _executing (false)
+    , _nmi (false)
     , _test_interrupts(false)
     , _interrupt_mark_set(0)
     , _interrupt_mark_get (0)
@@ -246,12 +253,16 @@ CPU::CPU(NoxVM& vm)
     , _debug_cb (NULL)
     , _debug_opaque (NULL)
     , _debug_trap (false)
+    , _init_trap (false)
 {
     ASSERT(_id < MAX_CPUS);
     cpus[_id] = this;
     init_sig_usr1();
 
-    pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
+    if (_id == 0) {
+        pic->attach_notify_target((void_callback_t)&CPU::output_trigger, this);
+    }
+
     _apic_timer = application->create_timer((void_callback_t)&CPU::apic_timer_cb, this);
 
     Lock lock(_cpu_state_mutex);
@@ -435,10 +446,8 @@ void CPU::reset_regs()
 }
 
 
-void CPU::reset_sys_regs()
+void CPU::reset_sys_regs(struct kvm_sregs& sys_regs)
 {
-    struct kvm_sregs sys_regs;
-
     memset(&sys_regs, 0, sizeof(sys_regs));
 
     sys_regs.cr0 = 0x0000000060000010;
@@ -482,12 +491,27 @@ void CPU::reset_sys_regs()
     if (_id == 0) {
         sys_regs.apic_base |= APIC_BOOTSTRAP_PROCESSOR_MASK;
     }
+}
+
+
+void CPU::reset_sys_regs()
+{
+    struct kvm_sregs sys_regs;
+
+    reset_sys_regs(sys_regs);
 
     _apic_address = sys_regs.apic_base;
 
     if (ioctl(_vcpu_fd.get(), KVM_SET_SREGS, &sys_regs) == -1) {
         THROW("failed %d", errno);
     }
+}
+
+
+
+void CPU::reset_dbg_regs()
+{
+    W_MESSAGE("implement me")
 }
 
 
@@ -552,18 +576,105 @@ void CPU::reset_msrs()
 }
 
 
-void CPU::__reset()
+bool CPU::init_trap()
 {
-    apic_reset();
-    reset_regs();
-    reset_sys_regs();
-    reset_fpu();
-    reset_msrs();
+    if (_init_trap) {
+        return true;
+    }
 
-    _trap = NULL;
-    _debug_trap = false;
+    D_MESSAGE("prepare to startup");
+
+    _startup_address <<= GUEST_PAGE_SHIFT;
+
+    struct kvm_sregs sys_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_SREGS, &sys_regs) == -1) {
+        THROW("get sregs failed %d", errno);
+    }
+
+    sys_regs.cs.base = _startup_address;
+    sys_regs.cs.selector = sys_regs.cs.base >> 4;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_SREGS, &sys_regs) == -1) {
+        THROW("failed %d", errno);
+    }
+
+    struct kvm_regs regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_REGS, &regs) == -1) {
+        THROW("get regs failed %d", errno);
+    }
+
+    regs.rip = 0;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_REGS, &regs) == -1) {
+        THROW("set regs failed %d", errno);
+    }
+
+    _startup_address = 0;
+
+    return false;
+}
+
+
+void CPU::set_init_trap()
+{
+    ASSERT(_trap == NULL);
+    _init_trap = true;
+    _trap = &CPU::init_trap;
+    trap_wait();
+}
+
+
+void CPU::init()
+{
+    D_MESSAGE("0x%x", _id);
+
     __sync_and_and_fetch(&_execution_break,
                          ~((1 << EXECUTION_BREAK_SLEEP_BIT) | (1 << EXECUTION_BREAK_INIT_BIT)));
+
+    if (_trap == &CPU::init_trap) {
+        trap_wait();
+        return;
+    }
+
+    if (_trap == &CPU::halt_trap) {
+        _trap = NULL;
+    }
+
+    reset_regs();
+    reset_dbg_regs();
+
+    struct kvm_sregs curr_sys_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_SREGS, &curr_sys_regs) == -1) {
+        THROW("get sregs failed %d", errno);
+    }
+
+    struct kvm_sregs sys_regs;
+
+    reset_sys_regs(sys_regs);
+
+    sys_regs.cr0 = curr_sys_regs.cr0 & (CR0_CD | CR0_NW);
+    sys_regs.cr0 |= (1 << 4);
+    sys_regs.cr8 = curr_sys_regs.cr8;
+    sys_regs.apic_base = curr_sys_regs.apic_base;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_SREGS, &sys_regs) == -1) {
+        THROW("failed %d", errno);
+    }
+
+    set_init_trap();
+}
+
+
+void CPU::startup(uint32_t address)
+{
+    D_MESSAGE("0x%x", _id);
+    _startup_address = address;
+    __sync_synchronize();
+    _init_trap = false;
+    force_exec_loop();
 }
 
 
@@ -575,7 +686,25 @@ void CPU::reset()
         THROW("invalid cpu state");
     }
 
-    __reset();
+    apic_reset();
+    reset_regs();
+    reset_sys_regs();
+    reset_dbg_regs();
+    reset_fpu();
+    reset_msrs();
+
+    _trap = NULL;
+    _nmi = false;
+    _debug_trap = false;
+    _init_trap = false;
+    _startup_address = 0;
+
+    __sync_and_and_fetch(&_execution_break,
+                         ~((1 << EXECUTION_BREAK_SLEEP_BIT) | (1 << EXECUTION_BREAK_INIT_BIT)));
+
+    if (_id != 0) {
+        __sync_or_and_fetch(&_execution_break, (1 << EXECUTION_BREAK_INIT_BIT));
+    }
 }
 
 
@@ -666,8 +795,7 @@ bool CPU::halt_trap()
         apic_update_timer();
     }
 
-    //fixme : handle nmi
-    return !_kvm_run->if_flag || !interrupt_test();
+    return !(_nmi || (_kvm_run->if_flag && interrupt_test()));
 }
 
 
@@ -740,7 +868,7 @@ void CPU::apic_set_spurious(uint32_t val)
 
 inline void CPU::apic_command_fixed(uint32_t cmd_low)
 {
-    uint vector = cmd_low & APIC_CMD_VEXTOR_MASK;
+    uint vector = cmd_low & APIC_CMD_VECTOR_MASK;
 
     if (vector < 16) {
         D_MESSAGE("illegal vector 0x%x (0x%x)", vector, cmd_low);
@@ -767,6 +895,7 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
             D_MESSAGE("APIC_CMD_SHORTHAND_DEST physical");
             if (dest < num_cpus) {
                 if (dest == _id) {
+                    Lock lock(_apic_mutex);
                     apic_put_irr(vector, level_mode);
                 } else {
                     Lock lock(cpus[dest]->_apic_mutex);
@@ -787,6 +916,7 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
         break;
     }
     case APIC_CMD_SHORTHAND_SELF: {
+        Lock lock(_apic_mutex);
         apic_put_irr(vector, level_mode);
         break;
     }
@@ -843,12 +973,12 @@ void CPU::apic_command_init(uint32_t cmd_low)
 
         for (uint i = 0; i < num_cpus; i++) {
             if (test_bit(_cpu_dest_mask, i)) {
+                __sync_or_and_fetch(&cpus[i]->_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
+
                 if (cpus[i] == this) {
-                    __reset();
                     continue;
                 }
 
-                __sync_or_and_fetch(&cpus[i]->_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
                 cpus[i]->force_exec_loop();
             }
         }
@@ -860,6 +990,88 @@ void CPU::apic_command_init(uint32_t cmd_low)
         for (uint i = 0; i < num_cpus; i++) {
             if (cpus[i] != this) {
                 __sync_or_and_fetch(&cpus[i]->_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
+                cpus[i]->force_exec_loop();
+            }
+        }
+        break;
+    }
+    default:
+        W_MESSAGE("illegal shorthand: 0x%x", cmd_low);
+        return;
+    };
+}
+
+
+void CPU::apic_command_startup(uint32_t cmd_low)
+{
+    switch (cmd_low & APIC_CMD_SHORTHAND_MASK) {
+    case APIC_CMD_SHORTHAND_DEST: {
+        D_MESSAGE("APIC_CMD_SHORTHAND_DEST");
+        uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
+        populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
+
+        for (uint i = 0; i < num_cpus; i++) {
+            if (test_bit(_cpu_dest_mask, i)) {
+                if (cpus[i] == this) {
+                    continue;
+                }
+                cpus[i]->startup(cmd_low & APIC_CMD_VECTOR_MASK);
+            }
+        }
+        break;
+    }
+    case APIC_CMD_SHORTHAND_EXCLUD: {
+        D_MESSAGE("APIC_CMD_SHORTHAND_EXCLUD");
+
+        for (uint i = 0; i < num_cpus; i++) {
+            if (cpus[i] != this) {
+                cpus[i]->startup(cmd_low & APIC_CMD_VECTOR_MASK);
+            }
+        }
+        break;
+    }
+    default:
+        W_MESSAGE("illegal shorthand: 0x%x", cmd_low);
+        return;
+    };
+}
+
+
+void CPU::apic_command_nmi(uint32_t cmd_low)
+{
+    bool level_mode = !!(cmd_low & APIC_CMD_MODE_MASK);
+    bool level = !!(cmd_low & APIC_CMD_LEVEL_MASK);
+
+    if (level_mode && !level) {
+        W_MESSAGE("illegal combination: level-sensitive and level is clear 0x%x", cmd_low);
+        return;
+    }
+
+    switch (cmd_low & APIC_CMD_SHORTHAND_MASK) {
+    case APIC_CMD_SHORTHAND_DEST: {
+        D_MESSAGE("APIC_CMD_SHORTHAND_DEST");
+        uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
+        populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
+
+        for (uint i = 0; i < num_cpus; i++) {
+            if (test_bit(_cpu_dest_mask, i)) {
+                cpus[i]->_nmi = true;
+
+                if (cpus[i] == this) {
+                    continue;
+                }
+
+                cpus[i]->force_exec_loop();
+            }
+        }
+        break;
+    }
+    case APIC_CMD_SHORTHAND_EXCLUD: {
+        D_MESSAGE("APIC_CMD_SHORTHAND_EXCLUD");
+
+        for (uint i = 0; i < num_cpus; i++) {
+            if (cpus[i] != this) {
+                cpus[i]->_nmi = true;
                 cpus[i]->force_exec_loop();
             }
         }
@@ -895,15 +1107,13 @@ inline void CPU::apic_command(uint32_t cmd_low)
         for (;;) sleep(2);
         break;
     case APIC_CMD_MT_NMI:
-        W_MESSAGE("not implemented: APIC_CMD_MT_NMI. sleeping forever...");
-        for (;;) sleep(2);
+        apic_command_nmi(cmd_low);
         break;
     case APIC_CMD_MT_INIT:
         apic_command_init(cmd_low);
         break;
     case APIC_CMD_MT_STARTUP:
-        W_MESSAGE("not implemented: APIC_CMD_MT_STARTUP. sleeping forever...");
-        for (;;) sleep(2);
+        apic_command_startup(cmd_low);
         break;
     case APIC_CMD_MT_EXTERNAL:
         W_MESSAGE("not implemented: APIC_CMD_MT_EXTERNAL. sleeping forever...");
@@ -1106,6 +1316,7 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
         apic_set_spurious(val);
         break;
     case APIC_OFFSET_CMD_LOW:
+        lock.unlock();
         apic_command(val);
         break;
     case APIC_OFFSET_CMD_HIGH:
@@ -1499,7 +1710,7 @@ void CPU::run_loop()
     for (;;) {
         if (_execution_break) {
             if (_execution_break & (1 << EXECUTION_BREAK_INIT_BIT)) {
-                __reset();
+                init();
                 continue;
             }
 
@@ -1522,7 +1733,17 @@ void CPU::run_loop()
             apic_update_timer();
         }
 
-        if (_interrupt_mark_set != _interrupt_mark_get || _test_interrupts) {
+        if (_nmi) {
+            _nmi = false;
+
+            if (ioctl(_vcpu_fd.get(), KVM_NMI)) {
+                int err = errno;
+                THROW("inject NMI failed %d", err);
+            }
+
+            _kvm_run->request_interrupt_window = _interrupt_mark_set != _interrupt_mark_get ||
+                                                 _test_interrupts;
+        } else if (_interrupt_mark_set != _interrupt_mark_get || _test_interrupts) {
             _interrupt_mark_get = _interrupt_mark_set;
             _test_interrupts = false;
 
@@ -1836,6 +2057,7 @@ void CPU::__apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i]->apic_in_logical_dest(dest)) {
             if (cpus[i] == this) {
+                Lock lock(cpus[i]->_apic_mutex);
                 apic_put_irr(vector, level);
             } else {
                 Lock lock(cpus[i]->_apic_mutex);
@@ -1852,6 +2074,7 @@ void CPU::__apic_deliver_interrupt_all(uint vector, bool level)
 {
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i] == this) {
+            Lock lock(_apic_mutex);
             apic_put_irr(vector, level);
         } else {
             Lock lock(cpus[i]->_apic_mutex);

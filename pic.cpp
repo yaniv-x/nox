@@ -472,9 +472,6 @@ uint PIC::get_interrupt()
 
     if (intterupt != INVALID_IRQ) {
         update_output_pin(lock);
-    } else {
-        intterupt++;
-        intterupt--;
     }
 
     return intterupt;

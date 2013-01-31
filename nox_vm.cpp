@@ -760,7 +760,7 @@ void NoxVM::post_diagnostic(uint16_t port, uint8_t val)
 {
     ASSERT(port == IO_PORT_POST_DIAGNOSTIC);
 
-    D_MESSAGE("POST 0x%x", val);
+    D_MESSAGE("POST 0x%x (%u)", val, vcpu->get_id());
 }
 
 
@@ -802,6 +802,12 @@ void NoxVM::do_platform_command(uint8_t val)
         args->ret_val = pci_bus->set_irq(args->bus, args->device, args->pin, args->irq);
         break;
     }
+    case PLATFORM_CMD_DELAY: {
+        uint32_t* args = (uint32_t*)_pci_host->get_ram_ptr();
+        W_MESSAGE("PLATFORM_CMD_DELAY is abnormal and temporary");
+        usleep(*args);
+        break;
+    }
     default:
         W_MESSAGE("invalid command 0x%x", val);
     }
@@ -829,7 +835,7 @@ void NoxVM::platform_port_write_byte(uint16_t port, uint8_t val)
         strncpy((char*)str_copy.get(), (char*)_pci_host->get_ram_ptr(), PLATFORM_LOG_BUF_SIZE - 1);
         str_copy[PLATFORM_LOG_BUF_SIZE - 1] = 0;
         replace_none_printable((char*)str_copy.get());
-        D_MESSAGE("guest: %s", str_copy.get());
+        D_MESSAGE("guest[%u]: %s", vcpu->get_id(), str_copy.get());
         break;
     }
     case PLATFORM_IO_CMD:
