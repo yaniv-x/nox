@@ -137,7 +137,9 @@ private:
     void run_loop();
     void run();
     void reset_regs();
+    void reset_sys_regs(struct kvm_sregs& sys_regs);
     void reset_sys_regs();
+    void reset_dbg_regs();
     void reset_fpu();
     void reset_msrs();
     void handle_io();
@@ -156,15 +158,20 @@ private:
     void apic_read(uint32_t offset, uint32_t n, uint8_t* dest);
     void handle_mmio();
     void nmi();
-    void __reset();
+    bool init_trap();
+    void set_init_trap();
+    void init();
+    void startup(uint32_t address);
 
     int apic_eoi();
     void apic_update_error();
     void apic_set_spurious(uint32_t val);
 
     void populate_dest_mask(uint dest, bool logical);
+    void apic_command_startup(uint32_t cmd_low);
     void apic_command_init(uint32_t cmd_low);
     void apic_command_fixed(uint32_t cmd_low);
+    void apic_command_nmi(uint32_t cmd_low);
     void apic_command(uint32_t cmd_low);
     void apic_set_timer(uint32_t val);
     void apic_update_timer();
@@ -207,6 +214,7 @@ private:
     IOBus& _io_bus;
     Thread _thread;
     bool _executing;
+    bool _nmi;
     bool _test_interrupts;
     bool _need_timer_update;
     uint _interrupt_mark_set;
@@ -228,6 +236,8 @@ private:
     void_callback_t _debug_cb;
     void* _debug_opaque;
     bool _debug_trap;
+    bool _init_trap;
+    uint32_t _startup_address;
     uint32_t _cpu_dest_mask[ALIGN(MAX_CPUS, 32) / 32];
 };
 
