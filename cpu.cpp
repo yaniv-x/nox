@@ -508,10 +508,17 @@ void CPU::reset_sys_regs()
 }
 
 
-
 void CPU::reset_dbg_regs()
 {
-    W_MESSAGE("implement me")
+    struct kvm_debugregs debugregs;
+
+    memset(&debugregs, 0, sizeof(debugregs));
+    debugregs.dr6 = 0x00000000ffff0ff0;
+    debugregs.dr7 = 0x0000000000000400;
+
+    if (ioctl(_vcpu_fd.get(), KVM_SET_DEBUGREGS, &debugregs) == -1) {
+        THROW("set debugregs failed %d", errno);
+    }
 }
 
 
