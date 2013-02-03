@@ -230,6 +230,7 @@ private:
     uint32_t _apic_regs[GUEST_PAGE_SIZE / 16];
     uint64_t _apic_timer_start_tsc;
     uint64_t _apic_timer_div;
+    uint32_t _apic_errors;
     Timer* _apic_timer;
     int _current_interrupt;
     //Mutex _apic_timer_mutex;
