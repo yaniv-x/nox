@@ -548,6 +548,7 @@ void CPU::apic_reset()
 
     _current_interrupt = -1;
     _apic_timer_div = 2;
+    _apic_errors = 0;
 }
 
 
@@ -845,8 +846,8 @@ inline int CPU::apic_eoi()
 
 void CPU::apic_update_error()
 {
-    D_MESSAGE("implement me");
-    // need to copy current error status to apic error register
+    _apic_regs[APIC_OFFSET_ERROR] = _apic_errors;
+    _apic_errors = 0;
 }
 
 
