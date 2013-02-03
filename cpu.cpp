@@ -1282,7 +1282,7 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
         apic_rearm_timer();
         break;
     case APIC_OFFSET_DIV_CONF: {
-        _apic_regs[APIC_OFFSET_DIV_CONF] = val & APIC_LVT_TYPE_MASK;
+        _apic_regs[APIC_OFFSET_DIV_CONF] = val & APIC_DIV_CONF_MASK;
         uint timer_div_val = (_apic_regs[APIC_OFFSET_DIV_CONF] & 0x3) |
                              ((_apic_regs[APIC_OFFSET_DIV_CONF] & 0x8) >> 1);
         _apic_timer_div = (2 << timer_div_val) == 256 ? 1 : (2 << timer_div_val);
