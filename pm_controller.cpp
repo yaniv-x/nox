@@ -32,6 +32,7 @@
 #include "application.h"
 #include "admin_server.h"
 
+#define TIMER_FLIP_MASK (1 << 31)
 #define PM_TIMER_HZ 3579545
 
 static const double TICK = double(1000) * 1000 * 1000 / PM_TIMER_HZ;
@@ -174,7 +175,7 @@ void PMController::update_timer()
     uint32_t prev_val = _timer_val;
     _timer_val = double(get_monolitic_time() - _base_time) / TICK;
 
-    if ((prev_val & (1 << 31)) != (_timer_val & (1 << 31))) {
+    if ((prev_val & TIMER_FLIP_MASK) != (_timer_val & TIMER_FLIP_MASK)) {
         _state |= PM_STATUS_TIMER;
         update_irq_level();
     }
@@ -301,7 +302,7 @@ void PMController::io_write_byte(uint16_t port, uint8_t val)
 
 nox_time_t PMController::next_flip_delta()
 {
-    uint32_t delta_tiks = (1 << 31) - (_timer_val & ~(1 << 31));
+    uint32_t delta_tiks = TIMER_FLIP_MASK - (_timer_val & ~TIMER_FLIP_MASK);
     return TICK * delta_tiks;
 }
 
