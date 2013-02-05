@@ -132,6 +132,10 @@ private:
     void resume_command(AdminReplyContext* context);
     void restart_command(AdminReplyContext* context);
     void terminate_command(AdminReplyContext* context);
+#ifdef NOX_DEBUG
+    void translate_command(AdminReplyContext* context, uint32_t cpu, uint64_t physical_address);
+    void dump_ram(AdminReplyContext* context, const char* file_name);
+#endif
 
     void alloc_high_bios_pages(uint num_pages/*, uint8_t** ptr, page_address_t* address*/);
 

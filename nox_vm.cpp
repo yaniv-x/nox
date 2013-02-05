@@ -458,6 +458,20 @@ void NoxVM::register_admin_commands()
     admin->register_command("terminate", "terminate virtual machin execution", "???",
                             empty_va_type_list, empty_names_list, output_args, output_names,
                             (admin_command_handler_t)&NoxVM::terminate_command, this);
+#ifdef NOX_DEBUG
+    admin->register_command("v-to-p", "translate virtual address to physical adress", "???",
+                            admin_types(2, VA_UINT32_T, VA_UINT64_T),
+                            admin_names(2, "cpu-id", "virtual-address"),
+                            admin_types(2, VA_UINT32_T, VA_UINT64_T),
+                            admin_names(2, "result", "physical-address"),
+                            (admin_command_handler_t)&NoxVM::translate_command, this);
+    admin->register_command("ram-dump", "dump vm ram", "???",
+                            admin_types(1, VA_UTF8_T),
+                            admin_names(1, "file name"),
+                            admin_types(2, VA_UINT32_T, VA_UTF8_T),
+                            admin_names(2, "result", "error-string"),
+                            (admin_command_handler_t)&NoxVM::dump_ram, this);
+#endif
 }
 
 
@@ -690,6 +704,66 @@ void NoxVM::terminate_command(AdminReplyContext* context)
 
     vm_down((compleation_routin_t)&TerminateReply::reply, r);
 }
+
+#ifdef NOX_DEBUG
+void NoxVM::translate_command(AdminReplyContext* context, uint32_t cpu_id, uint64_t address)
+{
+    RLock lock(_state_lock);
+
+    uint64_t physical;
+    CPU* cpu;
+
+    if ((get_state() != VMPart::FREEZED && get_state() != VMPart::DEBUGGING) ||
+                              !(cpu = get_cpu(cpu_id)) || !cpu->translate(address, physical)) {
+        context->command_reply(0, 0);
+        return;
+    }
+
+    context->command_reply(1, physical);
+}
+
+
+static uint8_t zero_buf[KB] = {0};
+
+void NoxVM::dump_ram(AdminReplyContext* context, const char* file_name)
+{
+    RLock lock(_state_lock);
+
+    if ((get_state() != VMPart::FREEZED && get_state() != VMPart::DEBUGGING)) {
+        context->command_reply(1, "ERROR");
+        return;
+    }
+
+    uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_low_ram);
+    uint64_t size = _mem_bus->get_physical_ram_size(_low_ram);
+    uint8_t* mid_ptr =_mem_bus->get_physical_ram_ptr(_mid_ram);
+    uint64_t mid_size = _mem_bus->get_physical_ram_size(_mid_ram);
+
+
+    int fd = open(file_name, O_CREAT | O_EXCL | O_WRONLY, S_IRUSR | S_IWUSR);
+    if (fd == -1) {
+        E_MESSAGE("create dump file %s filed", file_name);
+        context->command_reply(1, "ERROR");
+    } else {
+        write_all(fd, 0, ptr, size);
+
+        uint64_t pos = size;
+
+        while (pos != MID_RAM_START) {
+            uint n = MIN(MID_RAM_START - pos, KB);
+            write_all(fd, pos, zero_buf, n);
+            pos += n;
+        }
+
+        write_all(fd, MID_RAM_START, mid_ptr, mid_size);
+
+        close(fd);
+    }
+
+
+    context->command_reply(0, "OK");
+}
+#endif
 
 
 void NoxVM::a20_port_write(uint16_t port, uint8_t val)
