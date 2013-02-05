@@ -92,7 +92,7 @@ void IOApic::reset()
                                              this, *this);
     _select = 0;
     memset(_regs, 0, sizeof(_regs));
-    _regs[REG_ID] = 0;
+    _regs[REG_ID] = 0x0f000000;
     _regs[REG_VERSION] = ((NUM_IRQ_PINS - 1) << 16) | IO_APIC_VERSION;
     _regs[REG_ARBITRATION] = 0;
 
