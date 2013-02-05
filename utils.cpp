@@ -118,6 +118,29 @@ void read_all(int fd, off_t from, void* in_dest, size_t size)
 }
 
 
+void write_all(int fd, off_t to, void* in_src, uint size)
+{
+    uint8_t* src = (uint8_t*)in_src;
+
+    if (lseek(fd, to, SEEK_SET) != to) {
+        THROW("seek failed");
+    }
+
+    while (size) {
+        ssize_t n = write(fd, src, size);
+        if (n == -1) {
+             if (errno != EINTR) {
+                 THROW("write failed");
+             }
+             continue;
+        }
+
+        size -= n;
+        src += n;
+    }
+}
+
+
 static void append_four_bytes(std::string& str, uint32_t four_bytes)
 {
     uint64_t tmp = four_bytes;
