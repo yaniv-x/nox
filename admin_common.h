@@ -208,5 +208,9 @@ private:
     void* _opaque;
 };
 
+
+va_type_list_t admin_types(uint argc, ...);
+va_names_list_t admin_names(uint argc, ...);
+
 #endif
 
