@@ -68,6 +68,8 @@ enum VAType {
     VA_UTF8_T,      // uint16_t offset
     VA_UINT32V_T,   //(uint16_t offset, uint16_t size)
     VA_UTF8V_T,
+    VA_UINT64_T,
+    VA_INT64_T,
 };
 
 

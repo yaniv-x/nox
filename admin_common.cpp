@@ -100,6 +100,10 @@ void AdminCommand::init_io_params(const va_type_list_t& types, uint& fixed_size,
         case VA_INT32_T:
             fixed_size += sizeof(uint32_t);
             break;
+        case VA_UINT64_T:
+        case VA_INT64_T:
+            fixed_size += sizeof(uint64_t);
+            break;
         case VA_UINT8_T:
         case VA_INT8_T:
             fixed_size += sizeof(uint8_t);
@@ -153,6 +157,14 @@ uint64_t AdminCommand::get_arg_val(uint type, uint& offset, uint8_t* data, uint 
         }
         ret = *(uint32_t*)(data + offset);
         offset += sizeof(uint32_t);
+        break;
+    case VA_UINT64_T:
+    case VA_INT64_T:
+        if (max_size < sizeof(uint64_t)) {
+            throw BadCommand();
+        }
+        ret = *(uint64_t*)(data + offset);
+        offset += sizeof(uint64_t);
         break;
     case VA_UINT8_T:
     case VA_INT8_T:
@@ -240,6 +252,8 @@ void AdminCommand::arg_clean_up(uint stop_item, uint64_t* vec, const va_type_lis
         switch (type) {
         case VA_UINT32_T:
         case VA_INT32_T:
+        case VA_UINT64_T:
+        case VA_INT64_T:
         case VA_UINT8_T:
         case VA_INT8_T:
             break;
@@ -309,6 +323,7 @@ class ArgSource {
 public:
     virtual const char* get_utf8() = 0;
     virtual uint32_t get_uint32() = 0;
+    virtual uint64_t get_uint64() = 0;
     virtual uint8_t get_uint8() = 0;
     virtual const std::vector<uint32_t>* get_uint32v() = 0;
     virtual const std::vector<const char*>* get_utf8v() = 0;
@@ -330,6 +345,11 @@ public:
     virtual uint32_t get_uint32()
     {
         return va_arg(_ap, uint32_t);
+    }
+
+    virtual uint64_t get_uint64()
+    {
+        return va_arg(_ap, uint64_t);
     }
 
     virtual uint8_t get_uint8()
@@ -408,6 +428,12 @@ void AdminCommand::build(ArgSource& source, const va_type_list_t& types, uint nu
             case VA_INT32_T: {
                 *(uint32_t*)ptr = source.get_uint32();
                 ptr += sizeof(uint32_t);
+                break;
+            }
+            case VA_UINT64_T:
+            case VA_INT64_T: {
+                *(uint64_t*)ptr = source.get_uint64();
+                ptr += sizeof(uint64_t);
                 break;
             }
             case VA_UTF8_T:
@@ -640,6 +666,32 @@ static void conv_i32(const char* str, uint64_t &bin_val)
 }
 
 
+static void conv_u64(const char* str, uint64_t &bin_val)
+{
+    char* end;
+    uint64_t ret = strtoul(str, &end, 0);
+
+    if (*end || errno == ERANGE) {
+        THROW("conv failed");
+    }
+
+    bin_val = ret;
+}
+
+
+static void conv_i64(const char* str, uint64_t &bin_val)
+{
+    char* end;
+    int64_t ret = strtol(str, &end, 0);
+
+    if (*end || errno == ERANGE) {
+        THROW("conv failed");
+    }
+
+    bin_val = ret;
+}
+
+
 static void conv_u8(const char* str, uint64_t &bin_val)
 {
     char* end;
@@ -851,6 +903,11 @@ public:
         return (uint32_t)_vec[_pos++];
     }
 
+    virtual uint64_t get_uint64()
+    {
+        return _vec[_pos++];
+    }
+
     virtual uint8_t get_uint8()
     {
         return (uint8_t)_vec[_pos++];
@@ -890,6 +947,14 @@ void AdminRemoteCommand::calls(uint32_t serial, AdminTransmitContext* context,
             case VA_INT32_T:
                 str = get_next_run(str, val);
                 conv_i32(val.c_str(), bin_args[i]);
+                break;
+            case VA_UINT64_T:
+                str = get_next_run(str, val);
+                conv_u64(val.c_str(), bin_args[i]);
+                break;
+            case VA_INT64_T:
+                str = get_next_run(str, val);
+                conv_i64(val.c_str(), bin_args[i]);
                 break;
             case VA_UINT8_T:
                 str = get_next_run(str, val);
@@ -981,6 +1046,12 @@ void AdminRemoteCommand::reply_to_string(va_list args, std::string& result)
             break;
         case VA_INT32_T:
             os << int32_t(source.get_uint32());
+            break;
+        case VA_UINT64_T:
+            os << source.get_uint64();
+            break;
+        case VA_INT64_T:
+            os << source.get_uint64();
             break;
         case VA_UINT8_T:
             os << source.get_uint8();
