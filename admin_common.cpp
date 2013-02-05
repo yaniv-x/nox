@@ -1120,3 +1120,37 @@ void AdminRemoteCommand::reply_to_string(va_list args, std::string& result)
     result = os.str();
 }
 
+
+va_type_list_t admin_types(uint argc, ...)
+{
+    va_type_list_t list(argc);
+    va_list ap;
+
+    va_start(ap, argc);
+
+    for (uint i = 0; i < argc; i++) {
+        list[i] = va_arg(ap, uint32_t);
+    }
+
+    va_end(ap);
+
+    return list;
+}
+
+
+va_names_list_t admin_names(uint argc, ...)
+{
+    va_names_list_t list(argc);
+    va_list ap;
+
+    va_start(ap, argc);
+
+    for (uint i = 0; i < argc; i++) {
+        list[i] = va_arg(ap, char*);
+    }
+
+    va_end(ap);
+
+    return list;
+}
+
