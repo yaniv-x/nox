@@ -1392,6 +1392,7 @@ void CPU::handle_mmio()
 }
 
 
+#ifdef NOX_DEBUG
 void CPU::back_trace_64(address_t rip, address_t frame_pointer, int depth)
 {
     D_MESSAGE("");
@@ -1431,6 +1432,7 @@ void CPU::backtrace_64()
 
     back_trace_64(regs.rip, regs.rbp, 5);
 }
+#endif
 
 
 void CPU::set_single_step()
@@ -1555,6 +1557,119 @@ void CPU::get_regs(CPURegs& regs)
     regs.seg[CPU_SEG_GS] = sys_regs.gs.selector;
     regs.seg[CPU_SEG_SS] = sys_regs.ss.selector;
 }
+
+
+#ifdef NOX_DEBUG
+bool CPU::get_vector_entry_32(uint vector, uint64_t& a)
+{
+    ASSERT(_cpu_state != RUNNING);
+
+    struct kvm_sregs sys_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_SREGS, &sys_regs) == -1) {
+        THROW("get sregs failed %d", errno);
+    }
+
+    struct kvm_translation translation;
+    translation.linear_address = sys_regs.idt.base;
+
+    if (ioctl(_vcpu_fd.get(), KVM_TRANSLATE, &translation) == -1 || !translation.valid) {
+        D_MESSAGE("translate failed");
+        return false;
+    }
+
+    uint64_t address = translation.physical_address;
+
+    if (vector * 8 + 7 > sys_regs.idt.limit) {
+        D_MESSAGE("no int descriptor");
+        return false;
+    }
+
+    address += vector * 8;
+
+    if ((address & GUEST_PAGE_MASK) != ((address + 8 -1) & GUEST_PAGE_MASK)) {
+        D_MESSAGE("page error");
+        return false;
+    }
+
+    uint64_t descriptor;
+
+    memory_bus->read(address, 8, &descriptor);
+    uint type = (descriptor >> (32 + 8)) & 0xf;
+
+    if (!(descriptor & (1UL << (32 + 15)))) {
+        D_MESSAGE("not present error");
+        return false;
+    }
+
+    if ((descriptor & (1UL << (32 + 12)))) {
+        D_MESSAGE("not system");
+        return false;
+    }
+
+    if (type != 0xe) { // 32-bit interrupt gate
+        D_MESSAGE("type error");
+        return false;
+    }
+
+    uint64_t offset =  (descriptor & 0xffff) | ((descriptor >> 32) & (0xffff0000));
+    uint64_t selector =  (descriptor >> 16) & 0xffff;
+
+    if (selector & (1 << 2)) {
+        D_MESSAGE("local");
+        return false;
+    }
+
+    selector >>= 3;
+
+    if (!selector) {
+        D_MESSAGE("null selector");
+        return false;
+    }
+
+    if (selector * 8 + 7 > sys_regs.gdt.limit) {
+        D_MESSAGE("no gtd descriptor");
+        return false;
+    }
+
+    translation.linear_address = sys_regs.gdt.base;
+
+    if (ioctl(_vcpu_fd.get(), KVM_TRANSLATE, &translation) == -1 || !translation.valid) {
+        D_MESSAGE("translate failed");
+        return false;
+    }
+
+    address = translation.physical_address + selector * 8;
+
+    if ((address & GUEST_PAGE_MASK) != ((address + 8 -1) & GUEST_PAGE_MASK)) {
+        D_MESSAGE("page error");
+        return false;
+    }
+
+    memory_bus->read(address, 8, &descriptor);
+    type = (descriptor >> (32 + 8)) & 0xf;
+
+    if (!(descriptor & (1UL << (32 + 15)))) {
+        D_MESSAGE("not present error");
+        return false;
+    }
+
+    if (!(descriptor & (1UL << (32 + 12)))) {
+        D_MESSAGE("not data");
+        return false;
+    }
+
+    if (type != 11) { // Execute/Read, accessed
+        D_MESSAGE("type error");
+        return false;
+    }
+
+    a = ((descriptor >> 16) & 0xffff) + ((descriptor >> 16) & 0xff0000) +
+        ((descriptor >> 32) & 0xff000000) + offset;
+
+    return true;
+}
+#endif
 
 
 bool CPU::translate(uint64_t address, uint64_t& pysical)
