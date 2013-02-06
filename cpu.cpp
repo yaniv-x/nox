@@ -2169,6 +2169,11 @@ void CPU::apic_deliver_nmi_logical(uint dest)
 
 void CPU::nmi()
 {
-    W_MESSAGE("implement me!!!")
+    _nmi = true;
+
+    if (vcpu != this) {
+        __sync_synchronize();
+        force_exec_loop();
+    }
 }
 
