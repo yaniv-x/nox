@@ -66,6 +66,7 @@ private:
 private:
     Mutex _mutex;
     bool _started;
+    bool _terminate;
     nox_time_t _frame_start_time;
     nox_time_t _frame_pos_time;
     nox_time_t _suspend_time;

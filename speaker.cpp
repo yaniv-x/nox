@@ -44,6 +44,7 @@
 
 Speaker::Speaker(VMPart& owner)
     : VMPart("speaker", owner)
+    , _terminate (false)
     , _timer (application->create_timer((void_callback_t)&Speaker::timer_proc, this))
     , _frame_end (_frame + SPEAKER_SAMPLES)
     , _thread (new Thread((Thread::start_proc_t)&Speaker::player_main, this))
@@ -65,6 +66,10 @@ Speaker::Speaker(VMPart& owner)
 Speaker::~Speaker()
 {
     _timer->destroy();
+    _terminate = true;
+    _player_condition.signal();
+    _thread->join();
+    delete _thread;
 }
 
 
@@ -317,6 +322,10 @@ void Speaker::player_main()
      for (;;) {
         if (_pending_frames.empty()) {
             _player_condition.wait(_player_mutex);
+
+            if (_terminate) {
+                break;
+            }
         }
 
         speaket_sample_t* frame = _pending_frames.front();
@@ -330,5 +339,7 @@ void Speaker::player_main()
         lock.lock();
         _free_frames.push_front(frame);
     }
+
+    pa_simple_free(s);
 }
 
