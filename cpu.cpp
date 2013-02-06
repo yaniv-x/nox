@@ -1342,8 +1342,16 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
 
 void CPU::apic_read(uint32_t offset, uint32_t n, uint8_t* dest)
 {
-    if (offset & 0x0f || n != 4) {
-        D_MESSAGE("ignoring offset 0x%x length %u", offset, n);
+    // APIC registers are aligned to 16-byte offsets and must be accessed using DWORD size
+    // read and writes. All other accesses cause undefined behavior.
+
+    if ((offset & 0x0f) || n != 4) {
+        if ((offset & 0x0f) || n > 4) {
+            D_MESSAGE("ignoring offset 0x%x length %u", offset, n);
+            return;
+        }
+
+        memcpy(dest, &_apic_regs[offset >> 4], n);
         return;
     }
 
