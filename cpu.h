@@ -93,7 +93,9 @@ public:
     uint get_id() { return _id;}
     void get_regs(CPURegs& regs);
     bool translate(uint64_t address, uint64_t& pysical);
+#ifdef NOX_DEBUG
     void backtrace_64();
+#endif
     void set_single_step();
     void cancle_single_step();
     void debug_untrap();
@@ -193,7 +195,10 @@ private:
     void apic_update_priority_irr(int irr);
     void apic_update_priority();
 
+#ifdef NOX_DEBUG
     void back_trace_64(address_t rip, address_t frame_pointer, int depth);
+    bool get_vector_entry_32(uint vector, uint64_t& a);
+#endif
 
     void* thread_main();
 
