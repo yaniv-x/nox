@@ -212,7 +212,7 @@ uint8_t KbdController::keyboard_get_output()
 
 void KbdController::compile_mouse_packet()
 {
-    ASSERT(_keyboard_output.buf.is_empty());
+    ASSERT(_mouse_output.buf.is_empty());
 
     uint8_t state = (1 << 3) | (_mouse_buttons & 0x7) |
                     ((uint32_t)(_mouse_dx & (1 << 31)) >> (31 - 4)) |
@@ -229,7 +229,7 @@ void KbdController::compile_mouse_packet()
 
 void KbdController::push_mouse_packet()
 {
-    if (!_keyboard_output.buf.is_empty()) {
+    if (!_mouse_output.buf.is_empty()) {
         _mouse_packet_pending = true;
         return;
     }
