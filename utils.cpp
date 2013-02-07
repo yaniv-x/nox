@@ -35,14 +35,28 @@
 static void svprintf(std::string& str, const char* format, va_list ap)
 {
     int buf_size = 256;
+
     for (;;) {
         AutoArray<char> buf(new char[buf_size]);
-        int r = vsnprintf(buf.get(), buf_size, format, ap);
-        if (r != -1) {
-            str = buf.get();
-            return;
+        va_list args;
+
+        va_copy(args, ap);
+
+        int r = vsnprintf(buf.get(), buf_size, format, args);
+
+        va_end(args);
+
+        if (r == -1) {
+            THROW("vsnprintf failed");
         }
-        buf_size *= 2;
+
+        if (r + 1 > buf_size) {
+            buf_size *= 2;
+            continue;
+        }
+
+        str = buf.get();
+        return;
     }
 }
 
@@ -50,13 +64,23 @@ static void svprintf(std::string& str, const char* format, va_list ap)
 static void wsvprintf(std::wstring& str, const wchar_t* format, va_list ap)
 {
     int buf_size = 256;
+
     for (;;) {
         AutoArray<wchar_t> buf(new wchar_t[buf_size]);
-        int r = vswprintf(buf.get(), buf_size, format, ap);
+        va_list args;
+
+        va_copy(args, ap);
+
+        int r = vswprintf(buf.get(), buf_size, format, args);
+
+        va_end(args);
+
         if (r != -1) {
+            ASSERT(r < buf_size);
             str = buf.get();
             return;
         }
+
         buf_size *= 2;
     }
 }
