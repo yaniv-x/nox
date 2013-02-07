@@ -39,6 +39,15 @@
 #include "io_apic.h"
 
 
+//#define APIC_DEBUG
+
+#ifdef APIC_DEBUG
+#define APIC_DEBUG(format, ...) D_MESSAGE(format, ## __VA_ARGS__)
+#else
+#define APIC_DEBUG(format, ...)
+#endif
+
+
 enum {
     APIC_ENABLE_MASK = (1 << 11),
     APIC_BOOTSTRAP_PROCESSOR_MASK = (1 << 8),
@@ -898,9 +907,10 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
 
         if ((cmd_low & APIC_CMD_LOGICAL_MASK)) {
+            APIC_DEBUG("APIC_CMD_SHORTHAND_DEST logical");
             __apic_deliver_interrupt_logical(vector, dest, level_mode);
         } else {
-            D_MESSAGE("APIC_CMD_SHORTHAND_DEST physical");
+            APIC_DEBUG("APIC_CMD_SHORTHAND_DEST physical");
             if (dest < num_cpus) {
                 if (dest == _id) {
                     Lock lock(_apic_mutex);
@@ -924,16 +934,17 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
         break;
     }
     case APIC_CMD_SHORTHAND_SELF: {
+        APIC_DEBUG("APIC_CMD_SHORTHAND_SELF");
         Lock lock(_apic_mutex);
         apic_put_irr(vector, level_mode);
         break;
     }
     case APIC_CMD_SHORTHAND_ALL:
-        D_MESSAGE("APIC_CMD_SHORTHAND_ALL");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_ALL");
         __apic_deliver_interrupt_all(vector, level_mode);
         break;
     case APIC_CMD_SHORTHAND_EXCLUD:
-        D_MESSAGE("APIC_CMD_SHORTHAND_EXCLUD");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
         __apic_deliver_interrupt_exclude(vector, level_mode);
         break;
     }
@@ -975,7 +986,7 @@ void CPU::apic_command_init(uint32_t cmd_low)
 
     switch (cmd_low & APIC_CMD_SHORTHAND_MASK) {
     case APIC_CMD_SHORTHAND_DEST: {
-        D_MESSAGE("APIC_CMD_SHORTHAND_DEST");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_DEST");
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
         populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
 
@@ -993,7 +1004,7 @@ void CPU::apic_command_init(uint32_t cmd_low)
         break;
     }
     case APIC_CMD_SHORTHAND_EXCLUD: {
-        D_MESSAGE("APIC_CMD_SHORTHAND_EXCLUD");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
 
         for (uint i = 0; i < num_cpus; i++) {
             if (cpus[i] != this) {
@@ -1014,7 +1025,7 @@ void CPU::apic_command_startup(uint32_t cmd_low)
 {
     switch (cmd_low & APIC_CMD_SHORTHAND_MASK) {
     case APIC_CMD_SHORTHAND_DEST: {
-        D_MESSAGE("APIC_CMD_SHORTHAND_DEST");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_DEST");
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
         populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
 
@@ -1029,7 +1040,7 @@ void CPU::apic_command_startup(uint32_t cmd_low)
         break;
     }
     case APIC_CMD_SHORTHAND_EXCLUD: {
-        D_MESSAGE("APIC_CMD_SHORTHAND_EXCLUD");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
 
         for (uint i = 0; i < num_cpus; i++) {
             if (cpus[i] != this) {
@@ -1057,7 +1068,7 @@ void CPU::apic_command_nmi(uint32_t cmd_low)
 
     switch (cmd_low & APIC_CMD_SHORTHAND_MASK) {
     case APIC_CMD_SHORTHAND_DEST: {
-        D_MESSAGE("APIC_CMD_SHORTHAND_DEST");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_DEST");
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
         populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
 
@@ -1075,7 +1086,7 @@ void CPU::apic_command_nmi(uint32_t cmd_low)
         break;
     }
     case APIC_CMD_SHORTHAND_EXCLUD: {
-        D_MESSAGE("APIC_CMD_SHORTHAND_EXCLUD");
+        APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
 
         for (uint i = 0; i < num_cpus; i++) {
             if (cpus[i] != this) {
