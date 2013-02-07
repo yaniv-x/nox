@@ -599,9 +599,7 @@ bool CPU::init_trap()
         return true;
     }
 
-    D_MESSAGE("prepare to startup");
-
-    _startup_address <<= GUEST_PAGE_SHIFT;
+    uint32_t address = _startup_address << GUEST_PAGE_SHIFT;
 
     struct kvm_sregs sys_regs;
 
@@ -609,7 +607,7 @@ bool CPU::init_trap()
         THROW("get sregs failed %d", errno);
     }
 
-    sys_regs.cs.base = _startup_address;
+    sys_regs.cs.base = address;
     sys_regs.cs.selector = sys_regs.cs.base >> 4;
 
     if (ioctl(_vcpu_fd.get(), KVM_SET_SREGS, &sys_regs) == -1) {
@@ -627,8 +625,6 @@ bool CPU::init_trap()
     if (ioctl(_vcpu_fd.get(), KVM_SET_REGS, &regs) == -1) {
         THROW("set regs failed %d", errno);
     }
-
-    _startup_address = 0;
 
     return false;
 }
@@ -1749,6 +1745,7 @@ uint CPU::get_interrupt()
     // CPU core.
 
     uint interrupt = get_direct_interrupt();
+
     if (interrupt != INVALID_INTERRUPT) {
         return interrupt;
     }
@@ -1756,7 +1753,6 @@ uint CPU::get_interrupt()
     if (!is_apic_soft_enabled()) {
         return pic->get_interrupt();
     }
-
 
     int irr = find_high_interrupt(_apic_regs + APIC_OFFSET_IRR);
 
