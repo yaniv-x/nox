@@ -65,9 +65,6 @@ enum {
 };
 
 
-static void put_byte(std::string& str, uint8_t val);
-
-
 const char* amd64_arc = "<?xml version=\"1.0\"?>\n"
                         "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n"
                         "<target version=\"1.0\">\n"
@@ -80,6 +77,86 @@ const char* i386_arc =  "<?xml version=\"1.0\"?>\n"
                         "<target version=\"1.0\">\n"
                             "\t<architecture>i386</architecture>\n"
                         "</target>\n";
+
+
+static void push_hex_byte(std::string& str, uint8_t val)
+{
+    static char hex_conv[] = {
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'a', 'b', 'c', 'd', 'e', 'f'
+    };
+
+    str.push_back(hex_conv[val >> 4]);
+    str.push_back(hex_conv[val & 0x0f]);
+}
+
+
+static void push_hex_word(std::string& str, uint16_t val)
+{
+    push_hex_byte(str, val);
+    push_hex_byte(str, val >> 8);
+}
+
+
+static void push_hex_dword(std::string& str, uint32_t val)
+{
+    push_hex_word(str, val);
+    push_hex_word(str, val >> 16);
+}
+
+
+static void push_hex_qword(std::string& str, uint64_t val)
+{
+    push_hex_dword(str, val);
+    push_hex_dword(str, val >> 32);
+}
+
+
+static uint hex_to_d(char val)
+{
+    if (val >= '0' && val <= '9') {
+        return val - '0';
+    }
+
+    if (val >= 'a' && val <= 'f') {
+        return val - ('a' - 10);
+    }
+
+    if (val >= 'A' && val <= 'F') {
+        return val - ('A' - 10);
+    }
+
+    THROW("invalid");
+}
+
+
+static void hex_to_bin(uint8_t* dest, const char* src, uint len)
+{
+    for (uint i = 0; i < len; i++) {
+        dest[i] = (hex_to_d(src[i * 2]) << 4) | hex_to_d(src[i * 2 + 1]);
+    }
+}
+
+
+static void to_binary_data(std::string& str, const char *src, int n)
+{
+    const char *end =  src + n;
+
+    #define ESCAPE '}'
+
+    for (; src < end; ++src) {
+        switch (*src) {
+        case ESCAPE:
+        case '#':
+        case '$':
+        case '*':
+            str.push_back(ESCAPE);
+            str.push_back(*src ^ 0x20);
+        default:
+            str.push_back(*src);
+        }
+    }
+}
 
 
 GDBTarget::GDBTarget(NoxVM& vm, RunLoop& loop)
@@ -235,7 +312,7 @@ void GDBTarget::interrupt(bool ok)
     set_debugger_traps();
     _halt_reason = SIGINT;
     _current_thread = 1;
-    put_packet("T02");
+    push_packet("T02");
     transmit();
 }
 
@@ -256,11 +333,11 @@ void GDBTarget::trap(bool ok)
     set_debugger_traps();
     _halt_reason = SIGTRAP;
     std::string  notifiction("T05thread:");
-    put_byte(notifiction, _break_initator);
+    push_hex_byte(notifiction, _break_initator);
     _current_thread = _break_initator;
     _break_initator = ~0;
     notifiction += ";";
-    put_packet(notifiction.c_str());
+    push_packet(notifiction.c_str());
     transmit();
 }
 
@@ -297,7 +374,7 @@ void GDBTarget::detach(bool ok)
 
     _vm.vm_debug_cont(NULL, NULL);
     _state = DETACHED;
-    put_packet("OK");
+    push_packet("OK");
     transmit();
     I_MESSAGE("debugger detached");
 }
@@ -336,7 +413,6 @@ void GDBTarget::accept()
         close(new_connection);
         return;
     }
-
 
     if ((flags = fcntl(new_connection, F_GETFL)) == -1 ||
         fcntl(new_connection, F_SETFL, flags | O_NONBLOCK) == -1) {
@@ -415,7 +491,7 @@ void GDBTarget::ack()
 }
 
 
-void GDBTarget::put_packet(const char* data)
+void GDBTarget::push_packet(const char* data)
 {
     uint8_t sum = 0;
 
@@ -426,60 +502,6 @@ void GDBTarget::put_packet(const char* data)
     std::string packet;
     sprintf(packet, "$%s#%.2x", data, sum);
     _output += packet;
-}
-
-
-static void put_byte(std::string& str, uint8_t val)
-{
-    static char hex_conv[] = {
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        'a', 'b', 'c', 'd', 'e', 'f'
-    };
-
-    str.push_back(hex_conv[val >> 4]);
-    str.push_back(hex_conv[val & 0x0f]);
-}
-
-
-static void put_word(std::string& str, uint16_t val)
-{
-    put_byte(str, val);
-    put_byte(str, val >> 8);
-}
-
-
-static void put_dword(std::string& str, uint32_t val)
-{
-    put_word(str, val);
-    put_word(str, val >> 16);
-}
-
-
-static void put_qword(std::string& str, uint64_t val)
-{
-    put_dword(str, val);
-    put_dword(str, val >> 32);
-}
-
-
-static void to_binary_data(std::string& str, const char *src, int n)
-{
-    const char *end =  src + n;
-
-    #define ESCAPE '}'
-
-    for (; src < end; ++src) {
-        switch (*src) {
-        case ESCAPE:
-        case '#':
-        case '$':
-        case '*':
-            str.push_back(ESCAPE);
-            str.push_back(*src ^ 0x20);
-        default:
-            str.push_back(*src);
-        }
-    }
 }
 
 
@@ -523,7 +545,7 @@ void GDBTarget::handle_v()
         str += strlen("Cont");
 
         if (*str == '?') {
-            put_packet("vCont;c;C;s;S"); // todo: try to remove C and S
+            push_packet("vCont;c;C;s;S"); // todo: try to remove C and S
             return;
         }
 
@@ -621,34 +643,8 @@ void GDBTarget::handle_v()
     }
 
     D_MESSAGE("unhandles: %s", _data.c_str());
-    put_packet("");
+    push_packet("");
     return;
-}
-
-
-uint hex_to_d(char val)
-{
-    if (val >= '0' && val <= '9') {
-        return val - '0';
-    }
-
-    if (val >= 'a' && val <= 'f') {
-        return val - ('a' - 10);
-    }
-
-    if (val >= 'A' && val <= 'F') {
-        return val - ('A' - 10);
-    }
-
-    THROW("invalid");
-}
-
-
-void hex_to_bin(uint8_t* dest, const char* src, uint len)
-{
-    for (uint i = 0; i < len; i++) {
-        dest[i] = (hex_to_d(src[i * 2]) << 4) | hex_to_d(src[i * 2 + 1]);
-    }
 }
 
 
@@ -684,7 +680,7 @@ void GDBTarget::handle_write_mem()
         uint64_t pysical;
 
         if (!cpu.translate(address, pysical)) {
-            put_packet("E01");
+            push_packet("E01");
             return;
         }
 
@@ -696,7 +692,7 @@ void GDBTarget::handle_write_mem()
         data_start += now * 2;
     }
 
-    put_packet("OK");
+    push_packet("OK");
 }
 
 
@@ -710,44 +706,44 @@ void GDBTarget::handle_regs()
     std::string regs_str;
 
     if (_long_mode) {
-        put_qword(regs_str, regs.r[CPU_REG_A_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_B_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_C_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_D_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_SI_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_DI_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_BP_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_SP_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_8_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_9_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_10_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_11_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_12_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_13_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_14_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_15_INDEX]);
-        put_qword(regs_str, regs.r[CPU_REG_IP_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_A_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_B_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_C_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_D_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_SI_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_DI_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_BP_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_SP_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_8_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_9_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_10_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_11_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_12_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_13_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_14_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_15_INDEX]);
+        push_hex_qword(regs_str, regs.r[CPU_REG_IP_INDEX]);
     } else {
-        put_dword(regs_str, regs.r[CPU_REG_A_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_C_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_D_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_B_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_SP_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_BP_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_SI_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_DI_INDEX]);
-        put_dword(regs_str, regs.r[CPU_REG_IP_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_A_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_C_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_D_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_B_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_SP_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_BP_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_SI_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_DI_INDEX]);
+        push_hex_dword(regs_str, regs.r[CPU_REG_IP_INDEX]);
     }
 
-    put_dword(regs_str, regs.r[CPU_REG_FLAGS_INDEX]);
-    put_dword(regs_str, regs.seg[CPU_SEG_CS]);
-    put_dword(regs_str, regs.seg[CPU_SEG_SS]);
-    put_dword(regs_str, regs.seg[CPU_SEG_DS]);
-    put_dword(regs_str, regs.seg[CPU_SEG_ES]);
-    put_dword(regs_str, regs.seg[CPU_SEG_FS]);
-    put_dword(regs_str, regs.seg[CPU_SEG_GS]);
+    push_hex_dword(regs_str, regs.r[CPU_REG_FLAGS_INDEX]);
+    push_hex_dword(regs_str, regs.seg[CPU_SEG_CS]);
+    push_hex_dword(regs_str, regs.seg[CPU_SEG_SS]);
+    push_hex_dword(regs_str, regs.seg[CPU_SEG_DS]);
+    push_hex_dword(regs_str, regs.seg[CPU_SEG_ES]);
+    push_hex_dword(regs_str, regs.seg[CPU_SEG_FS]);
+    push_hex_dword(regs_str, regs.seg[CPU_SEG_GS]);
 
-    put_packet(regs_str.c_str());
+    push_packet(regs_str.c_str());
 }
 
 
@@ -770,21 +766,21 @@ void GDBTarget::handle_read_mem()
         uint64_t pysical;
 
         if (!cpu.translate(address, pysical)) {
-            put_packet("E01");
+            push_packet("E01");
             return;
         }
 
         memory_bus->read(pysical, now, buf);
 
         for (int i = 0; i < now; i++) {
-            put_byte(mem, buf[i]);
+            push_hex_byte(mem, buf[i]);
         }
 
         address += now;
         size -= now;
     }
 
-    put_packet(mem.c_str());
+    push_packet(mem.c_str());
 }
 
 
@@ -795,7 +791,7 @@ void GDBTarget::handle_thread_ext_info()
     bool num_ok = str_to_ulong(_data.c_str() + strlen("qThreadExtraInfo,"), id, 16);
 
     if (!num_ok || !is_valid_thread_id(id)) {
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
@@ -804,9 +800,9 @@ void GDBTarget::handle_thread_ext_info()
     std::string hex;
 
     for (int i = 0; i < description.size(); i++) {
-        put_byte(hex, description[i]);
+        push_hex_byte(hex, description[i]);
     }
-    put_packet(hex.c_str());
+    push_packet(hex.c_str());
 }
 
 
@@ -814,14 +810,14 @@ void GDBTarget::handle_thread_info()
 {
     uint num_cpus = _vm.get_cpu_count();
     std::string reply("m");
-    put_byte(reply, 1);
+    push_hex_byte(reply, 1);
 
     for (uint i = 2; i <= num_cpus; i++) {
         reply += ',';
-        put_byte(reply, i);
+        push_hex_byte(reply, i);
     }
 
-    put_packet(reply.c_str());
+    push_packet(reply.c_str());
 }
 
 
@@ -833,25 +829,25 @@ void GDBTarget::handle_features_read(const char* features)
 
     if (strncmp(features, "target.xml:", name_len)) {
         D_MESSAGE("not supported %s", features);
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
     if (sscanf(features + name_len, "%x,%x", &offset, &size) != 2) {
         D_MESSAGE("invalid format %s", features);
-        put_packet("E01");
+        push_packet("E01");
     }
 
     const char* target = (_long_mode) ? amd64_arc : i386_arc;
     uint n = strlen(target);
 
     if (offset == n) {
-        put_packet("l");
+        push_packet("l");
         return;
     }
 
     if (offset > n) {
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
@@ -869,31 +865,31 @@ void GDBTarget::handle_features_read(const char* features)
     const char* pos = target + offset;
 
     to_binary_data(str, pos, n);
-    put_packet(str.c_str());
+    push_packet(str.c_str());
 }
 
 
 void GDBTarget::handle_q()
 {
     if (strncmp(_data.c_str(), "qSupported", strlen("qSupported")) == 0) {
-        put_packet("qXfer:features:read+");
+        push_packet("qXfer:features:read+");
     } else  if (strncmp(_data.c_str(), "qAttached", strlen("qAttached")) == 0) {
-        put_packet("1");
+        push_packet("1");
     } else if (strcmp(_data.c_str(), "qC") == 0) {
         std::string reply("QC");
-        put_byte(reply, _current_thread);
-        put_packet(reply.c_str());
+        push_hex_byte(reply, _current_thread);
+        push_packet(reply.c_str());
     } else if (strcmp(_data.c_str(), "qfThreadInfo") == 0) {
         handle_thread_info();
     } else if (strcmp(_data.c_str(), "qsThreadInfo") == 0) {
-        put_packet("l");
+        push_packet("l");
     } else if (strncmp(_data.c_str(), "qThreadExtraInfo,", strlen("qThreadExtraInfo,")) == 0) {
         handle_thread_ext_info();
     } else if (strncmp(_data.c_str(), "qXfer:features:read:",
                        strlen("qXfer:features:read:")) == 0) {
         handle_features_read(_data.c_str() + strlen("qXfer:features:read:"));
     } else {
-        put_packet("");
+        push_packet("");
     }
 }
 
@@ -903,7 +899,7 @@ void GDBTarget::handle_H(const char* cmd)
     long id;
 
     if (strlen(cmd) < 2 || !str_to_long(cmd + 1, id, 16)) {
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
@@ -912,18 +908,18 @@ void GDBTarget::handle_H(const char* cmd)
     }
 
     if (!is_valid_thread_id(id)) {
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
     if (cmd[0] == 'g') {
         _target = id;
     } else if (cmd[0] != 'c') {
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
-    put_packet("OK");
+    push_packet("OK");
 }
 
 
@@ -932,11 +928,11 @@ void GDBTarget::handle_T()
     ulong id;
 
     if (!str_to_ulong(_data.c_str() + 1, id, 16) || !is_valid_thread_id(id)) {
-        put_packet("E01");
+        push_packet("E01");
         return;
     }
 
-    put_packet("OK");
+    push_packet("OK");
 }
 
 
@@ -945,7 +941,7 @@ void GDBTarget::handle_halt_reason()
     std::string reply;
 
     sprintf(reply, "S%x", _halt_reason);
-    put_packet(reply.c_str());
+    push_packet(reply.c_str());
 }
 
 
@@ -992,7 +988,7 @@ void GDBTarget::process_packet()
         break;
     default:
         D_MESSAGE("unhandles: %s", _data.c_str());
-        put_packet("");
+        push_packet("");
     }
 }
 
