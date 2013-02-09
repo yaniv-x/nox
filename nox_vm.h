@@ -63,6 +63,7 @@ public:
     KVM& get_kvm() { return *_kvm.get();}
     IOBus& get_io_bus() { return *_io_bus.get();}
     CPU* get_cpu(uint id);
+    uint get_cpu_count() { return _num_cpus;}
     PIT& get_pit() { return *_pit.get();}
     PMController& get_pm_controller() { return *_pm_controller.get();}
     void set_nmi_mask(bool mask) { _nmi_mask = mask;}

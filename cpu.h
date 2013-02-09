@@ -98,10 +98,13 @@ public:
 #endif
     void set_single_step();
     void cancle_single_step();
-    void debug_untrap();
+    void set_debugger_trap();
+    void remove_debugger_trap();
     void enter_debug_mode(void_callback_t cb, void* opaque);
     void exit_debug_mode();
     void trigger_debug_trap();
+    bool is_long_mode();
+    uint get_cs_bits();
     bool pending_sleep_request();
     void clear_sleep_request();
 
@@ -227,6 +230,7 @@ private:
     Mutex _trap_mutex;
     Condition _trap_condition;
     bool (CPU::*_trap)();
+    bool (CPU::*_saved_trap)();
     uint32_t _version_information;
     Mutex _apic_mutex;
     address_t _apic_address;
@@ -241,7 +245,6 @@ private:
     //Mutex _apic_timer_mutex;
     void_callback_t _debug_cb;
     void* _debug_opaque;
-    bool _debug_trap;
     bool _init_trap;
     uint32_t _startup_address;
     uint32_t _cpu_dest_mask[ALIGN(MAX_CPUS, 32) / 32];
