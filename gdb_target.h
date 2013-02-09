@@ -68,7 +68,7 @@ private:
     void handle_halt_reason();
     void process_packet();
     void ack();
-    void put_packet(const char* data);
+    void push_packet(const char* data);
     void attach(bool ok);
     void set_debugger_traps();
     void clear_debugger_traps();
