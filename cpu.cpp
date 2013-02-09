@@ -261,7 +261,6 @@ CPU::CPU(NoxVM& vm)
     , _version_information (0)
     , _debug_cb (NULL)
     , _debug_opaque (NULL)
-    , _debug_trap (false)
     , _init_trap (false)
 {
     ASSERT(_id < MAX_CPUS);
@@ -708,7 +707,6 @@ void CPU::reset()
 
     _trap = NULL;
     _nmi = false;
-    _debug_trap = false;
     _init_trap = false;
     _startup_address = 0;
 
@@ -779,25 +777,74 @@ void CPU::trap_wait()
 
 bool CPU::debug_trap()
 {
-    return _debug_trap;
+    return true;
 }
 
 
 void CPU::set_debug_trap()
 {
     ASSERT(_trap == NULL);
-    _debug_trap = true;
     _trap = &CPU::debug_trap;
     _debug_cb(_debug_opaque);
     trap_wait();
 }
 
 
-void CPU::debug_untrap()
+void CPU::set_debugger_trap()
 {
-    Lock lock(_trap_mutex);
-    _debug_trap = false;
-    _trap_condition.signal();
+    ASSERT(get_state() == VMPart::DEBUGGING);
+
+    if (_trap == &CPU::debug_trap) {
+        return;
+    }
+
+    _saved_trap = _trap;
+    _trap = &CPU::debug_trap;
+}
+
+
+void CPU::remove_debugger_trap()
+{
+    ASSERT(get_state() == VMPart::DEBUGGING);
+
+    if (_trap != &CPU::debug_trap) {
+        return;
+    }
+
+    _trap = _saved_trap;
+    _saved_trap = NULL;
+}
+
+
+bool CPU::is_long_mode()
+{
+    ASSERT(get_state() == VMPart::DEBUGGING);
+
+    struct kvm_sregs sys_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_SREGS, &sys_regs) == -1) {
+        THROW("get sregs failed %d", errno);
+    }
+
+    return !!(sys_regs.efer & (1 << 10 /**/));
+}
+
+
+uint CPU::get_cs_bits()
+{
+    ASSERT(get_state() == VMPart::DEBUGGING);
+
+    struct kvm_sregs sys_regs;
+
+    if (ioctl(_vcpu_fd.get(), KVM_GET_SREGS, &sys_regs) == -1) {
+        THROW("get sregs failed %d", errno);
+    }
+
+    if ((sys_regs.efer & (1 << 10 /**/)) && (sys_regs.cs.l)) {
+        return (sys_regs.cs.db) ? 0 : 64;
+    }
+
+    return (sys_regs.cs.db) ? 32 : 16;
 }
 
 
@@ -1459,7 +1506,7 @@ void CPU::set_single_step()
 
 void CPU::enter_debug_mode(void_callback_t cb, void* opaque)
 {
-    ASSERT(_cpu_state != RUNNING);
+    ASSERT(get_state() == VMPart::DEBUGGING && _debug_cb == NULL);
 
     struct kvm_guest_debug debug;
 
@@ -1472,12 +1519,14 @@ void CPU::enter_debug_mode(void_callback_t cb, void* opaque)
 
     _debug_cb = cb;
     _debug_opaque = opaque;
+    _saved_trap = NULL;
+    set_debugger_trap();
 }
 
 
 void CPU::cancle_single_step()
 {
-    ASSERT(_cpu_state != RUNNING);
+    ASSERT(get_state() == VMPart::DEBUGGING);
 
     struct kvm_guest_debug debug;
 
@@ -1487,14 +1536,12 @@ void CPU::cancle_single_step()
     if (ioctl(_vcpu_fd.get(), KVM_SET_GUEST_DEBUG, &debug) == -1) {
         THROW("failed %d", errno);
     }
-
-    _debug_trap = false;
 }
 
 
 void CPU::exit_debug_mode()
 {
-    ASSERT(_cpu_state != RUNNING);
+    ASSERT(get_state() == VMPart::DEBUGGING);
 
     struct kvm_guest_debug debug;
 
@@ -1506,7 +1553,7 @@ void CPU::exit_debug_mode()
 
     _debug_cb = NULL;
     _debug_opaque = NULL;
-    _debug_trap = false;
+    remove_debugger_trap();
 }
 
 

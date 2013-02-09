@@ -37,13 +37,10 @@
 
 /*
     todo:
-        support target descriptions via qXfer where annex is target.xml
-        support multi thread including qXfer:threads:read
         support G command
         support z0 and Z0
-        discconect on mode change
+        discconect on mode change?
         translet ip in case of 16bit
-        support 64bit
 */
 
 
@@ -66,6 +63,23 @@ enum {
     SUM0,
     SUM1,
 };
+
+
+static void put_byte(std::string& str, uint8_t val);
+
+
+const char* amd64_arc = "<?xml version=\"1.0\"?>\n"
+                        "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n"
+                        "<target version=\"1.0\">\n"
+                            "\t<architecture>i386:x86-64</architecture>\n"
+                        "</target>\n";
+
+
+const char* i386_arc =  "<?xml version=\"1.0\"?>\n"
+                        "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n"
+                        "<target version=\"1.0\">\n"
+                            "\t<architecture>i386</architecture>\n"
+                        "</target>\n";
 
 
 GDBTarget::GDBTarget(NoxVM& vm, RunLoop& loop)
@@ -117,6 +131,30 @@ GDBTarget::~GDBTarget()
 }
 
 
+bool GDBTarget::is_valid_thread_id(uint id)
+{
+    return id > 0 && id <= _vm.get_cpu_count();
+}
+
+
+CPU& GDBTarget::get_cpu(uint cpu_id)
+{
+    CPU* cpu = _vm.get_cpu(cpu_id);
+
+    if (!cpu) {
+        THROW("no cpu %u", cpu_id);
+    }
+
+    return *cpu;
+}
+
+
+CPU& GDBTarget::target_cpu()
+{
+    return get_cpu(_target - 1);
+}
+
+
 void GDBTarget::cpu_interrupt()
 {
     Lock lock(_detach_mutex);
@@ -148,19 +186,36 @@ void GDBTarget::attach(bool ok)
     _in_state = START;
     _output.clear();
     _data.clear();
+    _target = 1;
+    _current_thread = 1;
+    _break_initator = ~0;
+    _halt_reason = SIGSTOP;
+    _long_mode = get_cpu(0).is_long_mode();
 
-    CPU* cpu = _vm.get_cpu(0);
-
-    if (!cpu) {
-        THROW("no cpu 0");
+    for (uint i = 0; i < _vm.get_cpu_count(); i++) {
+        get_cpu(i).enter_debug_mode((void_callback_t)&GDBTarget::debug_condition, this);
     }
-
-    cpu->enter_debug_mode((void_callback_t)&GDBTarget::debug_condition, this);
 
     _state = ATTACHED;
 
     _io_event = _loop.create_fd_event(_connection, (void_callback_t)&GDBTarget::handle_io, this);
     I_MESSAGE("debugger attached");
+}
+
+
+void GDBTarget::clear_debugger_traps()
+{
+    for (uint i = 0; i < _vm.get_cpu_count(); i++) {
+        get_cpu(i).remove_debugger_trap();
+    }
+}
+
+
+void GDBTarget::set_debugger_traps()
+{
+    for (uint i = 0; i < _vm.get_cpu_count(); i++) {
+        get_cpu(i).set_debugger_trap();
+    }
 }
 
 
@@ -177,7 +232,10 @@ void GDBTarget::interrupt(bool ok)
         return;
     }
 
-    put_packet("T02"); //SIGINT
+    set_debugger_traps();
+    _halt_reason = SIGINT;
+    _current_thread = 1;
+    put_packet("T02");
     transmit();
 }
 
@@ -195,13 +253,25 @@ void GDBTarget::trap(bool ok)
         return;
     }
 
-    put_packet("T05"); //SIGTRAP
+    set_debugger_traps();
+    _halt_reason = SIGTRAP;
+    std::string  notifiction("T05thread:");
+    put_byte(notifiction, _break_initator);
+    _current_thread = _break_initator;
+    _break_initator = ~0;
+    notifiction += ";";
+    put_packet(notifiction.c_str());
     transmit();
 }
 
 
 void GDBTarget::debug_condition()
 {
+    if (_break_initator != ~0) {
+        W_MESSAGE("initator exist");
+    }
+
+    _break_initator = vcpu->get_id() + 1;
     _vm.vm_debug((NoxVM::compleation_routin_t)&GDBTarget::trap, this);
 }
 
@@ -221,13 +291,10 @@ void GDBTarget::detach(bool ok)
 
     Lock lock(_detach_mutex);
 
-    CPU* cpu = _vm.get_cpu(0);
-
-    if (!cpu) {
-        THROW("no cpu 0");
+    for (uint i = 0; i < _vm.get_cpu_count(); i++) {
+        get_cpu(i).exit_debug_mode();
     }
 
-    cpu->exit_debug_mode();
     _vm.vm_debug_cont(NULL, NULL);
     _state = DETACHED;
     put_packet("OK");
@@ -245,13 +312,10 @@ void GDBTarget::terminate_cb(bool ok)
 
     Lock lock(_detach_mutex);
 
-    CPU* cpu = _vm.get_cpu(0);
-
-    if (!cpu) {
-        THROW("no cpu 0");
+    for (uint i = 0; i < _vm.get_cpu_count(); i++) {
+        get_cpu(i).exit_debug_mode();
     }
 
-    cpu->exit_debug_mode();
     _vm.vm_debug_cont(NULL, NULL);
     _state = DETACHED;
     disconnect();
@@ -391,6 +455,65 @@ static void put_dword(std::string& str, uint32_t val)
 }
 
 
+static void put_qword(std::string& str, uint64_t val)
+{
+    put_dword(str, val);
+    put_dword(str, val >> 32);
+}
+
+
+static void to_binary_data(std::string& str, const char *src, int n)
+{
+    const char *end =  src + n;
+
+    #define ESCAPE '}'
+
+    for (; src < end; ++src) {
+        switch (*src) {
+        case ESCAPE:
+        case '#':
+        case '$':
+        case '*':
+            str.push_back(ESCAPE);
+            str.push_back(*src ^ 0x20);
+        default:
+            str.push_back(*src);
+        }
+    }
+}
+
+
+enum {
+   NOP,
+   STEP,
+   CONT,
+};
+
+
+void GDBTarget::resume(std::vector<uint>& cpu_actions)
+{
+    for (uint i = 0; i < cpu_actions.size(); i++) {
+        CPU& cpu = get_cpu(i);
+
+        switch (cpu_actions[i]) {
+        case STEP:
+            cpu.remove_debugger_trap();
+            cpu.set_single_step();
+            break;
+        case CONT:
+            cpu.remove_debugger_trap();
+            cpu.cancle_single_step();
+            break;
+        case NOP:
+            D_MESSAGE("no action for cpu %u", i);
+        }
+    }
+
+    _halt_reason = 0;
+    _vm.vm_debug_cont(NULL, NULL);
+}
+
+
 void GDBTarget::handle_v()
 {
     AutoArray<char> v(copy_cstr(_data.c_str() + 1));
@@ -400,13 +523,20 @@ void GDBTarget::handle_v()
         str += strlen("Cont");
 
         if (*str == '?') {
-            put_packet("vCont;c;C;s;S");
+            put_packet("vCont;c;C;s;S"); // todo: try to remove C and S
+            return;
+        }
+
+        if (!_halt_reason) {
+            D_MESSAGE("ignoring %s while not in halt state", _data.c_str());
             return;
         }
 
         if (*str++ != ';') {
             THROW("parse failed %s", _data.c_str());
         }
+
+        std::vector<uint> cpu_actions(_vm.get_cpu_count(), NOP);
 
         for (;;) {
             char* next = strchr(str, ';');
@@ -416,8 +546,8 @@ void GDBTarget::handle_v()
             }
 
             uint __attribute__ ((unused)) signal = 0;
-            uint __attribute__ ((unused)) tid;
             bool step;
+            bool all = true;
 
             switch (*str++) {
             case 'C': {
@@ -449,36 +579,40 @@ void GDBTarget::handle_v()
             if (*str == ':') {
                 str += 1;
                 char* end_ptr;
-                tid = strtol(str, &end_ptr, 16);
+                uint tid = strtol(str, &end_ptr, 16);
+
                 if (end_ptr == str) {
                     THROW("parse failed %s", _data.c_str());
                 }
+
                 str = end_ptr;
-            } else {
-                tid = 0;
+
+                if (tid != -1) {
+
+                    all = false;
+
+                    if (!is_valid_thread_id(tid)) {
+                        THROW("invalid thread id %s", _data.c_str());
+                    }
+
+                    cpu_actions[tid - 1] = (step) ? STEP : CONT;
+                }
+            }
+
+            if (all) {
+                for (uint i = 0; i < cpu_actions.size(); i++) {
+                    if (cpu_actions[i] == NOP) {
+                        cpu_actions[i] = (step) ? STEP : CONT;
+                    }
+                }
             }
 
             if (*str) {
                 THROW("parse failed %s", _data.c_str());
             }
 
-            CPU* cpu = _vm.get_cpu(0);
-
-            if (!cpu) {
-                THROW("no cpu 0");
-            }
-
-            if (step) {
-                cpu->set_single_step();
-            } else {
-                cpu->cancle_single_step();
-            }
-
-            cpu->debug_untrap();
-
-            _vm.vm_debug_cont(NULL, NULL);
-
             if (!next) {
+                resume(cpu_actions);
                 return;
             }
 
@@ -520,29 +654,19 @@ void hex_to_bin(uint8_t* dest, const char* src, uint len)
 
 void GDBTarget::handle_write_mem()
 {
-    uint64_t adderss;
-    uint64_t pysical;
-    uint size;
     uint8_t buf[GUEST_PAGE_SIZE];
-
-    CPU* cpu = _vm.get_cpu(0);
-
-    if (!cpu) {
-        THROW("no cpu 0");
-    }
-
+    uint64_t address;
+    uint size;
     char dumy;
-    int n = sscanf(_data.c_str(), "M%lx,%x:%c", &adderss, &size, &dumy);
-    if (n != 3 || size * 2 > GUEST_PAGE_SIZE) {
+
+    CPU& cpu = target_cpu();
+
+    if (sscanf(_data.c_str(), "M%lx,%x:%c", &address, &size, &dumy) != 3) {
         THROW("parse failed %s", _data.c_str());
     }
 
-    if (size * 2 > GUEST_PAGE_SIZE) {
+    if (size > GUEST_PAGE_SIZE) {
         THROW("too big %s", _data.c_str());
-    }
-
-    if (!cpu->translate(adderss, pysical)) {
-        THROW("translate failed %s", _data.c_str());
     }
 
     const char* data_start = strchr(_data.c_str(), ':');
@@ -555,8 +679,22 @@ void GDBTarget::handle_write_mem()
         THROW("size mismatche %s", _data.c_str());
     }
 
-    hex_to_bin(buf, data_start, size);
-    memory_bus->write(buf, size, pysical);
+    while (size) {
+        uint now = MIN(size, GUEST_PAGE_SIZE - address % GUEST_PAGE_SIZE);
+        uint64_t pysical;
+
+        if (!cpu.translate(address, pysical)) {
+            put_packet("E01");
+            return;
+        }
+
+        hex_to_bin(buf, data_start, now);
+        memory_bus->write(buf, now, pysical);
+
+        address += now;
+        size -= now;
+        data_start += now * 2;
+    }
 
     put_packet("OK");
 }
@@ -564,26 +702,43 @@ void GDBTarget::handle_write_mem()
 
 void GDBTarget::handle_regs()
 {
-    CPU* cpu = _vm.get_cpu(0);
-
-    if (!cpu) {
-        THROW("no cpu 0");
-    }
+    CPU& cpu = target_cpu();
 
     CPURegs regs;
-    cpu->get_regs(regs);
+    cpu.get_regs(regs);
 
     std::string regs_str;
 
-    put_dword(regs_str, regs.r[CPU_REG_A_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_C_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_D_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_B_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_SP_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_BP_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_SI_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_DI_INDEX]);
-    put_dword(regs_str, regs.r[CPU_REG_IP_INDEX]);
+    if (_long_mode) {
+        put_qword(regs_str, regs.r[CPU_REG_A_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_B_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_C_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_D_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_SI_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_DI_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_BP_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_SP_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_8_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_9_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_10_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_11_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_12_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_13_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_14_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_15_INDEX]);
+        put_qword(regs_str, regs.r[CPU_REG_IP_INDEX]);
+    } else {
+        put_dword(regs_str, regs.r[CPU_REG_A_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_C_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_D_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_B_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_SP_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_BP_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_SI_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_DI_INDEX]);
+        put_dword(regs_str, regs.r[CPU_REG_IP_INDEX]);
+    }
+
     put_dword(regs_str, regs.r[CPU_REG_FLAGS_INDEX]);
     put_dword(regs_str, regs.seg[CPU_SEG_CS]);
     put_dword(regs_str, regs.seg[CPU_SEG_SS]);
@@ -598,60 +753,199 @@ void GDBTarget::handle_regs()
 
 void GDBTarget::handle_read_mem()
 {
-    uint64_t adderss;
-    uint64_t pysical;
-    unsigned size;
     uint8_t buf[GUEST_PAGE_SIZE];
+    uint64_t address;
+    uint size;
 
-    CPU* cpu = _vm.get_cpu(0);
+    CPU& cpu = target_cpu();
 
-    if (!cpu) {
-        THROW("no cpu 0");
-    }
-
-    if (sscanf(_data.c_str(), "m%lx,%x", &adderss, &size) != 2 || size > GUEST_PAGE_SIZE) {
+    if (sscanf(_data.c_str(), "m%lx,%x", &address, &size) != 2 || size > GUEST_PAGE_SIZE) {
         THROW("parse failed %s", _data.c_str());
-    }
-
-    if (!cpu->translate(adderss, pysical)) {
-        THROW("translate failed", _data.c_str());
     }
 
     std::string mem;
 
-    memory_bus->read(pysical, size, buf);
+    while (size) {
+        uint now = MIN(size, GUEST_PAGE_SIZE - address % GUEST_PAGE_SIZE);
+        uint64_t pysical;
 
-    for (int i = 0; i < size; i++) {
-        put_byte(mem, buf[i]);
+        if (!cpu.translate(address, pysical)) {
+            put_packet("E01");
+            return;
+        }
+
+        memory_bus->read(pysical, now, buf);
+
+        for (int i = 0; i < now; i++) {
+            put_byte(mem, buf[i]);
+        }
+
+        address += now;
+        size -= now;
     }
 
     put_packet(mem.c_str());
 }
 
 
+void GDBTarget::handle_thread_ext_info()
+{
+    ulong id;
+
+    bool num_ok = str_to_ulong(_data.c_str() + strlen("qThreadExtraInfo,"), id, 16);
+
+    if (!num_ok || !is_valid_thread_id(id)) {
+        put_packet("E01");
+        return;
+    }
+
+    std::string description;
+    sprintf(description, "cpu-%u %u-bits", id - 1, get_cpu(id - 1).get_cs_bits());
+    std::string hex;
+
+    for (int i = 0; i < description.size(); i++) {
+        put_byte(hex, description[i]);
+    }
+    put_packet(hex.c_str());
+}
+
+
+void GDBTarget::handle_thread_info()
+{
+    uint num_cpus = _vm.get_cpu_count();
+    std::string reply("m");
+    put_byte(reply, 1);
+
+    for (uint i = 2; i <= num_cpus; i++) {
+        reply += ',';
+        put_byte(reply, i);
+    }
+
+    put_packet(reply.c_str());
+}
+
+
+void GDBTarget::handle_features_read(const char* features)
+{
+    uint offset;
+    uint size;
+    uint name_len = strlen("target.xml:");
+
+    if (strncmp(features, "target.xml:", name_len)) {
+        D_MESSAGE("not supported %s", features);
+        put_packet("E01");
+        return;
+    }
+
+    if (sscanf(features + name_len, "%x,%x", &offset, &size) != 2) {
+        D_MESSAGE("invalid format %s", features);
+        put_packet("E01");
+    }
+
+    const char* target = (_long_mode) ? amd64_arc : i386_arc;
+    uint n = strlen(target);
+
+    if (offset == n) {
+        put_packet("l");
+        return;
+    }
+
+    if (offset > n) {
+        put_packet("E01");
+        return;
+    }
+
+    n -= offset;
+
+    std::string str;
+
+    if (size < n) {
+        str = "m";
+        n = size;
+    } else {
+        str = "l";
+    }
+
+    const char* pos = target + offset;
+
+    to_binary_data(str, pos, n);
+    put_packet(str.c_str());
+}
+
+
 void GDBTarget::handle_q()
 {
     if (strncmp(_data.c_str(), "qSupported", strlen("qSupported")) == 0) {
-        put_packet("");
+        put_packet("qXfer:features:read+");
     } else  if (strncmp(_data.c_str(), "qAttached", strlen("qAttached")) == 0) {
         put_packet("1");
     } else if (strcmp(_data.c_str(), "qC") == 0) {
-        put_packet("1");
+        std::string reply("QC");
+        put_byte(reply, _current_thread);
+        put_packet(reply.c_str());
+    } else if (strcmp(_data.c_str(), "qfThreadInfo") == 0) {
+        handle_thread_info();
+    } else if (strcmp(_data.c_str(), "qsThreadInfo") == 0) {
+        put_packet("l");
+    } else if (strncmp(_data.c_str(), "qThreadExtraInfo,", strlen("qThreadExtraInfo,")) == 0) {
+        handle_thread_ext_info();
+    } else if (strncmp(_data.c_str(), "qXfer:features:read:",
+                       strlen("qXfer:features:read:")) == 0) {
+        handle_features_read(_data.c_str() + strlen("qXfer:features:read:"));
     } else {
         put_packet("");
     }
 }
 
 
-void GDBTarget::handle_H()
+void GDBTarget::handle_H(const char* cmd)
 {
-    if (strcmp(_data.c_str(), "Hg0") == 0) {
-        put_packet("OK");
-    } else if (strstr(_data.c_str(), "Hc") == _data.c_str()) {
-        put_packet("OK");
-    } else {
-        put_packet("");
+    long id;
+
+    if (strlen(cmd) < 2 || !str_to_long(cmd + 1, id, 16)) {
+        put_packet("E01");
+        return;
     }
+
+    if (id == 0 || id == -1) { // `-1' to indicate all threads, or `0' to pick any thread
+        id = 1;
+    }
+
+    if (!is_valid_thread_id(id)) {
+        put_packet("E01");
+        return;
+    }
+
+    if (cmd[0] == 'g') {
+        _target = id;
+    } else if (cmd[0] != 'c') {
+        put_packet("E01");
+        return;
+    }
+
+    put_packet("OK");
+}
+
+
+void GDBTarget::handle_T()
+{
+    ulong id;
+
+    if (!str_to_ulong(_data.c_str() + 1, id, 16) || !is_valid_thread_id(id)) {
+        put_packet("E01");
+        return;
+    }
+
+    put_packet("OK");
+}
+
+
+void GDBTarget::handle_halt_reason()
+{
+    std::string reply;
+
+    sprintf(reply, "S%x", _halt_reason);
+    put_packet(reply.c_str());
 }
 
 
@@ -688,10 +982,13 @@ void GDBTarget::process_packet()
         handle_q();
         break;
     case '?':
-        put_packet("S11");
+        handle_halt_reason();
         break;
     case 'H':
-        handle_H();
+        handle_H(_data.c_str() + 1);
+        break;
+    case 'T':
+        handle_T();
         break;
     default:
         D_MESSAGE("unhandles: %s", _data.c_str());
@@ -778,6 +1075,9 @@ void GDBTarget::recive()
             process(buf, n);
         } catch (Exception& e) {
             D_MESSAGE("%s", e.what());
+            break;
+        } catch (...) {
+            D_MESSAGE("unknown exception");
             break;
         }
     }

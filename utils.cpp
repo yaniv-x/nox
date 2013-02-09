@@ -104,12 +104,27 @@ void wsprintf(std::wstring& str, const wchar_t* format, ...)
 }
 
 
-bool str_to_uint32(const char *str, uint32_t& num)
+bool str_to_ulong(const char *str, unsigned long& num, int base)
 {
     char *end;
 
-    ASSERT(sizeof(long) == 4);
-    num = strtol(str, &end, 0);
+    errno = 0;
+    num = strtoul(str, &end, base);
+
+    if (errno || end != str + strlen(str)) {
+        return false;
+    }
+
+    return true;
+}
+
+
+bool str_to_long(const char *str, long& num, int base)
+{
+    char *end;
+
+    errno = 0;
+    num = strtol(str, &end, base);
 
     if (errno || end != str + strlen(str)) {
         return false;

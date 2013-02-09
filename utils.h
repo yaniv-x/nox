@@ -93,7 +93,8 @@ private:
 
 void sprintf(std::string& str, const char* format, ...);
 void wsprintf(std::wstring& str, const wchar_t* format, ...);
-bool str_to_uint32(const char *str, uint32_t& num);
+bool str_to_ulong(const char *str, unsigned long& num, int base = 0);
+bool str_to_long(const char *str, long& num, int base = 0);
 
 typedef uint64_t nox_time_t;
 
