@@ -850,11 +850,6 @@ uint CPU::get_cs_bits()
 
 bool CPU::halt_trap()
 {
-    if (_need_timer_update) {
-        _need_timer_update = false;
-        apic_update_timer();
-    }
-
     return !(_nmi || (_kvm_run->if_flag && interrupt_test()));
 }
 
@@ -1224,20 +1219,22 @@ inline void CPU::apic_update_priority()
 
 void CPU::apic_set_timer(uint32_t val)
 {
-    _apic_timer->disarm();
+    Lock lock(_apic_timer_mutex);
 
     _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = val;
     _apic_regs[APIC_OFFSET_TIMER_INIT_COUNT] = val;
 
     if (!val) {
-        _apic_timer_start_tsc = 0;
+         _apic_timer->disarm();
         return;
     }
 
     _apic_timer_start_tsc = get_monolitic_time();
 
     if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
-        _apic_timer->arm(val * _apic_timer_div, true);
+        _apic_timer->arm(uint64_t(val) * _apic_timer_div, true);
+    } else {
+        _apic_timer->disarm();
     }
 }
 
@@ -1271,15 +1268,14 @@ void CPU::apic_update_timer()
     }
 
     //todo: convert time to cpu cycles
-    uint64_t delta = get_monolitic_time() - _apic_timer_start_tsc;
-    _apic_timer_start_tsc += delta;
+    uint64_t now = get_monolitic_time();
+    uint64_t delta = now - _apic_timer_start_tsc;
 
     delta /= _apic_timer_div;
 
-    Lock lock(_apic_mutex);
-
-    if (delta < _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT]) {
-        _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] -= delta;
+    if (delta < _apic_regs[APIC_OFFSET_TIMER_INIT_COUNT]) {
+        _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = _apic_regs[APIC_OFFSET_TIMER_INIT_COUNT] -
+                                                      delta;
         return;
     }
 
@@ -1287,12 +1283,13 @@ void CPU::apic_update_timer()
         // maybe compensate, sub (delta - _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT])
         // from _apic_timer_start_tsc
         _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = _apic_regs[APIC_OFFSET_TIMER_INIT_COUNT];
+        _apic_timer_start_tsc = now;
     } else {
         _apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] = 0;
-        _apic_timer->disarm();
     }
 
     if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
+        Lock lock(_apic_mutex);
         apic_put_irr(_apic_regs[APIC_OFFSET_LVT_TIMER] & 0xff, false);
     }
 }
@@ -1333,17 +1330,20 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
             val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[APIC_OFFSET_LVT_TIMER] = val & APIC_LVT_TIMER_MASK;
+        lock.unlock();
         apic_rearm_timer();
         break;
     case APIC_OFFSET_DIV_CONF: {
+        lock.unlock();
         _apic_regs[APIC_OFFSET_DIV_CONF] = val & APIC_DIV_CONF_MASK;
         uint timer_div_val = (_apic_regs[APIC_OFFSET_DIV_CONF] & 0x3) |
                              ((_apic_regs[APIC_OFFSET_DIV_CONF] & 0x8) >> 1);
         _apic_timer_div = (2 << timer_div_val) == 256 ? 1 : (2 << timer_div_val);
-
+        apic_rearm_timer();
         break;
     }
     case APIC_OFFSET_TIMER_INIT_COUNT:
+        lock.unlock();
         apic_set_timer(val);
         break;
     case APIC_OFFSET_LVT_INT_0:
@@ -1412,6 +1412,7 @@ void CPU::apic_read(uint32_t offset, uint32_t n, uint8_t* dest)
     offset >>= 4;
 
     if (offset == APIC_OFFSET_TIMER_CURRENT_COUNT) {
+        Lock lock(_apic_timer_mutex);
         apic_update_timer();
     }
 
@@ -1804,6 +1805,7 @@ uint CPU::get_interrupt()
     int irr = find_high_interrupt(_apic_regs + APIC_OFFSET_IRR);
 
     if (irr != -1 && (irr >> 4) > (_apic_regs[APIC_OFFSET_PROCESSOR_PRIORITY] >> 4)) {
+         ASSERT((irr >> 4) > (_apic_regs[APIC_OFFSET_TPR] >> 4));
          clear_bit(_apic_regs + APIC_OFFSET_IRR, irr);
          set_bit(_apic_regs + APIC_OFFSET_ISR, irr);
          _apic_regs[APIC_OFFSET_PROCESSOR_PRIORITY] = irr & 0xf0;
@@ -1879,9 +1881,16 @@ void CPU::apic_rearm_timer()
         return;
     }
 
+    Lock lock(_apic_timer_mutex);
+
+    apic_update_timer();
+
     if (_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] &&
                                   !(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
-        _apic_timer->arm(_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] * _apic_timer_div, true);
+        _apic_timer->arm(uint64_t(_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT]) *
+                         _apic_timer_div, true);
+    } else {
+        _apic_timer->disarm();
     }
 }
 
@@ -1913,11 +1922,6 @@ void CPU::run_loop()
 
         __sync_synchronize();
 
-        if (_need_timer_update) {
-            _need_timer_update = false;
-            apic_update_timer();
-        }
-
         if (_nmi) {
             _nmi = false;
 
@@ -1941,7 +1945,7 @@ void CPU::run_loop()
                 interrupt.irq = get_interrupt();
 
                 if (interrupt.irq != PIC::INVALID_IRQ) {
-                    if (ioctl(_vcpu_fd.get(), KVM_INTERRUPT, &interrupt.irq)) {
+                    if (ioctl(_vcpu_fd.get(), KVM_INTERRUPT, &interrupt)) {
                         int err = errno;
                         THROW("inject irq failed %d", err);
                     }
@@ -2186,7 +2190,18 @@ void CPU::output_trigger()
 
 void CPU::apic_timer_cb()
 {
-    _need_timer_update = true;
+    Lock lock(_apic_timer_mutex);
+
+    apic_update_timer();
+
+    if (_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT] &&
+                                  !(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
+        uint64_t delta = uint64_t(_apic_regs[APIC_OFFSET_TIMER_CURRENT_COUNT]) * _apic_timer_div;
+        _apic_timer->modify(delta);
+    } else {
+        _apic_timer->disarm();
+    }
+
     output_trigger();
 }
 

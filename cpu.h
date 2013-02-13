@@ -224,7 +224,6 @@ private:
     bool _executing;
     bool _nmi;
     bool _test_interrupts;
-    bool _need_timer_update;
     uint _interrupt_mark_set;
     uint _interrupt_mark_get;
     Mutex _trap_mutex;
@@ -242,7 +241,7 @@ private:
     uint32_t _apic_errors;
     Timer* _apic_timer;
     int _current_interrupt;
-    //Mutex _apic_timer_mutex;
+    Mutex _apic_timer_mutex;
     void_callback_t _debug_cb;
     void* _debug_opaque;
     bool _init_trap;
