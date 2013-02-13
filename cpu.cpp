@@ -867,6 +867,8 @@ inline int CPU::apic_eoi()
     // (A write to the EOI register must not be included in the handler routine for
     // an NMI, SMI, INIT, ExtINT, or SIPI.)
 
+    Lock lock(_interrupt_request_mutex);
+
     int current = _current_interrupt;
 
     ASSERT(current == find_high_interrupt(_apic_regs + APIC_OFFSET_ISR));
@@ -893,8 +895,7 @@ inline int CPU::apic_eoi()
 
 void CPU::apic_update_error()
 {
-    _apic_regs[APIC_OFFSET_ERROR] = _apic_errors;
-    _apic_errors = 0;
+    _apic_regs[APIC_OFFSET_ERROR] = __sync_lock_test_and_set(&_apic_errors, 0);
 }
 
 
@@ -951,12 +952,9 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
             APIC_DEBUG("APIC_CMD_SHORTHAND_DEST physical");
             if (dest < num_cpus) {
                 if (dest == _id) {
-                    Lock lock(_apic_mutex);
                     apic_put_irr(vector, level_mode);
                 } else {
-                    Lock lock(cpus[dest]->_apic_mutex);
                     cpus[dest]->apic_put_irr(vector, level);
-                    lock.unlock();
                     cpus[dest]->output_trigger();
                 }
                 break;
@@ -973,7 +971,6 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
     }
     case APIC_CMD_SHORTHAND_SELF: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_SELF");
-        Lock lock(_apic_mutex);
         apic_put_irr(vector, level_mode);
         break;
     }
@@ -1248,6 +1245,8 @@ void CPU::apic_put_irr(int irr, bool level)
 
     }
 
+    Lock lock(_interrupt_request_mutex);
+
     set_bit(&_apic_regs[APIC_OFFSET_IRR], irr);
 
     if (level) {
@@ -1289,7 +1288,6 @@ void CPU::apic_update_timer()
     }
 
     if (!(_apic_regs[APIC_OFFSET_LVT_TIMER] & (1 << APIC_LVT_MASK_BIT))) {
-        Lock lock(_apic_mutex);
         apic_put_irr(_apic_regs[APIC_OFFSET_LVT_TIMER] & 0xff, false);
     }
 }
@@ -1305,22 +1303,21 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
     uint32_t val = *(uint32_t*)src;
     offset >>= 4;
 
-    Lock lock(_apic_mutex);
-
     switch (offset) {
     case APIC_OFFSET_EOI: {
         int vector = apic_eoi();
 
         if (vector != -1) {
-            lock.unlock();
             io_apic->eoi(vector);
         }
         break;
     }
-    case APIC_OFFSET_TPR:
+    case APIC_OFFSET_TPR: {
+        Lock lock(_interrupt_request_mutex);
         _apic_regs[APIC_OFFSET_TPR] = val & 0xff;
         apic_update_priority();
         break;
+    }
     case APIC_OFFSET_ID:
         // support setting apic id is modul depended, assuming it can be rejected
         D_MESSAGE("ignoring set appic id 0x%x from _id to 0x%x", _id, val & (0xff << 24));
@@ -1330,11 +1327,9 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
             val |= (1 << APIC_LVT_MASK_BIT);
         }
         _apic_regs[APIC_OFFSET_LVT_TIMER] = val & APIC_LVT_TIMER_MASK;
-        lock.unlock();
         apic_rearm_timer();
         break;
     case APIC_OFFSET_DIV_CONF: {
-        lock.unlock();
         _apic_regs[APIC_OFFSET_DIV_CONF] = val & APIC_DIV_CONF_MASK;
         uint timer_div_val = (_apic_regs[APIC_OFFSET_DIV_CONF] & 0x3) |
                              ((_apic_regs[APIC_OFFSET_DIV_CONF] & 0x8) >> 1);
@@ -1343,7 +1338,6 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
         break;
     }
     case APIC_OFFSET_TIMER_INIT_COUNT:
-        lock.unlock();
         apic_set_timer(val);
         break;
     case APIC_OFFSET_LVT_INT_0:
@@ -1378,7 +1372,6 @@ void CPU::apic_write(uint32_t offset, uint32_t n, uint8_t* src)
         apic_set_spurious(val);
         break;
     case APIC_OFFSET_CMD_LOW:
-        lock.unlock();
         apic_command(val);
         break;
     case APIC_OFFSET_CMD_HIGH:
@@ -1802,6 +1795,8 @@ uint CPU::get_interrupt()
         return pic->get_interrupt();
     }
 
+    Lock lock(_interrupt_request_mutex);
+
     int irr = find_high_interrupt(_apic_regs + APIC_OFFSET_IRR);
 
     if (irr != -1 && (irr >> 4) > (_apic_regs[APIC_OFFSET_PROCESSOR_PRIORITY] >> 4)) {
@@ -1827,6 +1822,9 @@ bool CPU::interrupt_test()
         }
 
         if (is_apic_soft_enabled()) {
+
+            Lock lock(_interrupt_request_mutex);
+
             int irr = find_high_interrupt(_apic_regs + APIC_OFFSET_IRR);
 
             if (irr != -1 && (irr >> 4) > (_apic_regs[APIC_OFFSET_PROCESSOR_PRIORITY] >> 4)) {
@@ -1868,7 +1866,7 @@ inline void CPU::sync_tpr()
         return;
     }
 
-    Lock lock(_apic_mutex);
+    Lock lock(_interrupt_request_mutex);
     _apic_regs[APIC_OFFSET_TPR] = _kvm_run->cr8 << 4;
 
     apic_update_priority();
@@ -2209,15 +2207,11 @@ void CPU::apic_timer_cb()
 void CPU::apic_deliver_interrupt_physical(uint vector, uint dest, bool level)
 {
     if (dest < num_cpus) {
-        Lock lock(cpus[dest]->_apic_mutex);
         cpus[dest]->apic_put_irr(vector, level);
-        lock.unlock();
         cpus[dest]->output_trigger();
     } else if (dest == 0xff) {
         for (uint i = 0; i < num_cpus; i++) {
-            Lock lock(cpus[i]->_apic_mutex);
             cpus[i]->apic_put_irr(vector, level);
-            lock.unlock();
             cpus[i]->output_trigger();
         }
     } else {
@@ -2243,9 +2237,7 @@ void CPU::apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
 {
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i]->apic_in_logical_dest(dest)) {
-            Lock lock(cpus[i]->_apic_mutex);
             cpus[i]->apic_put_irr(vector, level);
-            lock.unlock();
             cpus[i]->output_trigger();
         }
     }
@@ -2257,12 +2249,9 @@ void CPU::__apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i]->apic_in_logical_dest(dest)) {
             if (cpus[i] == this) {
-                Lock lock(cpus[i]->_apic_mutex);
                 apic_put_irr(vector, level);
             } else {
-                Lock lock(cpus[i]->_apic_mutex);
                 cpus[i]->apic_put_irr(vector, level);
-                lock.unlock();
                 cpus[i]->output_trigger();
             }
         }
@@ -2274,12 +2263,9 @@ void CPU::__apic_deliver_interrupt_all(uint vector, bool level)
 {
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i] == this) {
-            Lock lock(_apic_mutex);
             apic_put_irr(vector, level);
         } else {
-            Lock lock(cpus[i]->_apic_mutex);
             cpus[i]->apic_put_irr(vector, level);
-            lock.unlock();
             cpus[i]->output_trigger();
         }
     }
@@ -2293,13 +2279,10 @@ void CPU::__apic_deliver_interrupt_exclude(uint vector, bool level)
             continue;
         }
 
-        Lock lock(cpus[i]->_apic_mutex);
         cpus[i]->apic_put_irr(vector, level);
-        lock.unlock();
         cpus[i]->output_trigger();
     }
 }
-
 
 
 void CPU::apic_deliver_interrupt_lowest(uint vector, uint dest, bool level)
@@ -2312,16 +2295,15 @@ void CPU::apic_deliver_interrupt_lowest(uint vector, uint dest, bool level)
             continue;
         }
 
-        if (cpus[i]->_apic_regs[APIC_OFFSET_ARBITRATION_PRIORITY] <= lowest) {
-            lowest = cpus[i]->_apic_regs[APIC_OFFSET_ARBITRATION_PRIORITY];
+        uint arbitration = cpus[i]->_apic_regs[APIC_OFFSET_ARBITRATION_PRIORITY];
+        if (arbitration <= lowest) {
+            lowest = arbitration;
             target = i;
         }
     }
 
     if (target < num_cpus) {
-        Lock lock(cpus[target]->_apic_mutex);
         cpus[target]->apic_put_irr(vector, level);
-        lock.unlock();
         cpus[target]->output_trigger();
     }
 }

@@ -231,7 +231,8 @@ private:
     bool (CPU::*_trap)();
     bool (CPU::*_saved_trap)();
     uint32_t _version_information;
-    Mutex _apic_mutex;
+    Mutex _interrupt_request_mutex; // lock on all bits used by apic_put_irr(),
+                                    // currently: IRR TMR and ARBITRATION_PRIORITY
     address_t _apic_address;
     address_t _apic_start;
     address_t _apic_end;
