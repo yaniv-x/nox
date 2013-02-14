@@ -248,6 +248,8 @@ private:
     bool _init_trap;
     uint32_t _startup_address;
     uint32_t _cpu_dest_mask[ALIGN(MAX_CPUS, 32) / 32];
+
+    friend void sig_usr1_handler(int sig_num);
 };
 
 

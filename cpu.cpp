@@ -212,9 +212,13 @@ static inline int find_high_interrupt(uint32_t* reg)
 }
 
 
-static void sig_usr1_handler(int sig_num)
+void sig_usr1_handler(int sig_num)
 {
+    CPU* cpu = vcpu;
 
+    if (cpu) {
+        cpu->_kvm_run->request_interrupt_window = 1;
+    }
 }
 
 
@@ -955,7 +959,6 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
                     apic_put_irr(vector, level_mode);
                 } else {
                     cpus[dest]->apic_put_irr(vector, level);
-                    cpus[dest]->output_trigger();
                 }
                 break;
             }
@@ -1245,18 +1248,25 @@ void CPU::apic_put_irr(int irr, bool level)
 
     }
 
-    Lock lock(_interrupt_request_mutex);
+    do {
+        Lock lock(_interrupt_request_mutex);
 
-    set_bit(&_apic_regs[APIC_OFFSET_IRR], irr);
+        set_bit(&_apic_regs[APIC_OFFSET_IRR], irr);
 
-    if (level) {
-        set_bit(&_apic_regs[APIC_OFFSET_TMR], irr);
+        if (level) {
+            set_bit(&_apic_regs[APIC_OFFSET_TMR], irr);
+        } else {
+            clear_bit(&_apic_regs[APIC_OFFSET_TMR], irr);
+        }
+
+        apic_update_priority_irr(irr);
+    } while (false);
+
+    if (this == vcpu) {
+        _test_interrupts = true;
     } else {
-        clear_bit(&_apic_regs[APIC_OFFSET_TMR], irr);
+        output_trigger();
     }
-
-    apic_update_priority_irr(irr);
-    _test_interrupts = true;
 }
 
 
@@ -2168,14 +2178,11 @@ void CPU::force_exec_loop()
 
 void CPU::output_trigger()
 {
-    // todo: maybe move interrupt logic into signal handler
-
     _interrupt_mark_set++;
 
     __sync_synchronize();
 
     if (_executing && !_kvm_run->request_interrupt_window) {
-        //possible race
         _thread.signal(SIGUSR1);
     }
 
@@ -2208,11 +2215,9 @@ void CPU::apic_deliver_interrupt_physical(uint vector, uint dest, bool level)
 {
     if (dest < num_cpus) {
         cpus[dest]->apic_put_irr(vector, level);
-        cpus[dest]->output_trigger();
     } else if (dest == 0xff) {
         for (uint i = 0; i < num_cpus; i++) {
             cpus[i]->apic_put_irr(vector, level);
-            cpus[i]->output_trigger();
         }
     } else {
         D_MESSAGE("invalid cpu id");
@@ -2238,7 +2243,6 @@ void CPU::apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i]->apic_in_logical_dest(dest)) {
             cpus[i]->apic_put_irr(vector, level);
-            cpus[i]->output_trigger();
         }
     }
 }
@@ -2252,7 +2256,6 @@ void CPU::__apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
                 apic_put_irr(vector, level);
             } else {
                 cpus[i]->apic_put_irr(vector, level);
-                cpus[i]->output_trigger();
             }
         }
     }
@@ -2266,7 +2269,6 @@ void CPU::__apic_deliver_interrupt_all(uint vector, bool level)
             apic_put_irr(vector, level);
         } else {
             cpus[i]->apic_put_irr(vector, level);
-            cpus[i]->output_trigger();
         }
     }
 }
@@ -2280,7 +2282,6 @@ void CPU::__apic_deliver_interrupt_exclude(uint vector, bool level)
         }
 
         cpus[i]->apic_put_irr(vector, level);
-        cpus[i]->output_trigger();
     }
 }
 
@@ -2304,7 +2305,6 @@ void CPU::apic_deliver_interrupt_lowest(uint vector, uint dest, bool level)
 
     if (target < num_cpus) {
         cpus[target]->apic_put_irr(vector, level);
-        cpus[target]->output_trigger();
     }
 }
 
