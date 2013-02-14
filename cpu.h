@@ -162,7 +162,7 @@ private:
     void apic_write(uint32_t offset, uint32_t n, uint8_t* src);
     void apic_read(uint32_t offset, uint32_t n, uint8_t* dest);
     void handle_mmio();
-    void nmi();
+    void nmi(uint unused = 0);
     bool init_trap();
     void set_init_trap();
     void init();
@@ -172,8 +172,10 @@ private:
     void apic_update_error();
     void apic_set_spurious(uint32_t val);
 
-    void populate_dest_mask(uint dest, bool logical);
+    void apic_dest_common(uint dest, bool logical, void (CPU::*cb)(uint), uint arg = 0);
+    void apic_exclud_common(void (CPU::*cb)(uint), uint arg = 0);
     void apic_command_startup(uint32_t cmd_low);
+    void init_trigger(uint unused = 0);
     void apic_command_init(uint32_t cmd_low);
     void apic_command_fixed(uint32_t cmd_low);
     void apic_command_nmi(uint32_t cmd_low);
@@ -247,7 +249,6 @@ private:
     void* _debug_opaque;
     bool _init_trap;
     uint32_t _startup_address;
-    uint32_t _cpu_dest_mask[ALIGN(MAX_CPUS, 32) / 32];
 
     friend void sig_usr1_handler(int sig_num);
 };
