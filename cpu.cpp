@@ -2207,13 +2207,12 @@ void CPU::apic_deliver_interrupt_physical(uint vector, uint dest, bool level)
 
 inline bool CPU::apic_in_logical_dest(uint dest)
 {
-    uint32_t logical_dest = _apic_regs[APIC_OFFSET_LOGICAL_DEST];
+    uint32_t logical_dest = _apic_regs[APIC_OFFSET_LOGICAL_DEST] >> APIC_ID_SHIFT;
 
     if (!_apic_regs[APIC_OFFSET_DEST_FORMAT]) { // cluster
-        return  ((logical_dest >> (APIC_ID_SHIFT + 4)) == (dest >> 4)) ?
-                                    !!((logical_dest >> APIC_ID_SHIFT) & dest & 0xf) : false;
+        return ((logical_dest & 0xf0) == (dest & 0xf0)) ? !!(logical_dest & dest & 0xf) : false;
     } else {
-        return !!((logical_dest >> APIC_ID_SHIFT) & dest & 0xff);
+        return !!(logical_dest & dest);
     }
 }
 
