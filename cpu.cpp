@@ -538,6 +538,8 @@ void CPU::apic_reset()
 {
     // AMD local apic
 
+    Lock lock(_interrupt_request_mutex);
+
     memset(_apic_regs, 0, sizeof(_apic_regs));
     _apic_start = APIC_DEFAULT_ADDRESS;
     _apic_end = _apic_start + GUEST_PAGE_SIZE;
@@ -691,6 +693,17 @@ void CPU::startup(uint32_t address)
     __sync_synchronize();
     _init_trap = false;
     force_exec_loop();
+}
+
+
+void CPU::nmi(uint)
+{
+    _nmi = true;
+
+    if (vcpu != this) {
+        __sync_synchronize();
+        force_exec_loop();
+    }
 }
 
 
@@ -955,11 +968,7 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
         } else {
             APIC_DEBUG("APIC_CMD_SHORTHAND_DEST physical");
             if (dest < num_cpus) {
-                if (dest == _id) {
-                    apic_put_irr(vector, level_mode);
-                } else {
-                    cpus[dest]->apic_put_irr(vector, level);
-                }
+                cpus[dest]->apic_put_irr(vector, level_mode);
                 break;
             }
 
@@ -989,25 +998,45 @@ inline void CPU::apic_command_fixed(uint32_t cmd_low)
 }
 
 
-void CPU::populate_dest_mask(uint dest, bool logical)
+void CPU::apic_dest_common(uint dest, bool logical, void (CPU::*cb)(uint), uint arg)
 {
     if (logical) {
-        memset(_cpu_dest_mask, 0, ALIGN(num_cpus, 8) / 8);
         for (uint i = 0; i < num_cpus; i++) {
             if (cpus[i]->apic_in_logical_dest(dest)) {
-                set_bit(_cpu_dest_mask, i);
+                (cpus[i]->*cb)(arg);
             }
         }
-    } else {
-        if (dest < num_cpus) {
-            memset(_cpu_dest_mask, 0, ALIGN(num_cpus, 8) / 8);
-            set_bit(_cpu_dest_mask, dest);
-        } else if (dest == 0xff) {
-            memset(_cpu_dest_mask, 0xff, ALIGN(num_cpus, 8) / 8);
-        } else {
-            memset(_cpu_dest_mask, 0, ALIGN(num_cpus, 8) / 8);
-            D_MESSAGE("invalid apic_id");
+        return;
+    }
+
+    if (dest < num_cpus) {
+        (cpus[dest]->*cb)(arg);
+    } else if (dest == 0xff) {
+        for (uint i = 0; i < num_cpus; i++) {
+            (cpus[dest]->*cb)(arg);
         }
+    } else {
+        D_MESSAGE("invalid apic_id");
+    }
+}
+
+
+void CPU::apic_exclud_common(void (CPU::*cb)(uint), uint arg)
+{
+    for (uint i = 0; i < num_cpus; i++) {
+        if (cpus[i] != this) {
+            (cpus[i]->*cb)(arg);
+        }
+    }
+}
+
+
+void CPU::init_trigger(uint)
+{
+    __sync_or_and_fetch(&_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
+
+    if (this != vcpu) {
+        force_exec_loop();
     }
 }
 
@@ -1026,30 +1055,12 @@ void CPU::apic_command_init(uint32_t cmd_low)
     case APIC_CMD_SHORTHAND_DEST: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_DEST");
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
-        populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
-
-        for (uint i = 0; i < num_cpus; i++) {
-            if (test_bit(_cpu_dest_mask, i)) {
-                __sync_or_and_fetch(&cpus[i]->_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
-
-                if (cpus[i] == this) {
-                    continue;
-                }
-
-                cpus[i]->force_exec_loop();
-            }
-        }
+        apic_dest_common(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK), &CPU::init_trigger);
         break;
     }
     case APIC_CMD_SHORTHAND_EXCLUD: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
-
-        for (uint i = 0; i < num_cpus; i++) {
-            if (cpus[i] != this) {
-                __sync_or_and_fetch(&cpus[i]->_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
-                cpus[i]->force_exec_loop();
-            }
-        }
+        apic_exclud_common(&CPU::init_trigger);
         break;
     }
     default:
@@ -1065,26 +1076,13 @@ void CPU::apic_command_startup(uint32_t cmd_low)
     case APIC_CMD_SHORTHAND_DEST: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_DEST");
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
-        populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
-
-        for (uint i = 0; i < num_cpus; i++) {
-            if (test_bit(_cpu_dest_mask, i)) {
-                if (cpus[i] == this) {
-                    continue;
-                }
-                cpus[i]->startup(cmd_low & APIC_CMD_VECTOR_MASK);
-            }
-        }
+        apic_dest_common(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK), &CPU::startup,
+                         cmd_low & APIC_CMD_VECTOR_MASK);
         break;
     }
     case APIC_CMD_SHORTHAND_EXCLUD: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
-
-        for (uint i = 0; i < num_cpus; i++) {
-            if (cpus[i] != this) {
-                cpus[i]->startup(cmd_low & APIC_CMD_VECTOR_MASK);
-            }
-        }
+        apic_exclud_common(&CPU::startup, cmd_low & APIC_CMD_VECTOR_MASK);
         break;
     }
     default:
@@ -1108,30 +1106,12 @@ void CPU::apic_command_nmi(uint32_t cmd_low)
     case APIC_CMD_SHORTHAND_DEST: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_DEST");
         uint dest = _apic_regs[APIC_OFFSET_CMD_HIGH] >> APIC_CMD_HIGH_DEST_SHIFT;
-        populate_dest_mask(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK));
-
-        for (uint i = 0; i < num_cpus; i++) {
-            if (test_bit(_cpu_dest_mask, i)) {
-                cpus[i]->_nmi = true;
-
-                if (cpus[i] == this) {
-                    continue;
-                }
-
-                cpus[i]->force_exec_loop();
-            }
-        }
+        apic_dest_common(dest, !!(cmd_low & APIC_CMD_LOGICAL_MASK), &CPU::nmi);
         break;
     }
     case APIC_CMD_SHORTHAND_EXCLUD: {
         APIC_DEBUG("APIC_CMD_SHORTHAND_EXCLUD");
-
-        for (uint i = 0; i < num_cpus; i++) {
-            if (cpus[i] != this) {
-                cpus[i]->_nmi = true;
-                cpus[i]->force_exec_loop();
-            }
-        }
+        apic_exclud_common(&CPU::nmi);
         break;
     }
     default:
@@ -2252,11 +2232,7 @@ void CPU::__apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
 {
     for (uint i = 0; i < num_cpus; i++) {
         if (cpus[i]->apic_in_logical_dest(dest)) {
-            if (cpus[i] == this) {
-                apic_put_irr(vector, level);
-            } else {
-                cpus[i]->apic_put_irr(vector, level);
-            }
+            cpus[i]->apic_put_irr(vector, level);
         }
     }
 }
@@ -2265,11 +2241,7 @@ void CPU::__apic_deliver_interrupt_logical(uint vector, uint dest, bool level)
 void CPU::__apic_deliver_interrupt_all(uint vector, bool level)
 {
     for (uint i = 0; i < num_cpus; i++) {
-        if (cpus[i] == this) {
-            apic_put_irr(vector, level);
-        } else {
-            cpus[i]->apic_put_irr(vector, level);
-        }
+        cpus[i]->apic_put_irr(vector, level);
     }
 }
 
@@ -2329,17 +2301,6 @@ void CPU::apic_deliver_nmi_logical(uint dest)
         if (cpus[i]->apic_in_logical_dest(dest)) {
              cpus[i]->nmi();
         }
-    }
-}
-
-
-void CPU::nmi()
-{
-    _nmi = true;
-
-    if (vcpu != this) {
-        __sync_synchronize();
-        force_exec_loop();
     }
 }
 
