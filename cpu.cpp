@@ -266,6 +266,7 @@ CPU::CPU(NoxVM& vm)
     , _debug_cb (NULL)
     , _debug_opaque (NULL)
     , _init_trap (false)
+    , _interrupt_kvm_timer_active (false)
 {
     ASSERT(_id < MAX_CPUS);
     cpus[_id] = this;
@@ -276,6 +277,7 @@ CPU::CPU(NoxVM& vm)
     }
 
     _apic_timer = application->create_timer((void_callback_t)&CPU::apic_timer_cb, this);
+    _interrupt_kvm_timer = application->create_timer((void_callback_t)&CPU::interrupt_kvm, this);
 
     Lock lock(_cpu_state_mutex);
 
@@ -295,6 +297,9 @@ CPU::CPU(NoxVM& vm)
 
 CPU::~CPU()
 {
+    _interrupt_kvm_timer->destroy();
+    _apic_timer->destroy();
+
     Lock lock(_command_mutex);
     ASSERT(_cpu_state == WAITING);
     _command = TERMINATE;
@@ -692,7 +697,7 @@ void CPU::startup(uint32_t address)
     _startup_address = address;
     __sync_synchronize();
     _init_trap = false;
-    force_exec_loop();
+    trap_wakeup();
 }
 
 
@@ -702,7 +707,8 @@ void CPU::nmi(uint)
 
     if (vcpu != this) {
         __sync_synchronize();
-        force_exec_loop();
+        interrupt_kvm();
+        trap_wakeup();
     }
 }
 
@@ -789,6 +795,13 @@ void CPU::trap_wait()
 
         _trap_condition.wait(_trap_mutex);
     }
+}
+
+
+void CPU::trap_wakeup()
+{
+    Lock lock(_trap_mutex);
+    _trap_condition.signal();
 }
 
 
@@ -1036,7 +1049,8 @@ void CPU::init_trigger(uint)
     __sync_or_and_fetch(&_execution_break, 1 << EXECUTION_BREAK_INIT_BIT);
 
     if (this != vcpu) {
-        force_exec_loop();
+        trap_wakeup();
+        interrupt_kvm();
     }
 }
 
@@ -1979,6 +1993,15 @@ void CPU::run_loop()
         default:
             THROW("unhandle kvm exit reason %d", _kvm_run->exit_reason);
         }
+
+        if (_interrupt_kvm_timer_active) {
+            Lock lock(_interrupt_kvm_mutex);
+
+            if (_interrupt_kvm_timer_active) {
+                _interrupt_kvm_timer_active = false;
+                _interrupt_kvm_timer->disarm();
+            }
+        }
     }
 
     _apic_timer->disarm();
@@ -2096,7 +2119,7 @@ bool CPU::stop()
     _trap_condition.signal();
     lock.unlock();
 
-    _thread.signal(SIGUSR1);
+    interrupt_kvm();
 
     Lock state_lock(_cpu_state_mutex);
 
@@ -2140,19 +2163,19 @@ void* CPU::thread_main()
 }
 
 
-void CPU::force_exec_loop()
+void CPU::interrupt_kvm()
 {
-    Lock lock(_trap_mutex);
-    if (_trap) {
-       _trap_condition.signal();
-       return;
+    Lock lock(_interrupt_kvm_mutex);
+
+    if (_trap || _cpu_state != RUNNING) {
+        _interrupt_kvm_timer_active = false;
+        _interrupt_kvm_timer->disarm();
+        return;
     }
 
-    if(_executing) {
-        D_MESSAGE("possible race");
-    }
-
-    _thread.signal(SIGUSR1); // BUG
+    _interrupt_kvm_timer_active = true;
+    _thread.signal(SIGUSR1);
+    _interrupt_kvm_timer->arm(10 * 1000 * 1000, false);
 }
 
 

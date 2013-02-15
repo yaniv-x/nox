@@ -152,8 +152,9 @@ private:
     void setup_cpuid();
     void save_init_msrs();
     void create();
-    void force_exec_loop();
+    void interrupt_kvm();
     void output_trigger();
+    void trap_wakeup();
     void trap_wait();
     bool halt_trap();
     void set_halt_trap();
@@ -249,6 +250,9 @@ private:
     void* _debug_opaque;
     bool _init_trap;
     uint32_t _startup_address;
+    Mutex _interrupt_kvm_mutex;
+    Timer* _interrupt_kvm_timer;
+    bool _interrupt_kvm_timer_active;
 
     friend void sig_usr1_handler(int sig_num);
 };
