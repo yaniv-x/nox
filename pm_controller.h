@@ -36,6 +36,7 @@ class AdminReplyContext;
 class PMController : public PCIDevice {
 public:
     PMController(NoxVM& vm);
+    virtual ~PMController();
     void alarm();
 
 protected:

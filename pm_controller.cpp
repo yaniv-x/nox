@@ -95,6 +95,12 @@ PMController::PMController(NoxVM& vm)
 }
 
 
+PMController::~PMController()
+{
+    _timer->destroy();
+}
+
+
 void PMController::register_admin_commands()
 {
     AdminServer* admin = application->get_admin();
