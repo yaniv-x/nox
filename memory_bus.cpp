@@ -67,7 +67,7 @@ class MemoryBus::Internal {
 public:
     virtual ~Internal() {}
     virtual void on_unmapped() = 0;
-    virtual uint8_t* get_direct() = 0; // todo: add ref to memory object
+    virtual DirectAccess* get_direct(uint64_t offset) = 0;
 };
 
 
@@ -105,7 +105,7 @@ public:
         delete this;
     }
 
-    virtual uint8_t* get_direct()
+    virtual DirectAccess* get_direct(uint64_t offset)
     {
         return NULL;
     }
@@ -130,7 +130,7 @@ public:
         _mapped = false;
     }
 
-    virtual uint8_t* get_direct()
+    virtual DirectAccess* get_direct(uint64_t offset)
     {
         return NULL;
     }
@@ -138,6 +138,7 @@ public:
 private:
     bool _mapped;
 };
+
 
 class PhysicalRam: public VMPart, public MemoryBus::Internal
 #ifndef USE_C_CALLBACKS
@@ -154,6 +155,7 @@ public:
 
     void read(uint64_t src, uint64_t length, uint8_t* dest);
     void write(const uint8_t* src, uint64_t length, uint64_t dest);
+    virtual DirectAccess* get_direct(uint64_t offset);
 
     uint8_t* get_ptr() { return _ptr;}
     bool is_mapped() { return _mapped;}
@@ -167,7 +169,6 @@ public:
 
     virtual void map(page_address_t address);
     virtual void on_unmapped();
-    virtual uint8_t* get_direct() { return get_ptr();}
 
     KvmMapRef map_section(page_address_t address, uint64_t start_page, uint64_t num_pages);
     void unmap_section(KvmMapRef _ref);
@@ -229,6 +230,31 @@ void PhysicalRam::write(const uint8_t* src, uint64_t length, uint64_t dest)
 {
     ASSERT(dest + length <= (_num_pages << GUEST_PAGE_SHIFT));
     memcpy(_ptr + dest, src, length);
+}
+
+
+class Direct : public DirectAccess {
+public:
+    Direct(PhysicalRam* ram, uint64_t offset)
+        : DirectAccess(ram->get_ptr() + offset)
+        , _ram (ram->ref())
+    {
+    }
+
+    virtual ~Direct()
+    {
+        _ram->unref();
+    }
+
+private:
+    PhysicalRam* _ram;
+};
+
+
+DirectAccess* PhysicalRam::get_direct(uint64_t offset)
+{
+    ASSERT(offset < _num_pages * GUEST_PAGE_SIZE);
+    return new Direct(this, offset);
 }
 
 
@@ -444,7 +470,7 @@ void MemoryBus::write(const void* src, uint64_t length, uint64_t dest)
 }
 
 
-uint8_t* MemoryBus::get_direct(uint64_t address, uint64_t size)
+DirectAccess* MemoryBus::get_direct(uint64_t address, uint64_t size)
 {
     ASSERT(get_state() == VMPart::RUNNING);
 
@@ -470,9 +496,7 @@ uint8_t* MemoryBus::get_direct(uint64_t address, uint64_t size)
         return NULL;
     }
 
-    uint8_t* direct = map.internal.get_direct();
-
-    return direct ? direct + (address - map_start): direct;
+    return map.internal.get_direct(address - map_start);
 }
 
 
@@ -797,9 +821,9 @@ public:
         return _mapped;
     }
 
-    virtual uint8_t* get_direct()
+    virtual DirectAccess* get_direct(uint64_t offset)
     {
-        return _ram->get_ptr() + _offset;
+        return _ram->get_direct(offset + _offset);
     }
 
 private:

@@ -90,6 +90,15 @@ public:
     {
     }
 
+    virtual ~ATAHostDMA()
+    {
+        while (!_direc_list.empty()) {
+            DirectAccess* direct = *_direc_list.begin();
+            _direc_list.pop_front();
+            delete direct;
+        }
+    }
+
     virtual DirectVector * get_direct_vector(uint size);
     virtual IndirectVector * get_indirect_vector(uint size);
 
@@ -100,6 +109,7 @@ public:
 private:
     uint8_t* _status;
     uint32_t _address;
+    std::list<DirectAccess*> _direc_list;
 };
 
 
@@ -123,11 +133,15 @@ DirectVector* ATAHostDMA::get_direct_vector(uint size)
         item.iov_len = MIN(size, item.iov_len);
         size -= item.iov_len;
 
-        item.iov_base = memory_bus->get_direct(address, item.iov_len);
+        DirectAccess* direct = memory_bus->get_direct(address, item.iov_len);
 
-        if (!item.iov_base) {
+        if (!direct) {
             return NULL;
         }
+
+        _direc_list.push_back(direct);
+
+        item.iov_base = direct->get_ptr();
 
         vec->push_back(item);
 
