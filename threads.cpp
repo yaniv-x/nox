@@ -29,7 +29,6 @@
 
 std::list<Thread*> threads;
 __thread Thread* thread = NULL;
-Mutex exclucive;
 
 
 Thread::Thread(start_proc_t start_proc, void* opaque)
@@ -83,17 +82,6 @@ void Thread::enable_signal(int signal)
 }
 
 
-void Thread::suspend_other_threads(Thread* thread)
-{
-
-}
-
-
-void Thread::resume_other_threads(Thread* thread)
-{
-
-}
-
 
 void Thread::set_normal_priority()
 {
@@ -113,36 +101,6 @@ void Thread::set_high_priority()
 
     if (pthread_setschedparam(_thread, SCHED_RR, &param)) {
         W_MESSAGE("failed");
-    }
-}
-
-
-void Thread::exclucive_inc()
-{
-    Thread* t = thread;
-
-    ASSERT(t);
-
-    if (t->_exclusive) {
-        t->_exclusive++;
-        return;
-    }
-
-    Lock lock(exclucive);
-    t->_exclusive = 1;
-    suspend_other_threads(thread);
-
-}
-
-void Thread::exclucive_dec()
-{
-    Thread* t = thread;
-
-    Lock lock(exclucive);
-    ASSERT(t->_exclusive > 0);
-
-    if (!--t->_exclusive) {
-        resume_other_threads(thread);
     }
 }
 

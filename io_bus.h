@@ -28,6 +28,7 @@
 #define _H_IO_BUS
 
 #include "vm_part.h"
+#include "threads.h"
 
 class NoxVM;
 
@@ -84,12 +85,21 @@ private:
     void unmap_range(uint32_t from, uint32_t n);
     void clear_invalid_regions();
 
+    void io_enter();
+    void io_exit();
+
     MapItem& find_mapping(uint16_t port);
     RegionList::iterator find_region(IORegion* region);
 
 private:
     IOMap _io_map;
     RegionList _regions;
+    Mutex _gate;
+    uint _clients;
+    uint _exclucive_request;
+    Condition _gate_condition;
+
+    friend class IOGate;
 };
 
 extern IOBus* io_bus;

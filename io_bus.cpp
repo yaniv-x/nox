@@ -29,6 +29,7 @@
 
 
 IOBus* io_bus = NULL;
+static __thread uint io_enter_count = 0;
 
 /*
 
@@ -65,6 +66,19 @@ doubleword write at 2H."
 
 static const uint32_t num_ports = 1 << 16;
 static const uint32_t max_port = max_port - 1;
+
+
+#define EXCLISIC_EXEC()                     \
+    Lock lock(_gate);                       \
+                                            \
+    ++_exclucive_request;                   \
+                                            \
+    while (_clients != io_enter_count) {    \
+        _gate_condition.wait(_gate);        \
+    }                                       \
+                                            \
+    --_exclucive_request;
+
 
 #ifdef NOX_DEBUG
 
@@ -175,6 +189,8 @@ private:
 
 IOBus::IOBus(NoxVM& nox)
     : VMPart("io bus", nox)
+    , _clients (0)
+    , _exclucive_request (0)
 {
     fill_gap(0, num_ports);
 
@@ -228,12 +244,53 @@ IOBus::RegionList::iterator IOBus::find_region(IORegion* region)
 }
 
 
+inline void IOBus::io_enter()
+{
+    Lock lock(_gate);
+
+    ++io_enter_count;
+    ++_clients;
+}
+
+
+inline void IOBus::io_exit()
+{
+    Lock lock(_gate);
+    --_clients;
+    --io_enter_count;
+
+    if (_exclucive_request) {
+         _gate_condition.signal();
+    }
+}
+
+
+class IOGate {
+public:
+    inline IOGate(IOBus& bus)
+        : _bus  (bus)
+    {
+        _bus.io_enter();
+    }
+
+    inline ~IOGate()
+    {
+        _bus.io_exit();
+    }
+
+private:
+    IOBus& _bus;
+};
+
+
+
 void IOBus::read_byte(uint16_t port, uint8_t* dest, uint32_t n)
 {
-    MapItem& map = find_mapping(port);
-    uint8_t* end = dest + n;
-
     ASSERT(get_state() == VMPart::RUNNING);
+    uint8_t* end = dest + n;
+    IOGate gate(*this);
+
+    MapItem& map = find_mapping(port);
 
     for (; dest < end; dest++) {
         *dest = map.read_byte(map.opaque, port);
@@ -243,10 +300,11 @@ void IOBus::read_byte(uint16_t port, uint8_t* dest, uint32_t n)
 
 void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
 {
-    MapItem& map = find_mapping(port);
-    uint16_t* end = dest + n;
-
     ASSERT(get_state() == VMPart::RUNNING);
+    uint16_t* end = dest + n;
+    IOGate gate(*this);
+
+    MapItem& map = find_mapping(port);
 
     if (map.end - port < 2) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
@@ -267,10 +325,11 @@ void IOBus::read_word(uint16_t port, uint16_t* dest, uint32_t n)
 
 void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
 {
-    MapItem& map = find_mapping(port);
-    uint32_t* end = dest + n;
-
     ASSERT(get_state() == VMPart::RUNNING);
+    uint32_t* end = dest + n;
+    IOGate gate(*this);
+
+    MapItem& map = find_mapping(port);
 
     if (map.end - port < 4) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
@@ -292,10 +351,11 @@ void IOBus::read_dword(uint16_t port, uint32_t* dest, uint32_t n)
 
 void IOBus::write_byte(uint16_t port, uint8_t* src, uint32_t n)
 {
-    MapItem& map = find_mapping(port);
-    uint8_t* end = src + n;
-
     ASSERT(get_state() == VMPart::RUNNING);
+    uint8_t* end = src + n;
+    IOGate gate(*this);
+
+    MapItem& map = find_mapping(port);
 
     for (; src < end; src++) {
          map.write_byte(map.opaque, port, *src);
@@ -305,10 +365,11 @@ void IOBus::write_byte(uint16_t port, uint8_t* src, uint32_t n)
 
 void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
 {
-    MapItem& map = find_mapping(port);
-    uint16_t* end = src + n;
-
     ASSERT(get_state() == VMPart::RUNNING);
+    uint16_t* end = src + n;
+    IOGate gate(*this);
+
+    MapItem& map = find_mapping(port);
 
     if (map.end - port < 2) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",
@@ -330,10 +391,11 @@ void IOBus::write_word(uint16_t port, uint16_t* src, uint32_t n)
 
 void IOBus::write_dword(uint16_t port, uint32_t* src, uint32_t n)
 {
-    MapItem& map = find_mapping(port);
-    uint32_t* end = src + n;
-
     ASSERT(get_state() == VMPart::RUNNING);
+    uint32_t* end = src + n;
+    IOGate gate(*this);
+
+    MapItem& map = find_mapping(port);
 
     if (map.end - port < 4) {
         D_MESSAGE("boundry test failed, port 0x%x range start 0x%x size %u",

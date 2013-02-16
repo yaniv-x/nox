@@ -244,14 +244,8 @@ public:
     void set_high_priority();
     void set_normal_priority();
 
-    static void suspend_other_threads(Thread* t);
-    static void resume_other_threads(Thread* t);
-    static void exclucive_inc();
-    static void exclucive_dec();
-
 private:
     pthread_t _thread;
-    uint32_t _exclusive;
 };
 
 

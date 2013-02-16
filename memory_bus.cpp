@@ -33,9 +33,22 @@
 #include "threads.h"
 
 MemoryBus* memory_bus = NULL;
+static __thread uint mem_enter_count = 0;
 
 static const page_address_t address_mask = (page_address_t(1) << MemoryBus::ADDRESS_BITS) - 1;
 static const uint64_t max_pages = (address_mask >> GUEST_PAGE_SHIFT) + 1;
+
+
+#define EXCLISIC_EXEC()                     \
+    Lock lock(_gate);                       \
+                                            \
+    ++_exclucive_request;                   \
+                                            \
+    while (_clients != mem_enter_count) {   \
+        _gate_condition.wait(_gate);        \
+    }                                       \
+                                            \
+    --_exclucive_request;
 
 
 static inline bool is_valid_page_address(page_address_t addr)
@@ -261,8 +274,28 @@ void PhysicalRam::unmap_section(KvmMapRef map_ref)
 }
 
 
+class MemBusGate {
+public:
+    inline MemBusGate(MemoryBus& bus)
+        : _bus  (bus)
+    {
+        _bus.bus_enter();
+    }
+
+    inline ~MemBusGate()
+    {
+        _bus.bus_exit();
+    }
+
+private:
+    MemoryBus& _bus;
+};
+
+
 MemoryBus::MemoryBus(NoxVM& nox)
     : VMPart ("Memory bus", nox)
+    , _clients (0)
+    , _exclucive_request (0)
 {
     fill_gap(0, max_pages);
     reset();
@@ -277,6 +310,27 @@ MemoryBus::~MemoryBus()
     ASSERT(_pysical_list.empty());
     ASSERT(_sections_list.empty());
     ASSERT(_mmio_list.empty());
+}
+
+
+void MemoryBus::bus_enter()
+{
+    Lock lock(_gate);
+
+    ++mem_enter_count;
+    ++_clients;
+}
+
+
+void MemoryBus::bus_exit()
+{
+    Lock lock(_gate);
+    --_clients;
+    --mem_enter_count;
+
+    if (_exclucive_request) {
+         _gate_condition.signal();
+    }
 }
 
 
@@ -321,6 +375,8 @@ void MemoryBus::read(uint64_t src, uint64_t length, void* dest)
     }
 
     page_address_t page = (src & _address_mask) >> GUEST_PAGE_SHIFT;
+
+    MemBusGate gate(*this);
 
     MemoryMap::iterator now = _memory_map.lower_bound(page);
     uint64_t page_start_address = (page - (*now).second.start_page) << GUEST_PAGE_SHIFT;
@@ -375,6 +431,7 @@ void MemoryBus::write(const void* src, uint64_t length, uint64_t dest)
 
     page_address_t page = (dest & _address_mask) >> GUEST_PAGE_SHIFT;
 
+    MemBusGate gate(*this);
 
     MemoryMap::iterator now = _memory_map.lower_bound(page); //return >=
 
@@ -401,6 +458,8 @@ uint8_t* MemoryBus::get_direct(uint64_t address, uint64_t size)
     }
 
     page_address_t page = (address & _address_mask) >> GUEST_PAGE_SHIFT;
+
+    MemBusGate gate(*this);
 
     MappedMemory& map = (*_memory_map.lower_bound(page)).second;
 
