@@ -30,6 +30,7 @@
 #include <map>
 
 #include "vm_part.h"
+#include "threads.h"
 
 class NoxVM;
 class PhysicalRam;
@@ -63,8 +64,6 @@ public:
     void unregister_mmio(MMIORegion* mmio);
 
     void map_physical_ram(PhysicalRam* ram, page_address_t address, bool rom);
-    void map_physical_ram_section(PhysicalRam* ram, page_address_t address, bool rom,
-                                  page_address_t section_start_page, uint64_t section_pages);
     void unmap_physical_ram(PhysicalRam* ram);
 
     PhysicalRam* alloc_physical_ram(VMPart& owner, uint64_t num_pages, const char* name);
@@ -149,7 +148,8 @@ private:
 
     PhysicalRamList::iterator find_physical(PhysicalRam* ram);
 
-
+    void bus_enter();
+    void bus_exit();
 
 private:
     MemoryMap _memory_map;
@@ -157,6 +157,12 @@ private:
     SectionsList _sections_list;
     MMIORegionList _mmio_list;
     uint64_t _address_mask;
+    Mutex _gate;
+    Condition _gate_condition;
+    uint _clients;
+    uint _exclucive_request;
+
+    friend class MemBusGate;
 };
 
 #ifndef USE_C_CALLBACKS

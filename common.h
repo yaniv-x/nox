@@ -59,7 +59,6 @@
 #define GUEST_PAGE_OFFSET_MASK page_address_t(GUEST_PAGE_SIZE - 1)
 #define GUEST_PAGE_MASK ~GUEST_PAGE_OFFSET_MASK
 
-#define EXCLISIC_EXEC()
 #define IS_ERROR(x) (!!(x))
 
 #endif
