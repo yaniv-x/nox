@@ -368,6 +368,7 @@ NoxVM::NoxVM()
     , _vga (new VGA(*this))
     , _speaker (new Speaker(*this))
     , _bios_file (new FirmwareFile())
+    , _display (NULL)
     , _low_ram (NULL)
     , _mid_ram (NULL)
     , _high_bios (NULL)
@@ -405,6 +406,8 @@ NoxVM::NoxVM()
 
 NoxVM::~NoxVM()
 {
+    delete _display;
+
     while (!_dynamic_parts.empty()) {
         delete _dynamic_parts.front();
         _dynamic_parts.pop_front();
@@ -1187,7 +1190,7 @@ void NoxVM::init()
 {
     ASSERT(_state == INIT);
 
-    new NoxDisplay(*_vga.get(), *_kbd.get());
+    _display = new NoxDisplay(*_vga.get(), *_kbd.get());
 
     init_bios();
     init_ram();

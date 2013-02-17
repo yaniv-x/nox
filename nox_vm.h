@@ -51,6 +51,7 @@ class Speaker;
 class FirmwareFile;
 class CPU;
 class PMController;
+class NoxDisplay;
 
 
 class NoxVM: public VMPart {
@@ -161,6 +162,7 @@ private:
     std::auto_ptr<VGA> _vga;
     std::auto_ptr<Speaker> _speaker;
     std::auto_ptr<FirmwareFile> _bios_file;
+    NoxDisplay* _display;
     VMParts _dynamic_parts;
     PhysicalRam* _low_ram;
     PhysicalRam* _mid_ram;

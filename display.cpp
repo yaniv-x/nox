@@ -50,6 +50,12 @@ NoxDisplay::NoxDisplay(VGA& vga, KbdController& kbd)
 
 }
 
+NoxDisplay::~NoxDisplay()
+{
+    run_break();
+    _thread->join();
+}
+
 
 void NoxDisplay::update_area(Window window, int x, int y, int width, int height)
 {
@@ -159,7 +165,9 @@ void* NoxDisplay::main()
                                             &x_color, &x_color, 0, 0);
     XFreePixmap(_display, cursur_pixmap);
 
-    create_fd_event(ConnectionNumber(_display), (void_callback_t)&NoxDisplay::x11_handler, this);
+    FDEvent* x_event = create_fd_event(ConnectionNumber(_display),
+                                       (void_callback_t)&NoxDisplay::x11_handler,
+                                       this);
 
     create_window();
 
@@ -172,6 +180,11 @@ void* NoxDisplay::main()
     } catch (...) {
         D_MESSAGE("unhandled exception");
     }
+
+    _update_timer->destroy();
+    _back_end->detach();
+    x_event->destroy();
+    XCloseDisplay(_display);
 
     return NULL;
 }
