@@ -258,10 +258,10 @@ bool CMOS::lazy_update(nox_time_t now)
         if (interrupt_on_alarm()) {
             _reg_c |= REG_C_INTERRUPT_FLAG_MASK;
             _irq_wire.raise();
-            reschedule_alarm(now);
             get_nox().get_pm_controller().alarm();
         }
 
+        reschedule_alarm(now);
         return true;
     } else {
         _reg_c |= REG_C_UPDATE_FLAG_MASK;
