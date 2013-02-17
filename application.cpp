@@ -351,7 +351,7 @@ bool Application::init(int argc, const char** argv)
     _admin_server.reset(new AdminServer(uds_name));
 
     try {
-        _vm.reset(new NoxVM());
+        _vm.reset(new NoxVM(vm_name));
 
         _vm->set_ram_size(ram_size / MB);
         _vm->set_hard_disk(hard_disk_file.c_str(), ro_hard_disk_file);

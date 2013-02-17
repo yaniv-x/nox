@@ -56,7 +56,7 @@ class NoxDisplay;
 
 class NoxVM: public VMPart {
 public:
-    NoxVM();
+    NoxVM(const char* vm_name);
     ~NoxVM();
 
     void init();

@@ -32,8 +32,9 @@
 #include "keyboard.h"
 
 
-NoxDisplay::NoxDisplay(VGA& vga, KbdController& kbd)
-    : _vga (vga)
+NoxDisplay::NoxDisplay(const char* vm_name, VGA& vga, KbdController& kbd)
+    : _vm_name (vm_name)
+    , _vga (vga)
     , _back_end (NULL)
     , _thread (new Thread((Thread::start_proc_t)&NoxDisplay::main, this))
     , _window (None)
@@ -208,6 +209,16 @@ void NoxDisplay::create_window()
     if (_window == None) {
         THROW("create window failed");
     }
+
+    Atom wm_name_atom = XInternAtom(_display, "_NET_WM_NAME", False);
+    Atom utf8_str_atom = XInternAtom(_display, "UTF8_STRING", False);
+    std::string win_title;
+
+    sprintf(win_title, "Nox - %s", _vm_name.c_str());
+
+    XChangeProperty(_display, _window, wm_name_atom, utf8_str_atom, 8 /* list of 8-bit*/,
+                    PropModeReplace, (const unsigned char*)win_title.c_str(),
+                    win_title.size());
 
     Atom wm_delete_window_atom = XInternAtom(_display, "WM_DELETE_WINDOW", False);
 
