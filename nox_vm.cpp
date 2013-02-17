@@ -348,8 +348,8 @@ private:
 
 
 
-NoxVM::NoxVM()
-    : VMPart ("Nox")
+NoxVM::NoxVM(const char* name)
+    : VMPart (name)
     , _kvm (new KVM())
     , _io_bus (new IOBus(*this))
     , _mem_bus (new MemoryBus(*this))
@@ -1190,7 +1190,7 @@ void NoxVM::init()
 {
     ASSERT(_state == INIT);
 
-    _display = new NoxDisplay(*_vga.get(), *_kbd.get());
+    _display = new NoxDisplay(get_name().c_str(), *_vga.get(), *_kbd.get());
 
     init_bios();
     init_ram();

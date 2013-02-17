@@ -40,7 +40,7 @@ class KbdController;
 
 class NoxDisplay: public RunLoop, public VGAFrontEnd {
 public:
-    NoxDisplay(VGA& vga, KbdController& kbd);
+    NoxDisplay(const char* vm_name, VGA& vga, KbdController& kbd);
     virtual ~NoxDisplay();
 
 private:
@@ -63,6 +63,7 @@ private:
 
 private:
     Mutex _mutex;
+    std::string _vm_name;
     VGA& _vga;
     VGABackEnd* _back_end;
     std::auto_ptr<Thread> _thread;
