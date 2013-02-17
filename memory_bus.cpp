@@ -212,6 +212,7 @@ uint32_t PhysicalRam::unref()
     uint32_t num_refs = _refs.dec();
 
     if (num_refs == 0) {
+        memory_bus->remove_physical(this);
         delete this;
     }
 
@@ -714,12 +715,24 @@ PhysicalRam* MemoryBus::alloc_physical_ram(VMPart& owner, uint64_t num_pages, co
 }
 
 
-void MemoryBus::release_physical_ram(PhysicalRam* ram)
+PhysicalRam* MemoryBus::ref_physical_ram(PhysicalRam* ram)
+{
+    return ram->ref();
+}
+
+
+void MemoryBus::unref_physical_ram(PhysicalRam* ram)
 {
     if (!ram) {
         return;
     }
 
+    ram->unref();
+}
+
+
+void MemoryBus::remove_physical(PhysicalRam *ram)
+{
     EXCLISIC_EXEC();
 
     PhysicalRamList::iterator iter = find_physical(ram);
@@ -734,12 +747,6 @@ void MemoryBus::release_physical_ram(PhysicalRam* ram)
     }
 
     _pysical_list.erase(iter);
-
-    uint32_t n_refs = ram->unref();
-
-    if (n_refs) {
-        D_MESSAGE("probably bug cndition");
-    }
 }
 
 
