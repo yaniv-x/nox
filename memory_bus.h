@@ -83,7 +83,8 @@ public:
     void unmap_physical_ram(PhysicalRam* ram);
 
     PhysicalRam* alloc_physical_ram(VMPart& owner, uint64_t num_pages, const char* name);
-    void release_physical_ram(PhysicalRam* ram);
+    PhysicalRam* ref_physical_ram(PhysicalRam* ram);
+    void unref_physical_ram(PhysicalRam* ram);
     uint8_t* get_physical_ram_ptr(PhysicalRam* ram);
     uint64_t get_physical_ram_size(PhysicalRam* ram);
 
@@ -163,6 +164,7 @@ private:
     void write_to_pages(const uint8_t* src, uint64_t length, uint64_t dest);
 
     PhysicalRamList::iterator find_physical(PhysicalRam* ram);
+    void remove_physical(PhysicalRam* ram);
 
     void bus_enter();
     void bus_exit();
@@ -179,6 +181,7 @@ private:
     uint _exclucive_request;
 
     friend class MemBusGate;
+    friend class PhysicalRam;
 };
 
 #ifndef USE_C_CALLBACKS

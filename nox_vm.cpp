@@ -110,7 +110,7 @@ public:
 
     ~PCIHost()
     {
-        memory_bus->release_physical_ram(_ram);
+        memory_bus->unref_physical_ram(_ram);
     }
 
     virtual uint get_hard_id() { return HOST_BRIDGE_SLOT;}
@@ -416,13 +416,13 @@ NoxVM::~NoxVM()
     }
 
     _mem_bus->unmap_physical_ram(_low_ram);
-    _mem_bus->release_physical_ram(_low_ram);
+    _mem_bus->unref_physical_ram(_low_ram);
     _mem_bus->unmap_physical_ram(_mid_ram);
-    _mem_bus->release_physical_ram(_mid_ram);
+    _mem_bus->unref_physical_ram(_mid_ram);
     _mem_bus->unmap_physical_ram(_high_bios);
-    _mem_bus->release_physical_ram(_high_bios);
+    _mem_bus->unref_physical_ram(_high_bios);
     _mem_bus->unmap_physical_ram(_high_ram);
-    _mem_bus->release_physical_ram(_high_ram);
+    _mem_bus->unref_physical_ram(_high_ram);
 
     unregister_regions();
 }

@@ -312,7 +312,7 @@ class PhysicalMap: public MemMap {
 public:
     PhysicalMap(PhysicalRam* physical, bool bits64, uint low_bar)
         : MemMap(memory_bus->get_physical_ram_size(physical), bits64, low_bar)
-        , _physical (physical)
+        , _physical (memory_bus->ref_physical_ram(physical))
         , _mapped (false)
     {
     }
@@ -322,6 +322,8 @@ public:
         if (_mapped) {
             memory_bus->unmap_physical_ram(_physical);
         }
+
+        memory_bus->unref_physical_ram(_physical);
     }
 
     virtual void map(PCIDevice& owner, uint64_t start)
@@ -368,7 +370,7 @@ public:
     PhysicalSection(PhysicalRam* physical, page_address_t start_page,
                     uint64_t num_pages, bool bits64, uint low_bar)
         : MemMap(num_pages << GUEST_PAGE_SHIFT, bits64, low_bar)
-        , _physical (physical)
+        , _physical (memory_bus->ref_physical_ram(physical))
         , _start_page (start_page)
         , _num_pages (num_pages)
         , _section (NULL)
@@ -381,6 +383,8 @@ public:
             memory_bus->release_section(_section);
             _section = NULL;
         }
+
+        memory_bus->unref_physical_ram(_physical);
     }
 
     virtual void map(PCIDevice& owner, uint64_t start)
@@ -492,7 +496,7 @@ public:
     PCIFirmware(PCIDevice& device, FirmwareFile *file, PhysicalRam* ram)
         : _device (device)
         , _file (file)
-        , _ram (ram)
+        , _ram (memory_bus->ref_physical_ram(ram))
         , _mmio (NULL)
         , _mapped (false)
     {
@@ -512,7 +516,7 @@ public:
     {
         unmap();
         delete _file;
-        memory_bus->release_physical_ram(_ram);
+        memory_bus->unref_physical_ram(_ram);
     }
 
     void reload()
@@ -656,6 +660,8 @@ void PCIDevice::load_firmware(uint16_t vendor, uint16_t device, uint8_t revision
     PhysicalRam* ram = memory_bus->alloc_physical_ram(*this, file->num_pages(), "firmware");
 
     _firmware = new PCIFirmware(*this, file.release(), ram);
+
+    memory_bus->unref_physical_ram(ram);
 }
 
 

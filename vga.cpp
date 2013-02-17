@@ -367,7 +367,7 @@ VGA::~VGA()
     _update_timer->destroy();
     unmap_lagacy_io();
     unmap_lagacy_fb();
-    memory_bus->release_physical_ram(_physical_ram);
+    memory_bus->unref_physical_ram(_physical_ram);
 }
 
 
