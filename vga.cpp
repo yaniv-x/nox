@@ -245,7 +245,7 @@ public:
 
     virtual void detach()
     {
-        Lock lock(_mutex);
+        Lock lock(_vga->_mutex);
         VGA::FrontEndList::iterator iter = _vga->_front_ends.begin();
 
         for (; iter != _vga->_front_ends.end(); iter++) {
@@ -271,7 +271,6 @@ public:
     VGAFrontEnd* get_front_end() { return _front_end;}
 
 public:
-    Mutex _mutex;
     VGA* _vga;
     SharedBuf* _fb;
     VGAFrontEnd* _front_end;

@@ -41,6 +41,7 @@ class KbdController;
 class NoxDisplay: public RunLoop, public VGAFrontEnd {
 public:
     NoxDisplay(VGA& vga, KbdController& kbd);
+    virtual ~NoxDisplay();
 
 private:
     virtual void set(SharedBuf* fb, uint32_t width, uint32_t height, int32_t stride);
