@@ -121,6 +121,7 @@ private:
     void nofify_vbe_fb_config();
     void update_one_effective_palette(uint index);
     void update_vga_window();
+    void put_log_byte(uint8_t val);
 
     void vram_load_one(uint32_t offset, uint8_t& dest);
     void vram_read_mode_0(uint32_t src, uint8_t& dest);
@@ -145,7 +146,7 @@ private:
     };
 
 private:
-    Mutex _mutex;
+    RWLock _rw_lock;
     Timer* _update_timer;
     IORegion* _region0;
     IORegion* _region1;
@@ -204,6 +205,7 @@ private:
     uint _height;
     bool _dirty;
 
+    Mutex _front_ends_mutex;
     typedef std::list<VGABackEndImp*> FrontEndList;
     FrontEndList _front_ends;
 
@@ -215,6 +217,9 @@ private:
 
     uint _edid_offset;
     bool _vba_palette_expect_red;
+
+    Mutex _log_mutex;
+    std::string _log_string;
 
     friend class VGABackEndImp;
 };
