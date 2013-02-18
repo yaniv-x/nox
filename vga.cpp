@@ -34,6 +34,7 @@
 #include "pci_bus.h"
 
 #define VGA_D_MESSAGE(format, ...)
+#define MAX_LOG_STR_SIZE 256
 
 // todo: odd even bits in multiple regs
 
@@ -245,7 +246,7 @@ public:
 
     virtual void detach()
     {
-        Lock lock(_vga->_mutex);
+        Lock lock(_vga->_front_ends_mutex);
         VGA::FrontEndList::iterator iter = _vga->_front_ends.begin();
 
         for (; iter != _vga->_front_ends.end(); iter++) {
@@ -338,22 +339,45 @@ VGA::VGA(NoxVM& nox)
 }
 
 
+void VGA::put_log_byte(uint8_t val)
+{
+    Lock lock(_log_mutex);
+
+    switch (val) {
+    case '\r':
+        break;
+    case '\n':
+        if (_log_string.empty()) {
+            break;
+        }
+
+        I_MESSAGE("VGA BIOS: %s", _log_string.c_str());
+        _log_string = "";
+
+        break;
+    default:
+        if (_log_string.size() == MAX_LOG_STR_SIZE) {
+            W_MESSAGE_SOME(10, "log string exceed max length");
+            break;
+        }
+
+        if (!isprint(val)) {
+            W_MESSAGE_SOME(10, "invalid char 0x%x", val);
+            break;;
+        }
+
+        _log_string += val;
+    }
+}
+
+
 void VGA::io_write_byte(uint16_t port, uint8_t val)
 {
     port -= get_region_address(VGA_PCI_IO_REGION);
 
     switch (port) {
     case IO_PORT_LOG:
-        if (val == '\r') {
-            return;
-        }
-
-        printf("%c", val);
-
-        if (val == '\n') {
-            fflush(stdout);
-        }
-
+        put_log_byte(val);
         break;
     default:
         D_MESSAGE("invalid port 0x%x", port);
@@ -656,7 +680,7 @@ void VGA::vbe_update_4bpp(uint32_t* dest)
 
 void VGA::update()
 {
-    Lock lock(_mutex);
+    RLock lock(_rw_lock);
 
     if (!is_vbe_active()) {
         update_vga();
@@ -1056,6 +1080,8 @@ void VGA::reset()
     unmap_lagacy_io();
     unmap_lagacy_fb();
 
+    _log_string = "";
+
     PCIDevice::reset();
 }
 
@@ -1063,7 +1089,7 @@ static uint8_t v_retrace = 0;
 
 uint8_t VGA::io_vga_read_byte(uint16_t port)
 {
-    Lock lock(_mutex);
+    WLock lock(_rw_lock);
 
     switch (port) {
     case IO_INPUT_STATUS_0:
@@ -1184,7 +1210,7 @@ void VGA::blank_screen()
 
 void VGA::io_vga_write_byte(uint16_t port, uint8_t val)
 {
-    Lock lock(_mutex);
+    WLock lock(_rw_lock);
 
     switch (port) {
     case IO_MISC_OUTPUT_W:
@@ -1364,7 +1390,7 @@ void VGA::io_vga_write_byte(uint16_t port, uint8_t val)
 VGABackEnd* VGA::attach_front_end(VGAFrontEnd* front_and)
 {
     VGABackEndImp* back_end = new VGABackEndImp(this, front_and);
-    Lock lock(_mutex);
+    Lock lock(_front_ends_mutex);
     _front_ends.push_back(back_end);
     D_MESSAGE("todo: add propagate_fb event");
     return back_end;
@@ -1524,6 +1550,8 @@ inline void VGA::vram_read_mode_0(uint32_t src, uint8_t& dest)
 
 void VGA::vram_read(uint64_t src, uint64_t length, uint8_t* dest)
 {
+    RLock lock(_rw_lock);
+
     if (!(_misc_output & MISC_FB_ACCESS_MASK)) {
         return;
     }
@@ -1668,6 +1696,8 @@ inline void VGA::vram_write_one(uint64_t dest, uint8_t byte)
 
 void VGA::vram_write(const uint8_t* src, uint64_t length, uint64_t dest)
 {
+    RLock lock(_rw_lock);
+
     if (!(_misc_output & MISC_FB_ACCESS_MASK)) {
         return;
     }
@@ -1713,6 +1743,8 @@ static const uint8_t edid_data[] = {
 
 uint16_t VGA::io_read_word(uint16_t port)
 {
+    WLock lock(_rw_lock);
+
     port -= get_region_address(VGA_PCI_IO_REGION);
 
     switch (port) {
@@ -1876,6 +1908,8 @@ void VGA::update_one_effective_palette(uint index)
 
 void VGA::io_write_word(uint16_t port, uint16_t val)
 {
+    WLock lock(_rw_lock);
+
     port -= get_region_address(VGA_PCI_IO_REGION);
 
     switch (port) {
@@ -2022,7 +2056,7 @@ bool VGA::stop()
 
 void VGA::on_io_enabled()
 {
-    Lock lock(_mutex);
+    WLock lock(_rw_lock);
 
     if (_enabled) {
         return;
@@ -2037,7 +2071,7 @@ void VGA::on_io_enabled()
 
 void VGA::on_io_disabled()
 {
-    Lock lock(_mutex);
+    WLock lock(_rw_lock);
 
     if (!_enabled) {
         return;
