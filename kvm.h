@@ -49,6 +49,7 @@ public:
     int get_vm_fd() { return _vmfd.get();}
     int get_vcpu_mmap_size() { return _vcpu_mmap_size;}
     const struct kvm_msr_list& get_msrs_list() { return *(struct kvm_msr_list*)_msrs_list.get();}
+    int get_max_cpus() { return _max_vcpu;}
 
 private:
     void init_msrs();
