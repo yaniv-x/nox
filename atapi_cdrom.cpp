@@ -73,7 +73,7 @@ enum {
     EJECT_EVENT_MASK = (1 << 3),
     TRAY_DOR_OPEN_MASK = (1 << 4),
     OPERATIONAL_EVENT_MASK = (1 << 5),
-    MEW_MEDIA_EVENT_MASK = (1 << 6),
+    NEW_MEDIA_EVENT_MASK = (1 << 6),
     ATTENTION_PARAMETERS_MASK = (1 << 7),
     ATTENTION_MEDIA_MASK = (1 << 8),
     ATTENTION_REMOVE_REQUEST = (1 << 9),
@@ -1627,7 +1627,7 @@ void ATAPICdrom::scsi_request_sens(uint8_t* packet)
     memset(data, 0, sizeof(data));
     data[0] = (1 << 7) | 0x70; // valid and current
     data[2] = _sense;
-    data[7] = 10; // ADDITIONAL SENSE LENGTH
+    data[7] = 10; // ADDITIONAL SENSE LENGTH (n - 7)
     data[12] = _sense_add >> 8;
     data[13] = _sense_add;
 
@@ -1843,7 +1843,7 @@ void ATAPICdrom::mmc_prevent_allow_removal(uint8_t* packet)
         D_MESSAGE("Persistent Prevent");
         _cdrom_state |= PERSISTENT_LOCK_MASK;
 
-        if (_mounted_media && !(_cdrom_state & MEW_MEDIA_EVENT_MASK)) {
+        if (_mounted_media && !(_cdrom_state & NEW_MEDIA_EVENT_MASK)) {
             _cdrom_state |= ACTIVE_PERSISTENT_LOCK_MASK;
         }
         break;
@@ -1882,9 +1882,9 @@ uint ATAPICdrom::notify_power(uint8_t* buf)
     buf[2] = MMC_NOTIFY_POWER_CLASS;
     buf[5] = get_mmc_power_mode();
 
-    if ((_cdrom_state & EJECT_EVENT_MASK)) {
+    if ((_cdrom_state & POWER_CHANGED_MASK)) {
         D_MESSAGE("power");
-        _cdrom_state &= ~EJECT_EVENT_MASK;
+        _cdrom_state &= ~POWER_CHANGED_MASK;
         buf[4] = 2; //PwrChg-Successful
     }
 
@@ -1903,9 +1903,9 @@ uint ATAPICdrom::notify_media(uint8_t* buf)
         D_MESSAGE("eject");
         buf[4] = 1;             // EjectRequest
         _cdrom_state &= ~EJECT_EVENT_MASK;
-    } else if ((_cdrom_state & MEW_MEDIA_EVENT_MASK)){
+    } else if ((_cdrom_state & NEW_MEDIA_EVENT_MASK)){
         buf[4] = 2;             // NewMedia
-        _cdrom_state &= ~MEW_MEDIA_EVENT_MASK;
+        _cdrom_state &= ~NEW_MEDIA_EVENT_MASK;
         D_MESSAGE("new");
         if ((_cdrom_state & PERSISTENT_LOCK_MASK)) {
             D_MESSAGE("active");
@@ -1961,7 +1961,7 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
 
     memset(buf, 0, sizeof(buf));
 
-    buf[3] = MMC_NOTIFY_OPERATIONAL_MASK | MMC_NOTIFY_MEDIA_MASK | MMC_NOTIFY_POWER_CLASS;
+    buf[3] = MMC_NOTIFY_OPERATIONAL_MASK | MMC_NOTIFY_MEDIA_MASK | MMC_NOTIFY_POWER_MASK;
     request_mask &= buf[3];
 
     if (length <= 4 || !request_mask) {
@@ -1976,7 +1976,7 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
     } else if ((request_mask & MMC_NOTIFY_POWER_MASK) && (_cdrom_state & POWER_CHANGED_MASK)) {
         length = MIN(notify_power(buf), length);
     } else if ((request_mask & MMC_NOTIFY_MEDIA_MASK) &&
-                                     (_cdrom_state & (MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK))) {
+                                     (_cdrom_state & (NEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK))) {
         length = MIN(notify_media(buf), length);
     } else if ((request_mask & MMC_NOTIFY_OPERATIONAL_MASK)) {
         length = MIN(notify_operational(buf), length);
@@ -2387,7 +2387,7 @@ void ATAPICdrom::_open_tray()
     D_MESSAGE("do");
 
     _cdrom_state |= TRAY_DOR_OPEN_MASK | OPERATIONAL_EVENT_MASK | ATTENTION_PARAMETERS_MASK;
-    _cdrom_state &= ~(MEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK |
+    _cdrom_state &= ~(NEW_MEDIA_EVENT_MASK | EJECT_EVENT_MASK | ATTENTION_MEDIA_MASK |
                       ATTENTION_REMOVE_REQUEST);
     _mounted_media = NULL;
     update_profile();
@@ -2409,7 +2409,7 @@ void ATAPICdrom::_close_tray()
 
     if ((_mounted_media = _media.get())) {
         D_MESSAGE("new media");
-        _cdrom_state |= MEW_MEDIA_EVENT_MASK | ATTENTION_MEDIA_MASK;
+        _cdrom_state |= NEW_MEDIA_EVENT_MASK | ATTENTION_MEDIA_MASK;
     }
 
     update_profile();
