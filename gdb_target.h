@@ -37,10 +37,11 @@ class CPU;
 
 class GDBTarget: public NonCopyable {
 public:
-    GDBTarget(NoxVM& vm, RunLoop& loop);
+    GDBTarget(NoxVM& vm, RunLoop& loop, uint16_t port);
     virtual ~GDBTarget();
 
     void cpu_interrupt();
+    uint16_t get_port() { return _port;}
 
 private:
     void accept();
@@ -86,6 +87,7 @@ private:
     Mutex _detach_mutex;
     NoxVM& _vm;
     RunLoop& _loop;
+    uint16_t _port;
     int _listenr;
     FDEvent* _accept_event;
     int _connection;

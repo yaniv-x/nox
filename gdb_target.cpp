@@ -159,9 +159,10 @@ static void to_binary_data(std::string& str, const char *src, int n)
 }
 
 
-GDBTarget::GDBTarget(NoxVM& vm, RunLoop& loop)
+GDBTarget::GDBTarget(NoxVM& vm, RunLoop& loop, uint16_t port)
     : _vm (vm)
     , _loop (loop)
+    , _port (port)
     , _listenr (-1)
     , _accept_event (NULL)
     , _connection (-1)
@@ -183,7 +184,7 @@ GDBTarget::GDBTarget(NoxVM& vm, RunLoop& loop)
 
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
-    address.sin_port = htons(3132);
+    address.sin_port = htons(_port);
     address.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(listner, (struct sockaddr*) &address, sizeof(address)) == -1) {

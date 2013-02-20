@@ -33,6 +33,7 @@
 class NoxVM;
 class AdminServer;
 class GDBTarget;
+class AdminReplyContext;
 
 class Application: public RunLoop {
 public:
@@ -52,6 +53,8 @@ private:
     bool init(int argc, const char** argv);
     void continue_quitting(bool ok);
     void quit_handler();
+    void enable_gdb(AdminReplyContext* context, uint32_t port);
+    void register_admin_commands();
 
     static void sig_int_handler(int sig);
     static void sig_term_handler(int sig);

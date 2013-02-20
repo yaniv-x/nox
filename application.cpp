@@ -166,6 +166,42 @@ void Application::quit()
 }
 
 
+void Application::enable_gdb(AdminReplyContext* context, uint32_t port)
+{
+    if (port > USHRT_MAX) {
+        context->command_reply("INVLID_PORT");
+        return;
+    }
+
+    if (_gdb_target.get()) {
+        std::string str;
+        sprintf(str, "EXIST: port=%u", _gdb_target->get_port());
+        context->command_reply(str.c_str());
+        return;
+    }
+
+    try {
+        _gdb_target.reset(new GDBTarget(*_vm, *this, port));
+    } catch (...) {
+        context->command_reply("FAILED");
+        return;
+    }
+
+    context->command_reply("OK");
+}
+
+
+void Application::register_admin_commands()
+{
+    _admin_server->register_command("enable-gdb", "enable remote debugging", "???",
+                                    admin_types(1, VA_UINT32_T),
+                                    admin_names(1, "port"),
+                                    admin_types(1, VA_UTF8_T),
+                                    admin_names(1, "result"),
+                                    (admin_command_handler_t)&Application::enable_gdb, this);
+}
+
+
 class InnerArg {
 public:
     InnerArg(const std::string& name, const std::string& val)
@@ -369,10 +405,10 @@ bool Application::init(int argc, const char** argv)
         return false;
     }
 
-    _gdb_target.reset(new GDBTarget(*_vm, *this));
-
     _vm->vm_reset();
     _vm->vm_start(NULL, NULL);
+
+    register_admin_commands();
 
     return true;
 }
