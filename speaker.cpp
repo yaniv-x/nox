@@ -44,6 +44,7 @@
 
 Speaker::Speaker(VMPart& owner)
     : VMPart("speaker", owner)
+    , _ready (false)
     , _terminate (false)
     , _timer (application->create_timer((void_callback_t)&Speaker::timer_proc, this))
     , _frame_end (_frame + SPEAKER_SAMPLES)
@@ -60,14 +61,21 @@ Speaker::Speaker(VMPart& owner)
     get_nox().get_pit().set_state_callback(2, (PIT::state_cb_t)&Speaker::pit_cb, this);
 
     reset();
+
+    Lock lock(_player_mutex);
+    while (!_ready) {
+        _ready_condition.wait(_player_mutex);
+    }
 }
 
 
 Speaker::~Speaker()
 {
     _timer->destroy();
+    Lock lock(_player_mutex);
     _terminate = true;
     _player_condition.signal();
+    lock.unlock();
     _thread->join();
     delete _thread;
 }
@@ -318,6 +326,9 @@ void Speaker::player_main()
      }
 
      Lock lock(_player_mutex);
+
+     _ready = true;
+     _ready_condition.signal();
 
      for (;;) {
         if (_pending_frames.empty()) {

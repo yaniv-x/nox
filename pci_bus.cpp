@@ -426,7 +426,7 @@ void PCIBus::add_device(PCIDevice& device)
 
 void PCIBus::remove_device(PCIDevice& device)
 {
-    ASSERT(get_state() == VMPart::DOWN);
+    ASSERT(get_state() == VMPart::DOWN || get_state() == VMPart::INIT);
 
     for (uint i = 0; i < PCI_MAX_DEVICES; i++) {
         if (_devices[i] == &device) {
