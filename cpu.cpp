@@ -342,7 +342,8 @@ void CPU::setup_cpuid()
             entries[i].ecx &= ~(1 << 21);
             entries[i].ebx &= 0xffff; // clera apic id and cpu count
             entries[i].ebx |= (_id << 24);
-            entries[i].edx &= ~(1 << 28); // clear HTT
+            entries[i].ebx |= (get_nox().get_cpu_count() << 16);
+            entries[i].edx |= (1 << 28); // set HTT
             entries[i].edx |= (1 << 9); // indicates APIC exists and is enabled
             D_MESSAGE("cpuid.1 0x%x 0x%x 0x%x 0x%x",
                       entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
@@ -356,8 +357,12 @@ void CPU::setup_cpuid()
         }
 
         if (entries[i].function == 0x80000008) {
-            entries[i].ecx &= ~0xff; // set NC = 0 => num cores == 1
-            entries[i].ecx &= ~(0x0f << 12); // set ApicIdCoreIdSize = 0
+            uint num_cores = get_nox().get_cpu_count();
+
+            ASSERT(num_cores > 0 && num_cores <= 128);
+            entries[i].ecx &= ~0xf0ff;
+            entries[i].ecx |= num_cores - 1;
+            entries[i].ecx |= (7 << 12); // 7bit core id (i.e bit 7 is processor id)
             D_MESSAGE("cpuid.0x80000008 0x%x 0x%x 0x%x 0x%x",
                       entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
         }

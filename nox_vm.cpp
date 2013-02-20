@@ -1107,6 +1107,17 @@ void NoxVM::set_ram_size(uint32_t ram_size_mb)
 }
 
 
+void NoxVM::set_num_cpus(uint num_cpus)
+{
+    if (num_cpus > _kvm->get_max_cpus()) {
+        THROW("requested cpu-count %u is higher than kvm limit (%u)",
+              num_cpus, _kvm->get_max_cpus());
+    }
+
+    _num_cpus = num_cpus;
+}
+
+
 void NoxVM::set_hard_disk(const char* file_name, bool read_only)
 {
     ASSERT(_state == INIT);

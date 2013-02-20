@@ -36,6 +36,7 @@
 #define MIN_MEM_SIZE (uint64_t(1) * MB)
 #define MAX_MEM_SIZE (uint64_t(8) * GB) // todo: calc dinamically according to system resources
 #define VM_NAME_MAX_LENGTH 64
+#define MAX_CPUS 15 // for now: prevent conflict with ioapic apic-id
 
 std::string nox_dir;
 
@@ -264,6 +265,7 @@ bool Application::init(int argc, const char** argv)
         OPT_HARD_DISK,
         OPT_CDROM,
         OPT_BOOT_DEVICE,
+        OPT_CPU_COUNT,
     };
 
     parser.add_option_with_arg(OPT_RAM_SIZE, "ram-size", OptionsParser::ONE_ARGUMENT,
@@ -274,8 +276,12 @@ bool Application::init(int argc, const char** argv)
                                OptionsParser::MANDATORY);
     parser.add_option_with_arg(OPT_CDROM, "cdrom", OptionsParser::OPTIONAL_ARGUMENT, "file_name",
                                "specifay hard disk file name");
+#if 0
     parser.add_option_with_arg(OPT_BOOT_DEVICE, "boot-device", OptionsParser::ONE_ARGUMENT,
-                               "device", "specifay boot device \"hd\" pr \"cd\"");
+                               "device", "specifay boot device \"hd\" or \"cd\"");
+#endif
+    parser.add_option_with_arg(OPT_CPU_COUNT, "cpu-count", OptionsParser::ONE_ARGUMENT,
+                               "cpu_count", "number of cpus");
 
     parser.set_short_name(OPT_RAM_SIZE, 'm');
     parser.set_short_name(OPT_HARD_DISK, 'h');
@@ -292,6 +298,7 @@ bool Application::init(int argc, const char** argv)
     bool cdrom = false;
     const char* cdrom_media = NULL;
     bool boot_from_cd = false;
+    ulong num_cpus = 1;
 
     int option;
     const char* arg;
@@ -373,6 +380,14 @@ bool Application::init(int argc, const char** argv)
                 return false;
             }
             break;
+        case OPT_CPU_COUNT:
+            if (!str_to_ulong(arg, num_cpus) || !num_cpus || num_cpus > MAX_CPUS) {
+                printf("invalid cpu count \"%s\", valid values are in the range 1 through %u\n",
+                       arg, MAX_CPUS);
+                set_exit_code(ERROR_INVALID_COMMAND_LINE);
+                return false;
+            }
+            break;
         case OptionsParser::OPT_ID_HELP:
             parser.help();
             set_exit_code(ERROR_OK);
@@ -391,6 +406,7 @@ bool Application::init(int argc, const char** argv)
 
         _vm->set_ram_size(ram_size / MB);
         _vm->set_hard_disk(hard_disk_file.c_str(), ro_hard_disk_file);
+        _vm->set_num_cpus(num_cpus);
 
         if (cdrom) {
             _vm->set_cdrom(cdrom_media);
@@ -399,6 +415,10 @@ bool Application::init(int argc, const char** argv)
         _vm->set_boot_device(boot_from_cd);
 
         _vm->init();
+    } catch (std::exception& e) {
+        E_MESSAGE("vm initialization failed: %s", e.what());
+        set_exit_code(ERROR_VM_INIT_FAILED);
+        return false;
     } catch (...) {
         E_MESSAGE("vm initialization failed");
         set_exit_code(ERROR_VM_INIT_FAILED);

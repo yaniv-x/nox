@@ -71,6 +71,7 @@ public:
     RWLock& get_state_lock() { return _state_lock;}
 
     void set_ram_size(uint32_t ram_size);
+    void set_num_cpus(uint num_cpus);
     void set_hard_disk(const char* file_name, bool read_only);
     void set_cdrom(const char* file_name);
     void set_boot_device(bool from_cdrom);
