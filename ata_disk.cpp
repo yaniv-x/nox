@@ -1297,6 +1297,7 @@ void ATADisk::do_command(uint8_t command)
     case ATA_CMD_PACKET:
     case ATA_CMD_GET_MEDIA_STATUS:
     case ATA_CMD_SECURITY_FREEZE_LOCK:
+    case ATA_CMD_SMART:
         command_abort_error();
         break;
     default:
