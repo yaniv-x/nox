@@ -106,9 +106,7 @@ private:
     void init_cdrom();
     void load_bios();
     void init_cpus();
-#ifdef WITH_BOCHS_BIOS
-    void reset_bios_stuff();
-#endif
+
     void set_down();
     void set_debug();
     void set_freeze_state();
@@ -120,9 +118,6 @@ private:
     uint8_t a20_port_read(uint16_t port);
     void misc_port_write(uint16_t port, uint8_t val);
     uint8_t misc_port_read(uint16_t port);
-#ifdef WITH_BOCHS_BIOS
-    void bochs_port_write(uint16_t port, uint8_t val);
-#endif
     void post_diagnostic(uint16_t port, uint8_t val);
     uint8_t platform_port_read_byte(uint16_t port);
     void do_platform_command(uint8_t val);
@@ -176,9 +171,6 @@ private:
     uint _num_cpus;
     std::string _hard_disk_file_name;
     bool _ro_hard_disk_file;
-#ifdef WITH_BOCHS_BIOS
-    uint64_t _hard_disk_size;
-#endif
     bool _cdrom;
     std::string _cdrom_file_name;
     bool _boot_from_cdrom;

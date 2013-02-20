@@ -12,11 +12,6 @@ fi
 
 AC_CHECK_HEADERS(linux/kvm.h)
 
-AC_ARG_ENABLE([bochs-bios],
-    AS_HELP_STRING([--enable-bochs-bios], [Add Bochs BIOS compatibility]),
-    [AC_DEFINE(WITH_BOCHS_BIOS)]
-)
-
 PKG_CHECK_MODULES(PULSE, libpulse-simple)
 
 PKG_CHECK_MODULES(X11, x11)
