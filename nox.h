@@ -126,7 +126,6 @@ enum {
 
 enum {
     PLATFORM_CMD_SET_PCI_IRQ = 1,
-    PLATFORM_CMD_DELAY,
 };
 
 

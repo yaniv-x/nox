@@ -725,12 +725,6 @@ void NoxVM::do_platform_command(uint8_t val)
         args->ret_val = pci_bus->set_irq(args->bus, args->device, args->pin, args->irq);
         break;
     }
-    case PLATFORM_CMD_DELAY: {
-        uint32_t* args = (uint32_t*)_pci_host->get_ram_ptr();
-        W_MESSAGE("PLATFORM_CMD_DELAY is abnormal and temporary");
-        usleep(*args);
-        break;
-    }
     default:
         W_MESSAGE("invalid command 0x%x", val);
     }
