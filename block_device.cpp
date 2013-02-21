@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include <sys/file.h>
 
 #include "block_device.h"
 #include "application.h"
@@ -49,6 +50,12 @@ BlockDevice::BlockDevice(const std::string& file_name, uint block_size, bool rea
 
     if ((stat.st_size % _block_size)) {
         THROW("invalid file size: %lu is not align on %d bytes", stat.st_size, _block_size);
+    }
+
+    uint flock_op = read_only ? LOCK_SH : LOCK_EX;
+
+    if (flock(_file.get(), flock_op | LOCK_NB) == -1) {
+        THROW_SYS_ERROR("%s lock failed %s", (read_only) ? "share": "exclusive", file_name.c_str());
     }
 
     _size = stat.st_size / _block_size;
@@ -317,6 +324,10 @@ ROBlockDevice::ROBlockDevice(const std::string& file_name, uint block_size)
 
     if (!_tmp.is_valid()) {
         THROW("create %s failed", tmp_file.c_str());
+    }
+
+    if (flock(_tmp.get(), LOCK_EX | LOCK_NB) == -1) {
+        THROW_SYS_ERROR("lock %s failed", tmp_file.c_str());
     }
 
     unlink(tmp_file.c_str());

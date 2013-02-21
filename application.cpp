@@ -26,6 +26,8 @@
 
 #include <sys/stat.h>
 #include <sstream>
+#include <fcntl.h>
+#include <sys/file.h>
 
 #include "application.h"
 #include "nox_vm.h"
@@ -39,6 +41,8 @@
 #define MAX_CPUS 15 // for now: prevent conflict with ioapic apic-id
 
 std::string nox_dir;
+static std::string lock_file_name;
+static int lock_fd = -1;
 
 static uint64_t translate_ram_size(const char* arg)
 {
@@ -200,6 +204,44 @@ void Application::register_admin_commands()
                                     admin_types(1, VA_UTF8_T),
                                     admin_names(1, "result"),
                                     (admin_command_handler_t)&Application::enable_gdb, this);
+}
+
+
+static void release_lock()
+{
+    if (lock_fd != -1) {
+        unlink(lock_file_name.c_str());
+        close(lock_fd);
+    }
+}
+
+
+bool Application::ecquire_exclusive_rights(const char* vm_name)
+{
+    // for now using specific lock file, later on will use ".nox" file
+
+    sprintf(lock_file_name, "%s/tmp/nox-%s.lock", nox_dir.c_str(), vm_name);
+
+    atexit(release_lock);
+
+    int fd = open(lock_file_name.c_str(), O_CREAT | O_RDONLY, S_IRUSR);
+
+    if (fd == -1) {
+        int e = errno;
+        W_MESSAGE("open lock-file \"%s\" failed: %s", lock_file_name.c_str(), strerror(e));
+        return false;
+    }
+
+    if (flock(fd, LOCK_EX | LOCK_NB) == -1) {
+        int e = errno;
+        D_MESSAGE("lock failed: %s", strerror(e));
+        close(fd);
+        return false;
+    }
+
+    lock_fd = fd;
+
+    return true;
 }
 
 
@@ -396,6 +438,13 @@ bool Application::init(int argc, const char** argv)
             THROW("invalid option %d", option);
         }
     }
+
+    if (!ecquire_exclusive_rights(vm_name)) {
+        printf("failed to ecquire exclusive vm rights\n");
+        set_exit_code(ERROR_VM_IN_USE);
+        return false;
+    }
+
 
     std::string uds_name;
     sprintf(uds_name, "%s/active/%s.uds", nox_dir.c_str(), vm_name);
