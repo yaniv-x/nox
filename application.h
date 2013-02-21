@@ -50,6 +50,7 @@ public:
 private:
     void init_signals();
     void restore_signals();
+    bool ecquire_exclusive_rights(const char* vm_name);
     bool init(int argc, const char** argv);
     void continue_quitting(bool ok);
     void quit_handler();
