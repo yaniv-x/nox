@@ -47,7 +47,7 @@
     #define NOX_PCI_IRQ_EXCLUSIVE_MASK (NOX_PCI_IRQ_LINES_MASK & ~(0xd000)) // exclude: mouse,
                                                                                 // and lagacy ide
     #define NOX_PCI_NUM_SLOTS 16
-    #define NOX_PCI_NUM_INT_LINKS 4
+    #define NOX_PCI_NUM_INT_LINKS 8
     #define NOX_PCI_DEV_TO_LINK(devic, pin) \
         (((devic) + ((pin) - 1)) % NOX_PCI_NUM_INT_LINKS)
 
