@@ -422,7 +422,8 @@ void CPU::save_init_msrs()
         }
 
         D_MESSAGE("skiping msr 0x%x", msrs_ptr->entries[r].index);
-        memcpy(&msrs_ptr->entries[r], &msrs_ptr->entries[r + 1], msrs_ptr->nmsrs - r - 1);
+        memcpy(&msrs_ptr->entries[r], &msrs_ptr->entries[r + 1],
+               (msrs_ptr->nmsrs - r - 1) * sizeof(msrs_ptr->entries[0]));
         msrs_ptr->nmsrs--;
     }
 
@@ -596,14 +597,24 @@ void CPU::reset_msrs()
 {
     struct kvm_msrs* msrs_ptr = (struct kvm_msrs*)_init_msrs.get();
 
-    int r = ioctl(_vcpu_fd.get(), KVM_SET_MSRS, msrs_ptr);
+    uint alloc_size = sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry);
+    AutoArray<uint8_t> buf(new uint8_t[alloc_size]);
+    struct kvm_msrs* one_msr = (kvm_msrs*)buf.get();
 
-    if (r < 0) {
-         THROW("failed");
-    }
+    for (uint i = 0; i < msrs_ptr->nmsrs; i++) {
+        memset(one_msr , 0, alloc_size);
+        one_msr->nmsrs = 1;
+        one_msr->entries[0].index = msrs_ptr->entries[i].index;
 
-    if (r != msrs_ptr->nmsrs) {
-        D_MESSAGE("partial set %u %u", r, msrs_ptr->nmsrs);
+        int r = ioctl(_vcpu_fd.get(), KVM_SET_MSRS, one_msr);
+
+        if (r != 1) {
+            if (r < 0) {
+                THROW("failed %d", r);
+            }
+
+            W_MESSAGE("reset msr 0x%x failed (%u)", one_msr->entries[0].index, r);
+        }
     }
 }
 
