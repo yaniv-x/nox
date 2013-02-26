@@ -237,7 +237,7 @@ void GDBTarget::cpu_interrupt()
 {
     Lock lock(_detach_mutex);
 
-    if (_state != ATTACHED) {
+    if (_state != ATTACHED || !vcpu) {
         return;
     }
 
@@ -1042,6 +1042,10 @@ void GDBTarget::process(uint8_t* data, int len)
 
 void GDBTarget::terminate()
 {
+    if (!_io_event) {
+        return;
+    }
+
     _state = TERMINATING;
     _io_event->destroy();
     _io_event = NULL;
