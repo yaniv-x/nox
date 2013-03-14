@@ -314,10 +314,10 @@ bool Application::init(int argc, const char** argv)
                                "ram_size<unit>", "specifay ram size. unit can be M/m or G/g",
                                OptionsParser::MANDATORY);
     parser.add_option_with_arg(OPT_HARD_DISK, "hard-disk", OptionsParser::ONE_ARGUMENT,
-                               "file_name", "specifay hard disk file name",
+                               "file_name", "specifay hard-disk image file",
                                OptionsParser::MANDATORY);
-    parser.add_option_with_arg(OPT_CDROM, "cdrom", OptionsParser::OPTIONAL_ARGUMENT, "file_name",
-                               "specifay hard disk file name");
+    parser.add_option_with_arg(OPT_CDROM, "dvd-rom", OptionsParser::OPTIONAL_ARGUMENT, "file_name",
+                               "specifay dvd/cd iso file");
 #if 0
     parser.add_option_with_arg(OPT_BOOT_DEVICE, "boot-device", OptionsParser::ONE_ARGUMENT,
                                "device", "specifay boot device \"hd\" or \"cd\"");
