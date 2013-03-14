@@ -24,8 +24,8 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _H_CMOS
-#define _H_CMOS
+#ifndef _H_RTC
+#define _H_RTC
 
 #include <time.h>
 #include "vm_part.h"
@@ -35,10 +35,10 @@
 class NoxVM;
 class Timer;
 
-class CMOS: private VMPart {
+class RTC: private VMPart {
 public:
-    CMOS(NoxVM& vm);
-    virtual ~CMOS();
+    RTC(NoxVM& vm);
+    virtual ~RTC();
 
     virtual void reset();
     virtual bool start();

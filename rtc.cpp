@@ -24,7 +24,7 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "cmos.h"
+#include "rtc.h"
 #include "nox_vm.h"
 #include "io_bus.h"
 #include "pic.h"
@@ -32,37 +32,37 @@
 #include "pm_controller.h"
 
 enum {
-    CMOD_OFFSET_SHUTDOWN = 0x0f,
-    CMOD_OFFSET_FLOPPY_TYPE = 0x10,
-    CMOD_OFFSET_HD_TYPE = 0x12,
-    CMOD_OFFSET_EQUIPMENT = 0x14,
-    CMOD_OFFSET_BASE_MEM_LOW = 0x15,
-    CMOD_OFFSET_BASE_MEM_HIGH = 0x16,
-    CMOD_OFFSET_EXT_MEM_LOW = 0x17,
-    CMOD_OFFSET_EXT_MEM_HIGH = 0x18,
-    CMOD_OFFSET_HD_EXT_TYPE = 0x19,
-    CMOD_OFFSET_HD0_T47_CYL_LOW = 0x1b,
-    CMOD_OFFSET_HD0_T47_CYL_HIGH = 0x1c,
-    CMOD_OFFSET_HD0_T47_HEADS = 0x1d,
-    CMOD_OFFSET_HD0_T47_PRECOMP_LOW = 0x1e,
-    CMOD_OFFSET_HD0_T47_PRECOMP_HIGH = 0x1f,
-    CMOD_OFFSET_HD0_T47_INFO = 0x20,
-    CMOD_OFFSET_HD0_T47_LENDING_LOW = 0x21,
-    CMOD_OFFSET_HD0_T47_LENDING_HIGH = 0x22,
-    CMOD_OFFSET_HD0_T47_SECTORS = 0x23,
-    CMOD_OFFSET_EXT_MEM_LOW_ALIAS = 0x30,
-    CMOD_OFFSET_EXT_MEM_HIGH_ALIAS = 0x31,
-    CMOD_OFFSET_CENTURY = 0x32,
-    CMOD_OFFSET_PS2_CENTURY = 0x37,
-    CMOD_OFFSET_MEM_ABOVE_16M_LOW = 0x34,
-    CMOD_OFFSET_MEM_ABOVE_16M_HIGH = 0x35,
-    CMOD_OFFSET_BOOT_DEV_LOW = 0x3d,
-    CMOD_OFFSET_BOOT_DEV_HIGH = 0x38,
-    CMOD_OFFSET_HD_GEO_TRANSLATION = 0x39,
-    CMOD_OFFSET_MEM_ABOVE_4G_LOW = 0x5b,
-    CMOD_OFFSET_MEM_ABOVE_4G_MID = 0x5c,
-    CMOD_OFFSET_MEM_ABOVE_4G_HIGH = 0x5d,
-    CMOD_OFFSET_NUM_CPUS = 0x5f,
+    RTC_OFFSET_SHUTDOWN = 0x0f,
+    RTC_OFFSET_FLOPPY_TYPE = 0x10,
+    RTC_OFFSET_HD_TYPE = 0x12,
+    RTC_OFFSET_EQUIPMENT = 0x14,
+    RTC_OFFSET_BASE_MEM_LOW = 0x15,
+    RTC_OFFSET_BASE_MEM_HIGH = 0x16,
+    RTC_OFFSET_EXT_MEM_LOW = 0x17,
+    RTC_OFFSET_EXT_MEM_HIGH = 0x18,
+    RTC_OFFSET_HD_EXT_TYPE = 0x19,
+    RTC_OFFSET_HD0_T47_CYL_LOW = 0x1b,
+    RTC_OFFSET_HD0_T47_CYL_HIGH = 0x1c,
+    RTC_OFFSET_HD0_T47_HEADS = 0x1d,
+    RTC_OFFSET_HD0_T47_PRECOMP_LOW = 0x1e,
+    RTC_OFFSET_HD0_T47_PRECOMP_HIGH = 0x1f,
+    RTC_OFFSET_HD0_T47_INFO = 0x20,
+    RTC_OFFSET_HD0_T47_LENDING_LOW = 0x21,
+    RTC_OFFSET_HD0_T47_LENDING_HIGH = 0x22,
+    RTC_OFFSET_HD0_T47_SECTORS = 0x23,
+    RTC_OFFSET_EXT_MEM_LOW_ALIAS = 0x30,
+    RTC_OFFSET_EXT_MEM_HIGH_ALIAS = 0x31,
+    RTC_OFFSET_CENTURY = 0x32,
+    RTC_OFFSET_PS2_CENTURY = 0x37,
+    RTC_OFFSET_MEM_ABOVE_16M_LOW = 0x34,
+    RTC_OFFSET_MEM_ABOVE_16M_HIGH = 0x35,
+    RTC_OFFSET_BOOT_DEV_LOW = 0x3d,
+    RTC_OFFSET_BOOT_DEV_HIGH = 0x38,
+    RTC_OFFSET_HD_GEO_TRANSLATION = 0x39,
+    RTC_OFFSET_MEM_ABOVE_4G_LOW = 0x5b,
+    RTC_OFFSET_MEM_ABOVE_4G_MID = 0x5c,
+    RTC_OFFSET_MEM_ABOVE_4G_HIGH = 0x5d,
+    RTC_OFFSET_NUM_CPUS = 0x5f,
 };
 
 enum {
@@ -127,18 +127,18 @@ static uint32_t rates_table[] = {
 };
 
 
-CMOS::CMOS(NoxVM& vm)
-    : VMPart ("cmos", vm)
+RTC::RTC(NoxVM& vm)
+    : VMPart ("rtc", vm)
     , _irq_wire (*this)
-    , _period_timer (application->create_timer((void_callback_t)&CMOS::period_timer_proc, this))
-    , _alarm_timer (application->create_timer((void_callback_t)&CMOS::alarm_timer_proc, this))
-    , _update_timer (application->create_timer((void_callback_t)&CMOS::update_cycle, this))
+    , _period_timer (application->create_timer((void_callback_t)&RTC::period_timer_proc, this))
+    , _alarm_timer (application->create_timer((void_callback_t)&RTC::alarm_timer_proc, this))
+    , _update_timer (application->create_timer((void_callback_t)&RTC::update_cycle, this))
     , _index (0)
 {
     memset(_user_ares, 0, sizeof(_user_ares));
     add_io_region(io_bus->register_region(*this, 0x70, 2, this,
-                                          (io_read_byte_proc_t)&CMOS::read_byte,
-                                          (io_write_byte_proc_t)&CMOS::write_byte));
+                                          (io_read_byte_proc_t)&RTC::read_byte,
+                                          (io_write_byte_proc_t)&RTC::write_byte));
     time_t t = time(NULL);
     gmtime_r(&t, &_date);
     _date_base_time = get_monolitic_time();
@@ -153,7 +153,7 @@ CMOS::CMOS(NoxVM& vm)
 }
 
 
-CMOS::~CMOS()
+RTC::~RTC()
 {
     _period_timer->destroy();
     _alarm_timer->destroy();
@@ -161,7 +161,7 @@ CMOS::~CMOS()
 }
 
 
-void CMOS::reset()
+void RTC::reset()
 {
     _period_timer->disarm();
     _alarm_timer->disarm();
@@ -173,25 +173,25 @@ void CMOS::reset()
 }
 
 
-inline bool CMOS::is_lazy_mode()
+inline bool RTC::is_lazy_mode()
 {
     return !(_reg_b & REG_B_ENABLE_UPDATE_INTERRUPT_MASK);
 }
 
 
-inline bool CMOS::is_clock_halted()
+inline bool RTC::is_clock_halted()
 {
     return !!(_reg_b & REG_B_HALT_CLOCK_MASK);
 }
 
 
-inline bool CMOS::interrupt_on_alarm()
+inline bool RTC::interrupt_on_alarm()
 {
     return !!(_reg_b & REG_B_ENABLE_ALARM_INTERRUPT_MASK);
 }
 
 
-void CMOS::period_timer_proc()
+void RTC::period_timer_proc()
 {
     ASSERT(get_state() == VMPart::RUNNING);
 
@@ -204,7 +204,7 @@ void CMOS::period_timer_proc()
 }
 
 
-void CMOS::alarm_timer_proc()
+void RTC::alarm_timer_proc()
 {
     Lock lock(_mutex);
 
@@ -225,7 +225,7 @@ void CMOS::alarm_timer_proc()
 }
 
 
-bool CMOS::lazy_update(nox_time_t now)
+bool RTC::lazy_update(nox_time_t now)
 {
     if (is_clock_halted() || !is_lazy_mode()) {
         return false;
@@ -273,7 +273,7 @@ bool CMOS::lazy_update(nox_time_t now)
 }
 
 
-void CMOS::update_cycle()
+void RTC::update_cycle()
 {
     Lock lock(_mutex);
 
@@ -319,7 +319,7 @@ void CMOS::update_cycle()
 }
 
 
-void CMOS::set_reg_a(uint8_t val)
+void RTC::set_reg_a(uint8_t val)
 {
     val &= ~REG_A_UPDATE_IN_PROGRESS_MASK;
 
@@ -338,7 +338,7 @@ void CMOS::set_reg_a(uint8_t val)
 
 
 // called after time is up to date
-void CMOS::reschedule_alarm(nox_time_t update_time)
+void RTC::reschedule_alarm(nox_time_t update_time)
 {
     if (is_clock_halted() || !is_lazy_mode()) {
         _alarm_timer->disarm();
@@ -367,7 +367,7 @@ void CMOS::reschedule_alarm(nox_time_t update_time)
 }
 
 
-void CMOS::set_reg_b(uint8_t val, nox_time_t now)
+void RTC::set_reg_b(uint8_t val, nox_time_t now)
 {
     lazy_update(now);
 
@@ -401,7 +401,7 @@ void CMOS::set_reg_b(uint8_t val, nox_time_t now)
 }
 
 
-uint8_t CMOS::localize_hours(uint8_t val)
+uint8_t RTC::localize_hours(uint8_t val)
 {
     if (_reg_b & REG_B_24_HOURS_MASK) {
         return localize(val) % 24;
@@ -421,7 +421,7 @@ uint8_t CMOS::localize_hours(uint8_t val)
 }
 
 
-void CMOS::write_byte(uint16_t port, uint8_t val)
+void RTC::write_byte(uint16_t port, uint8_t val)
 {
     Lock lock(_mutex);
 
@@ -492,7 +492,7 @@ void CMOS::write_byte(uint16_t port, uint8_t val)
 }
 
 
-inline uint CMOS::localize(uint val)
+inline uint RTC::localize(uint val)
 {
     if (_reg_b & REG_B_BINARY_MASK) {
         return val;
@@ -502,7 +502,7 @@ inline uint CMOS::localize(uint val)
 }
 
 
-inline uint CMOS::delocalize(uint val)
+inline uint RTC::delocalize(uint val)
 {
     if (_reg_b & REG_B_BINARY_MASK) {
         return val;
@@ -512,7 +512,7 @@ inline uint CMOS::delocalize(uint val)
 }
 
 
-uint8_t CMOS::delocalize_hours(uint8_t val)
+uint8_t RTC::delocalize_hours(uint8_t val)
 {
     if (_reg_b & REG_B_24_HOURS_MASK) {
         return delocalize(val);
@@ -526,7 +526,7 @@ uint8_t CMOS::delocalize_hours(uint8_t val)
 }
 
 
-uint8_t CMOS::get_update_in_progress(nox_time_t update_time)
+uint8_t RTC::get_update_in_progress(nox_time_t update_time)
 {
     if ((_reg_b & REG_B_HALT_CLOCK_MASK)) {
         return 0;
@@ -541,7 +541,7 @@ uint8_t CMOS::get_update_in_progress(nox_time_t update_time)
 }
 
 
-uint8_t CMOS::read_byte(uint16_t port)
+uint8_t RTC::read_byte(uint16_t port)
 {
     Lock lock(_mutex);
 
@@ -595,37 +595,37 @@ uint8_t CMOS::read_byte(uint16_t port)
             // REG_D_POWER_STABLE_MASK is set automaticaly after
             // reading this reg
             return REG_D_POWER_STABLE_MASK;
-        case CMOD_OFFSET_SHUTDOWN:
-        case CMOD_OFFSET_FLOPPY_TYPE:
-        case CMOD_OFFSET_HD_TYPE:
-        case CMOD_OFFSET_EQUIPMENT:
-        case CMOD_OFFSET_BASE_MEM_LOW:
-        case CMOD_OFFSET_BASE_MEM_HIGH:
-        case CMOD_OFFSET_EXT_MEM_LOW:
-        case CMOD_OFFSET_EXT_MEM_HIGH:
-        case CMOD_OFFSET_HD_EXT_TYPE:
-        case CMOD_OFFSET_HD0_T47_CYL_LOW:
-        case CMOD_OFFSET_HD0_T47_CYL_HIGH:
-        case CMOD_OFFSET_HD0_T47_HEADS:
-        case CMOD_OFFSET_HD0_T47_SECTORS:
-        case CMOD_OFFSET_HD0_T47_PRECOMP_LOW:
-        case CMOD_OFFSET_HD0_T47_PRECOMP_HIGH:
-        case CMOD_OFFSET_HD0_T47_INFO:
-        case CMOD_OFFSET_HD0_T47_LENDING_LOW:
-        case CMOD_OFFSET_HD0_T47_LENDING_HIGH:
-        case CMOD_OFFSET_EXT_MEM_LOW_ALIAS:
-        case CMOD_OFFSET_EXT_MEM_HIGH_ALIAS:
-        case CMOD_OFFSET_MEM_ABOVE_16M_LOW:
-        case CMOD_OFFSET_MEM_ABOVE_16M_HIGH:
-        case CMOD_OFFSET_BOOT_DEV_LOW:
-        case CMOD_OFFSET_MEM_ABOVE_4G_LOW:
-        case CMOD_OFFSET_MEM_ABOVE_4G_MID:
-        case CMOD_OFFSET_MEM_ABOVE_4G_HIGH:
-        case CMOD_OFFSET_NUM_CPUS:
-        case CMOD_OFFSET_CENTURY:
-        case CMOD_OFFSET_PS2_CENTURY:
-        case CMOD_OFFSET_BOOT_DEV_HIGH:
-        case CMOD_OFFSET_HD_GEO_TRANSLATION:
+        case RTC_OFFSET_SHUTDOWN:
+        case RTC_OFFSET_FLOPPY_TYPE:
+        case RTC_OFFSET_HD_TYPE:
+        case RTC_OFFSET_EQUIPMENT:
+        case RTC_OFFSET_BASE_MEM_LOW:
+        case RTC_OFFSET_BASE_MEM_HIGH:
+        case RTC_OFFSET_EXT_MEM_LOW:
+        case RTC_OFFSET_EXT_MEM_HIGH:
+        case RTC_OFFSET_HD_EXT_TYPE:
+        case RTC_OFFSET_HD0_T47_CYL_LOW:
+        case RTC_OFFSET_HD0_T47_CYL_HIGH:
+        case RTC_OFFSET_HD0_T47_HEADS:
+        case RTC_OFFSET_HD0_T47_SECTORS:
+        case RTC_OFFSET_HD0_T47_PRECOMP_LOW:
+        case RTC_OFFSET_HD0_T47_PRECOMP_HIGH:
+        case RTC_OFFSET_HD0_T47_INFO:
+        case RTC_OFFSET_HD0_T47_LENDING_LOW:
+        case RTC_OFFSET_HD0_T47_LENDING_HIGH:
+        case RTC_OFFSET_EXT_MEM_LOW_ALIAS:
+        case RTC_OFFSET_EXT_MEM_HIGH_ALIAS:
+        case RTC_OFFSET_MEM_ABOVE_16M_LOW:
+        case RTC_OFFSET_MEM_ABOVE_16M_HIGH:
+        case RTC_OFFSET_BOOT_DEV_LOW:
+        case RTC_OFFSET_MEM_ABOVE_4G_LOW:
+        case RTC_OFFSET_MEM_ABOVE_4G_MID:
+        case RTC_OFFSET_MEM_ABOVE_4G_HIGH:
+        case RTC_OFFSET_NUM_CPUS:
+        case RTC_OFFSET_CENTURY:
+        case RTC_OFFSET_PS2_CENTURY:
+        case RTC_OFFSET_BOOT_DEV_HIGH:
+        case RTC_OFFSET_HD_GEO_TRANSLATION:
             return _user_ares[_index - USER_0];
         default:
             W_MESSAGE("user 0x%x", _index);
@@ -638,7 +638,7 @@ uint8_t CMOS::read_byte(uint16_t port)
 }
 
 
-void CMOS::host_write(uint index, uint value)
+void RTC::host_write(uint index, uint value)
 {
     ASSERT(get_nox().get_state() == VMPart::RESETING);
     ASSERT(index >= USER_0 && index < (1 << 8));
@@ -647,7 +647,7 @@ void CMOS::host_write(uint index, uint value)
 }
 
 
-bool CMOS::start()
+bool RTC::start()
 {
     nox_time_t now = get_monolitic_time();
 
@@ -678,7 +678,7 @@ bool CMOS::start()
 }
 
 
-bool CMOS::stop()
+bool RTC::stop()
 {
     _period_timer->disarm();
     _update_timer->disarm();

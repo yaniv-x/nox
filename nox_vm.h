@@ -41,7 +41,7 @@ class PIT;
 class PCIBus;
 class PCIHost;
 class ISABridge;
-class CMOS;
+class RTC;
 class ATAHost;
 class KbdController;
 class IOBus;
@@ -150,7 +150,7 @@ private:
     std::auto_ptr<PCIHost> _pci_host;
     std::auto_ptr<ISABridge> _eisa_bridge;
     std::auto_ptr<PMController> _pm_controller;
-    std::auto_ptr<CMOS> _cmos;
+    std::auto_ptr<RTC> _rtc;
     std::auto_ptr<DMA> _dma;
     std::auto_ptr<PIT> _pit;
     std::auto_ptr<KbdController> _kbd;
