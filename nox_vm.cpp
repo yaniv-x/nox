@@ -42,7 +42,7 @@
 #include "ata_host.h"
 #include "ata_disk.h"
 #include "atapi_cdrom.h"
-#include "cmos.h"
+#include "rtc.h"
 #include "keyboard.h"
 #include "vga.h"
 #include "pm_controller.h"
@@ -352,7 +352,7 @@ NoxVM::NoxVM(const char* name)
     , _pci_host (new PCIHost(*_pci.get()))
     , _eisa_bridge (new ISABridge(*_pci.get()))
     , _pm_controller (new PMController(*this))
-    , _cmos (new CMOS(*this))
+    , _rtc (new RTC(*this))
     , _dma (new DMA(*this))
     , _pit (new PIT(*this))
     , _kbd (new KbdController(*this))

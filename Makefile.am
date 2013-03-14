@@ -25,7 +25,7 @@ nox_SOURCES =					\
 	memory_bus.cpp				\
 	cpu.cpp					\
 	threads.cpp				\
-	cmos.cpp				\
+	rtc.cpp				\
 	dma.cpp					\
 	pit.cpp					\
 	keyboard.cpp				\
