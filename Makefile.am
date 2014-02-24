@@ -4,8 +4,12 @@ SUFIXES = nasm
 	nasm -f elf64 -g -F dwarf -o $@ $<
 
 
-bin_PROGRAMS = nox nox-admin
+bin_PROGRAMS = nox nox-admin edid-gen
 
+edid_gen_SOURCES =      \
+    utils.cpp           \
+    options_parser.cpp  \
+    edid_gen.cpp
 
 nox_admin_SOURCES =					\
     options_parser.cpp			\
