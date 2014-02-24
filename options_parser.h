@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -43,7 +43,8 @@ public:
 
     enum OptionFlags {
         MANDATORY = 1 << 0,
-        EXCLUSIVE = 1 << 1,
+        EXCLUSIVE_ARG = 1 << 1,
+        EXCLUSIVE_OPT = 1 << 2,
     };
 
     enum {
@@ -65,6 +66,7 @@ public:
     int next(const char** arg);
     const char* get_option_name(int id);
     void help();
+    const char* get_prog_name() { return _prog_name.c_str();}
 
 private:
     class Option;

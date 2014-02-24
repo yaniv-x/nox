@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -33,6 +33,7 @@ enum OptionType {
     OPTIONAL_VALUE,
 };
 
+
 class OptionsParser::Option: public NonCopyable {
 public:
     Option(uint id, const char* name, OptionType type, const char* description, uint flags,
@@ -60,7 +61,8 @@ public:
     bool is_optional_val() { return _type == OPTIONAL_VALUE;}
     bool is_mandatory_val() { return _type == MANDATORY_VALUE;}
     bool is_mandatory() { return !!(_flags & MANDATORY);}
-    bool is_exclusive() { return !!(_flags & EXCLUSIVE);}
+    bool is_exclusive_arg() { return !!(_flags & EXCLUSIVE_ARG);}
+    bool is_exclusive_opt() { return !!(_flags & EXCLUSIVE_OPT);}
 
 private:
     uint _id;
@@ -72,6 +74,7 @@ private:
     std::string _arg_name;
     uint _hits;
 };
+
 
 class OptionsParser::BuildItem {
 public:
@@ -85,6 +88,7 @@ public:
     const char* val;
 };
 
+
 enum {
     INIT,
     PARSE_FRONT_POSITIONAL,
@@ -93,6 +97,7 @@ enum {
     READY,
     ERROR,
 };
+
 
 OptionsParser::OptionsParser()
     : _state (INIT)
@@ -103,6 +108,7 @@ OptionsParser::OptionsParser()
     , _back_positional (false)
 {
 }
+
 
 OptionsParser::~OptionsParser()
 {
@@ -150,6 +156,7 @@ OptionsParser::Option* OptionsParser::get_option(char* str)
     return ret;
 }
 
+
 bool OptionsParser::verify_positional(uint min, uint max, uint count, const char* word)
 {
     if (count < min) {
@@ -165,38 +172,44 @@ bool OptionsParser::verify_positional(uint min, uint max, uint count, const char
     return true;
 }
 
+
 bool OptionsParser::verify()
 {
-    if (find(OPT_ID_HELP)->was_hit()) {
-
-        if (_build_list.size() != 1) {
-            printf("%s: \"--help\" is exclusive\n", _prog_name.c_str());
-            return false;
-        }
-
-        return true;
-    }
-
     OptionList::iterator opt_iter = _options.begin();
 
     for (; opt_iter != _options.end(); ++opt_iter) {
         Option* option = *opt_iter;
 
-        if (!option->was_hit()) {
-            if (option->is_mandatory()) {
-                printf("%s: \"--%s\" is mandatory\n", _prog_name.c_str(),
-                       option->get_name().c_str());
-                return false;
-            }
+        if (!option->was_hit() || !option->is_exclusive_arg()) {
             continue;
         }
+
+        if (_build_list.size() == 1) {
+            return true;
+        }
+
+        printf("%s: \"--%s\" is exclusive argument\n",
+               _prog_name.c_str(), option->get_name().c_str());
+        return false;
+    }
+
+    for (opt_iter = _options.begin(); opt_iter != _options.end(); ++opt_iter) {
+        Option* option = *opt_iter;
+
+        if (option->was_hit() || !option->is_mandatory()) {
+            continue;
+        }
+
+        printf("%s: \"--%s\" is mandatory\n", _prog_name.c_str(),
+               option->get_name().c_str());
+        return false;
     }
 
     BuildList::iterator build_iter = _build_list.begin();
     uint front_positionals = 0;
     uint back_positionals = 0;
     uint options = 0;
-    Option* exclusive = NULL;
+    Option* exclusive_opt = NULL;
     bool count_back = false;
 
     for (; build_iter != _build_list.end(); ++build_iter) {
@@ -215,11 +228,11 @@ bool OptionsParser::verify()
         options++;
         count_back = true;
 
-        if (option->is_exclusive()) {
-            exclusive = option;
+        if (option->is_exclusive_opt()) {
+            exclusive_opt = option;
         }
 
-        if (option->is_mandatory_val() && (!item->val || !strlen(item->val))) {
+        if (option->is_mandatory_val() && !item->val) {
             printf("%s: value for \"--%s\" is mandatory\n",
                    _prog_name.c_str(), option->get_name().c_str());
             return false;
@@ -233,8 +246,9 @@ bool OptionsParser::verify()
         return false;
     }
 
-    if (exclusive && (options > 1)) {
-        printf("%s: \"--%s\" is exclusive\n", _prog_name.c_str(), exclusive->get_name().c_str());
+    if (exclusive_opt && (options > 1)) {
+        printf("%s: \"--%s\" is exclusive option\n", _prog_name.c_str(),
+               exclusive_opt->get_name().c_str());
         return false;
     }
 
@@ -277,7 +291,7 @@ bool OptionsParser::parse(int argc, const char** argv)
     }
 
     _options.push_back(new Option(OPT_ID_HELP, "help", NO_VALUE,
-                                  "show command help", EXCLUSIVE, ""));
+                                  "show command help", EXCLUSIVE_ARG, ""));
 
     _state = PARSE_FRONT_POSITIONAL;
     ArgsList::iterator iter = _argv.begin();
@@ -393,6 +407,7 @@ static bool is_valid_name(const char* name)
     return true;
 }
 
+
 void OptionsParser::add_option(int id, const char* name, const char* description, uint flags)
 {
     ASSERT(id >= 0);
@@ -433,6 +448,7 @@ const char* OptionsParser::get_option_name(int id)
     return opt->get_arg_name().c_str();
 }
 
+
 void OptionsParser::set_short_name(int id, char name)
 {
     ASSERT(find(id) && !find(name));
@@ -440,12 +456,14 @@ void OptionsParser::set_short_name(int id, char name)
     find(id)->set_short_name(name);
 }
 
+
 void OptionsParser::set_front_positional_minmax(uint min, uint max)
 {
     ASSERT(_state == INIT);
     _min_front_positional = min;
     _max_front_positional = max;
 }
+
 
 void OptionsParser::set_back_positional_minmax(uint min, uint max)
 {
@@ -468,6 +486,7 @@ OptionsParser::Option* OptionsParser::find(const char* name)
     return NULL;
 }
 
+
 OptionsParser::Option* OptionsParser::find(int id)
 {
     OptionList::iterator iter = _options.begin();
@@ -480,7 +499,6 @@ OptionsParser::Option* OptionsParser::find(int id)
 
     return NULL;
 }
-
 
 
 OptionsParser::Option* OptionsParser::find(char short_name)
@@ -554,7 +572,6 @@ void OptionsParser::help()
 {
     printf("\n%s - short discription\n\n", _prog_name.c_str());
 
-
     OptionList::iterator iter = _options.begin();
 
     for (; iter != _options.end(); ++iter) {
@@ -565,7 +582,6 @@ void OptionsParser::help()
         } else {
             printf("     ");
         }
-
 
         printf("--%s", option->get_name().c_str());
 
@@ -579,6 +595,5 @@ void OptionsParser::help()
         print_help_description(option->get_description().c_str(), 12, 68);
         printf("\n");
     }
-
 }
 
