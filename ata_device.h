@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -201,7 +201,6 @@ inline void ATADevice::set_state_and_notify(uint state, DMAState& dma)
 
 
 void set_ata_str(uint16_t* start, int len, const char* str);
-int8_t checksum8(void *start, uint size);
 
 #ifdef ATA_DEBUG
 const char* command_name(uint8_t command);
