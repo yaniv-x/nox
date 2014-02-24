@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -95,6 +95,8 @@ void sprintf(std::string& str, const char* format, ...);
 void wsprintf(std::wstring& str, const wchar_t* format, ...);
 bool str_to_ulong(const char *str, unsigned long& num, int base = 0);
 bool str_to_long(const char *str, long& num, int base = 0);
+bool str_to_uint(const char *str, uint& num, int base = 0);
+bool str_to_int(const char *str, int& num, int base = 0);
 
 typedef uint64_t nox_time_t;
 
@@ -185,9 +187,11 @@ inline char* copy_cstr(const char* str)
 }
 
 void read_all(int fd, off_t from, void* in_dest, size_t size);
-void write_all(int fd, off_t to, void* in_src, uint size);
+void write_all(int fd, off_t to, const void* in_src, uint size);
 
 bool is_amd_proccesor();
+
+int8_t checksum8(const void *start, uint size);
 
 #endif
 

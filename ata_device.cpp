@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -784,19 +784,5 @@ void set_ata_str(uint16_t* start, int len, const char* str)
 
     for (i = 0; i < n; i += 2) dest[i + 1] = str[i];
     for (i = 1; i < n; i += 2) dest[i - 1] = str[i];
-}
-
-
-int8_t checksum8(void *start, uint size)
-{
-    uint8_t res = 0;
-    uint8_t *now = (uint8_t*)start;
-    uint8_t *end = now + size;
-
-    for (; now < end; now++) {
-        res += *now;
-    }
-
-    return -res;
 }
 

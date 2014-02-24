@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -104,14 +104,14 @@ void wsprintf(std::wstring& str, const wchar_t* format, ...)
 }
 
 
-bool str_to_ulong(const char *str, unsigned long& num, int base)
+bool str_to_ulong(const char* str, unsigned long& num, int base)
 {
-    char *end;
+    char* end;
 
     errno = 0;
     num = strtoul(str, &end, base);
 
-    if (errno || end != str + strlen(str)) {
+    if (errno || end != str + strlen(str) || end == str) {
         return false;
     }
 
@@ -119,17 +119,44 @@ bool str_to_ulong(const char *str, unsigned long& num, int base)
 }
 
 
-bool str_to_long(const char *str, long& num, int base)
+bool str_to_uint(const char *str, uint& num, int base)
 {
-    char *end;
+    unsigned long tmp;
+
+    if (!str_to_ulong(str, tmp, base) || tmp > UINT_MAX) {
+        return false;
+    }
+
+    num = tmp;
+    return true;
+}
+
+
+bool str_to_long(const char* str, long& num, int base)
+{
+    char* end;
 
     errno = 0;
     num = strtol(str, &end, base);
 
-    if (errno || end != str + strlen(str)) {
+    if (errno || end != str + strlen(str) || end == str) {
         return false;
     }
 
+    return true;
+}
+
+
+
+bool str_to_int(const char *str, int& num, int base)
+{
+    long tmp;
+
+    if (!str_to_long(str, tmp, base) || tmp > INT_MAX || tmp < INT_MIN) {
+        return false;
+    }
+
+    num = tmp;
     return true;
 }
 
@@ -157,9 +184,9 @@ void read_all(int fd, off_t from, void* in_dest, size_t size)
 }
 
 
-void write_all(int fd, off_t to, void* in_src, uint size)
+void write_all(int fd, off_t to, const void* in_src, uint size)
 {
-    uint8_t* src = (uint8_t*)in_src;
+    const uint8_t* src = (uint8_t*)in_src;
 
     if (lseek(fd, to, SEEK_SET) != to) {
         THROW("seek failed");
@@ -205,5 +232,19 @@ bool is_amd_proccesor()
     append_four_bytes(vendor, ecx);
 
     return vendor == "AuthenticAMD";
+}
+
+
+int8_t checksum8(const void *start, uint size)
+{
+    uint8_t res = 0;
+    uint8_t *now = (uint8_t*)start;
+    uint8_t *end = now + size;
+
+    for (; now < end; now++) {
+        res += *now;
+    }
+
+    return -res;
 }
 
