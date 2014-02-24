@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -1042,7 +1042,7 @@ void CPU::apic_dest_common(uint dest, bool logical, void (CPU::*cb)(uint), uint 
         (cpus[dest]->*cb)(arg);
     } else if (dest == 0xff) {
         for (uint i = 0; i < num_cpus; i++) {
-            (cpus[dest]->*cb)(arg);
+            (cpus[i]->*cb)(arg);
         }
     } else {
         D_MESSAGE("invalid apic_id");
