@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -69,7 +69,11 @@ private:
     MMIORegion* _mmio_region;
     uint32_t _select;
 
-    uint32_t _regs[NUM_REGS];
+    union {
+        uint64_t _regs_64[NUM_REGS / 2];
+        uint32_t _regs[NUM_REGS];
+    };
+
     uint8_t _irq_pins[NUM_IRQ_PINS];
 
     friend class PICPinBond;

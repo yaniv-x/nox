@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -79,8 +79,7 @@ IOApic::~IOApic()
     memory_bus->unregister_mmio(_mmio_region);
 }
 
-
-#define REDIRECT(index) (((uint64_t*)&_regs[REG_REDIRECT_0 + ((index) << 1)])[0])
+#define REDIRECT(index) _regs_64[REG_REDIRECT_0 / 2 + (index)]
 
 void IOApic::reset()
 {
