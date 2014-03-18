@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -64,17 +64,16 @@
     #define NOX_PM1_SLP_TYPE_WORKING 0
     #define NOX_PM1_SLP_TYPE_SLEEP 1
     #define NOX_PM1_SLP_TYPE_SOFT_OFF 5
+
+    #define HOST_BRIDGE_SLOT 0
+    #define ISA_BRIDGE_SLOT 1
 // DSDT.asl dependency block end
 
 #define IO_APIC_ADDRESS 0xfec00000
 #define LOCAL_APIC_ADDRESS 0xfee00000
 
 
-enum {
-    HOST_BRIDGE_SLOT = 0,
-    ISA_BRIDGE_SLOT = 1,
-    PM_CONTROLLER_SLOT = 4,
-};
+#define PM_CONTROLLER_SLOT 4
 
 
 enum {
