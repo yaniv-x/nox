@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -37,6 +37,7 @@ BlockDevice::BlockDevice(const std::string& file_name, uint block_size, bool rea
     : _file (open(file_name.c_str(), ((read_only) ? O_RDONLY : O_RDWR) | O_LARGEFILE))
     , _thread (NULL)
     , _block_size (block_size)
+    , _sync (true)
 {
     if (!_file.is_valid()) {
         THROW("open %s failed", file_name.c_str());
@@ -243,7 +244,7 @@ void BlockDevice::write_vector(IOVec& vec)
             on_write_done(address);
         }
 
-        vec.cb(vec.opaque, &vec, 0);
+        vec.cb(vec.opaque, &vec, (_sync) ? fdatasync(fd) : 0);
         break;
     }
 }
@@ -336,7 +337,14 @@ ROBlockDevice::ROBlockDevice(const std::string& file_name, uint block_size)
         THROW_SYS_ERROR("truncate failed");
     }
 
+    BlockDevice::set_sync_mode(false);
+
     start();
+}
+
+void ROBlockDevice::set_sync_mode(bool sync)
+{
+    return;
 }
 
 

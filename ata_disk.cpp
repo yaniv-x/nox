@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -355,7 +355,7 @@ public:
     void writev_done(IOVec* vec, int err)
     {
         if (err) {
-            D_MESSAGE("failed %d", err)
+            W_MESSAGE("failed %d", err)
             error();
         } else if ((_now += _bunch) == _end) {
             end();
@@ -444,7 +444,6 @@ public:
         _disk.dec_async_count();
     }
 
-
     void copy()
     {
         IndirectVector::iterator iter = _indirect_vector->begin();
@@ -455,7 +454,6 @@ public:
             dest += (*iter).size;
         }
     }
-
 
     virtual bool dma_read_start(DMAState& dma)
     {
@@ -550,6 +548,10 @@ public:
 
     void sync_done(IOSync* obj, uint err)
     {
+        if (err) {
+            W_MESSAGE("failed %d", err);
+        }
+
         done();
         _disk.dec_async_count();
     }
@@ -762,6 +764,7 @@ void ATADisk::reset(bool cold)
 
     if (revert_to_default()) {
         _sync_mode = true;
+        _block_dev->set_sync_mode(true);
         _heads_per_cylinder = ATA3_MAX_HEAD;
         _sectors_per_track = ATA3_MAX_SEC;
         _multi_mode = ATA_ID_MULTIPLE_SETTING_ACTIVE_MASK | ATADISK_BUNCH_DEFAULT;
@@ -1063,13 +1066,17 @@ void ATADisk::do_set_features()
     case ATA_FEATURE_ENABLE_CACHE:
         D_MESSAGE("enable cache");
         _sync_mode = false;
+        _block_dev->set_sync_mode(false);
         raise();
         break;
-    case ATA_FEATURE_DISABLE_CACHE:
+    case ATA_FEATURE_DISABLE_CACHE: {
         D_MESSAGE("disable cache");
         _sync_mode = true;
-        raise();
+        _block_dev->set_sync_mode(true);
+        AutoRef<ATATask> autoref(new SyncTask(*this));
+        start_task(autoref.get());
         break;
+    }
     case ATA_FEATURE_ENABLE_LOOK_AHEAD:
     case ATA_FEATURE_DISABLE_LOOK_AHEAD:
         D_MESSAGE("abbort on 0x%x", _feature);

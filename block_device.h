@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -101,6 +101,8 @@ public:
     void writev(IOVec* vec);
     void sync(IOSync* obj);
 
+    virtual void set_sync_mode(bool sync) { _sync = sync;}
+
 protected:
     virtual int get_fd_for_read(uint64_t address) = 0;
     virtual void on_write_done(uint64_t address) = 0;
@@ -143,6 +145,7 @@ private:
     Thread* _thread;
     uint64_t _size;
     uint _block_size;
+    bool _sync;
 
     typedef std::list<Task> TaskList;
     TaskList _tasks;
@@ -165,6 +168,8 @@ private:
 class ROBlockDevice: public BlockDevice {
 public:
     ROBlockDevice(const std::string& file_name, uint block_size);
+
+    virtual void set_sync_mode(bool sync);
 
 private:
     virtual int get_fd_for_read(uint64_t address);
