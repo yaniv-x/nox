@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -116,21 +116,6 @@ static void frames_to_time(uint num_frames, uint8_t& min, uint8_t& sec, uint8_t&
 }
 
 
-class CDBlock : public Block {
-public:
-    CDBlock(uint8_t* in_data)
-        : Block(0, in_data)
-        , refs (0)
-        , valid (false)
-    {
-
-    }
-
-    int refs;
-    bool valid;
-};
-
-
 class CDIdentifyTask: public ATATask, public PIODataSource {
 public:
     CDIdentifyTask(ATAPICdrom& cd)
@@ -150,6 +135,7 @@ public:
 
     virtual void cancel()
     {
+        _cd.remove_pio_source(false);
         _cd.remove_task(this);
     }
 
@@ -276,7 +262,7 @@ public:
     void cancel()
     {
         _cd.put_media();
-        _cd.put_io_block(_io_block);
+        _cd.remove_pio_source(false);
         _cd.remove_task(this);
     }
 
@@ -299,10 +285,7 @@ public:
 
     void end()
     {
-        AutoRef<ATATask> auto_ref(this->ref());
-
         _cd.put_media();
-        _cd.put_io_block(_io_block);
         _cd.remove_task(this);
         _cd.remove_pio_source(false);
         _cd.packet_cmd_sucess();
@@ -310,10 +293,7 @@ public:
 
     void error()
     {
-        AutoRef<ATATask> auto_ref(this->ref());
-
         _cd.put_media();
-        _cd.put_io_block(_io_block);
         _cd.remove_task(this);
         _cd.remove_pio_source(false);
         _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
@@ -322,6 +302,8 @@ public:
 
     void redv_done(IOVec* vec, int err)
     {
+        ATAPICdrom* cd = &_cd;
+
         if (err) {
             D_MESSAGE("failed %d", err)
              error();
@@ -329,7 +311,7 @@ public:
             start_bunch();
         }
 
-        _cd.dec_async_count();
+        cd->dec_async_count();
     }
 
     void get_bunch()
@@ -398,6 +380,7 @@ public:
         if (_dma_state) {
             _dma_state->nop();
         }
+
         _cd.remove_task(this);
         _cd.put_media();
     }
@@ -412,22 +395,20 @@ public:
 
     void redv_done_direct(IOVec* vec, int err)
     {
-        AutoRef<ATATask> auto_ref(this->ref());
+        ATAPICdrom* cd = &_cd;
 
-        _cd.remove_task(this);
+        cd->remove_task(this);
+        cd->put_media();
 
         if (err) {
-            _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
+            cd->packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
                                SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE,
                                _dma_state);
         } else {
-            _cd.packet_cmd_sucess(_dma_state);
+            cd->packet_cmd_sucess(_dma_state);
         }
 
-        _dma_state = NULL;
-
-        _cd.put_media();
-        _cd.dec_async_count();
+        cd->dec_async_count();
     }
 
     void redv_done_indirect(IOVec* vec, int err)
@@ -489,8 +470,7 @@ public:
 
         D_MESSAGE("unable to obtaine transfer vector");
 
-        AutoRef<ATATask> auto_ref(this->ref());
-
+        _cd.put_media();
         _cd.remove_task(this);
         _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
                            SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE, &dma); // todo: dma
@@ -527,14 +507,16 @@ public:
         ASSERT(max_transfer >= size || !(max_transfer & 1));
     }
 
-    virtual ~CDGenericTransfer()
+    inline void cleanup()
     {
         delete[] _data;
+        _cd.remove_task(this);
     }
 
     virtual void cancel()
     {
-         _cd.remove_task(this);
+        _cd.remove_pio_source(false);
+        cleanup();
     }
 
     virtual void start()
@@ -556,8 +538,8 @@ public:
     {
         if (!_size) {
             _cd.remove_pio_source(false);
+            cleanup();
             _cd.packet_cmd_sucess();
-            _cd.remove_task(this);
             return;
         }
 
@@ -607,8 +589,7 @@ public:
 
         if (!vec.get()) {
             D_MESSAGE("unable to obtaine transfer vector");
-
-            _cd.remove_task(this);
+            cleanup();
             _cd.packet_cmd_chk(SCSI_SENSE_HARDWARE_ERROR,
                                SCSI_SENSE_ADD_LOGICAL_UNIT_COMMUNICATION_FAILURE,
                                &dma); // todo: dma error
@@ -617,7 +598,7 @@ public:
 
         copy(*vec.get());
 
-        _cd.remove_task(this);
+        cleanup();
         _cd.packet_cmd_sucess(&dma);
 
         return true;
@@ -634,6 +615,7 @@ private:
     uint16_t* _data_end;
     bool _dma;
 };
+
 
 class PacketTask: public ATATask, public PIODataDest {
 public:
@@ -658,6 +640,7 @@ public:
 
     virtual void cancel()
     {
+        _cd.remove_pio_dest(false);
         _cd.remove_task(this);
     }
 
@@ -670,7 +653,6 @@ public:
         *_data_now = val;
 
         if (++_data_now == _data_end) {
-            AutoRef<ATATask> auto_ref(this->ref());
             _cd.remove_task(this);
             _cd.remove_pio_dest(false);
             _cd.handle_packet(_packet);
@@ -689,6 +671,12 @@ ATAPICdrom::ATAPICdrom(VMPart& owner, Wire& wire, const std::string& file_name)
     : ATADevice("atapi-cdrom", owner, wire)
     , _mounted_media (NULL)
 {
+    ASSERT(sizeof(CDIdentifyTask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(CDReadTask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(CDReadDMATask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(CDGenericTransfer) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(PacketTask) <= ATADEV_TASK_STORAGE_SIZE);
+
     if (file_name.size()) {
         try {
             _media.reset(new PBlockDevice(file_name, MMC_CD_SECTOR_SIZE, true));
@@ -976,13 +964,13 @@ void ATAPICdrom::mmc_read_capacity(uint8_t* packet)
         return;
     }
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, 8, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, 8, max_transfer);
 
     uint32_t* data = (uint32_t*)task->get_data();
     data[0] = revers_unit32(_mounted_media->get_size() / MMC_CD_SECTOR_SIZE - 1);
     data[1] = revers_unit32(MMC_CD_SECTOR_SIZE);
 
-    start_task(task.get());
+    start_task(task);
 }
 
 
@@ -1030,8 +1018,7 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
     //bool force_unit_access = !!(_sector[1] & (1 << 4));
 
     if ((_feature & ATA_FEATURES_DMA_MASK)) {
-        AutoRef<CDReadDMATask> task(new CDReadDMATask(*this, start, end));
-        start_task(task.get());
+        start_task(new (_task_storage) CDReadDMATask(*this, start, end));
     } else {
         uint max_transfer = max_pio_transfer_bytes();
         uint bunch = max_transfer / MMC_CD_SECTOR_SIZE;
@@ -1042,8 +1029,7 @@ void ATAPICdrom::mmc_read(uint8_t* packet)
             return;
         }
 
-        AutoRef<CDReadTask> task(new CDReadTask(*this, start, end, MIN(bunch, length)));
-        start_task(task.get());
+        start_task(new (_task_storage) CDReadTask(*this, start, end, MIN(bunch, length)));
     }
 
     set_power_mode(ATADevice::POWER_ACTIVE);
@@ -1102,7 +1088,7 @@ void ATAPICdrom::scsi_inquiry(uint8_t* packet)
 
     length = MIN(length, SCSI_INQUIRY_STD_LENGTH);
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
 
     uint8_t buf[SCSI_INQUIRY_STD_LENGTH];
     memset(buf, 0, SCSI_INQUIRY_STD_LENGTH);
@@ -1118,7 +1104,7 @@ void ATAPICdrom::scsi_inquiry(uint8_t* packet)
     set_scsi_left_str(&buf[32], 4, "0");         // PRODUCT REVISION
 
     memcpy(task->get_data(), buf, length);
-    start_task(task.get());
+    start_task(task);
 }
 
 
@@ -1263,10 +1249,11 @@ void ATAPICdrom::scsi_mode_sense(uint8_t* packet)
             return;
         }
 
-        AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+        CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length,
+                                                                        max_transfer);
         memcpy(task->get_data(), buf.base(), length);
 
-        start_task(task.get());
+        start_task(task);
         break;
     }
     case 0x0e: { //CD Audio Control Page
@@ -1286,11 +1273,11 @@ void ATAPICdrom::scsi_mode_sense(uint8_t* packet)
             return;
         }
 
-        AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, 16, max_transfer));
+        CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, 16, max_transfer);
         task->get_data()[0] = 0x0e; //page code
         task->get_data()[1] = 0x0e; //page length
         memset(task->get_data() + 2, 0, 14);
-        start_task(task.get());
+        start_task(task);
         break;
     }
     // case 0X01: for random readable feature set, mandatory if PP == 1
@@ -1391,9 +1378,9 @@ void ATAPICdrom::read_formatted_toc(uint8_t* packet)
 
     length = MIN(buf.position(), length);
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), buf.base(), length);
-    start_task(task.get());
+    start_task(task);
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
@@ -1436,9 +1423,10 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
             return;
         }
 
-        AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+        CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length,
+                                                                        max_transfer);
         memcpy(task->get_data(), data, length);
-        start_task(task.get());
+        start_task(task);
         set_power_mode(ATADevice::POWER_ACTIVE);
         return;
     }
@@ -1503,10 +1491,10 @@ void ATAPICdrom::read_raw_toc(uint8_t* packet)
         return;
     }
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), data, length);
 
-    start_task(task.get());
+    start_task(task);
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
@@ -1557,9 +1545,9 @@ void ATAPICdrom::read_multi_session_info(uint8_t* packet)
     }
 
     length = MIN(length, sizeof(data));
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), data, length);
-    start_task(task.get());
+    start_task(task);
     set_power_mode(ATADevice::POWER_ACTIVE);
 }
 
@@ -1641,10 +1629,10 @@ void ATAPICdrom::scsi_request_sens(uint8_t* packet)
         }
     }
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), data, length);
 
-    start_task(task.get());
+    start_task(task);
 }
 
 
@@ -1810,10 +1798,10 @@ void ATAPICdrom::mmc_get_configuration(uint8_t* packet)
         return;
     }
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), buf.base(), length);
 
-    start_task(task.get());
+    start_task(task);
 }
 
 
@@ -1986,9 +1974,9 @@ void ATAPICdrom::mmc_get_event_status_notification(uint8_t* packet)
         length = MIN(notify_media(buf), length);
     }
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), buf, length);
-    start_task(task.get());
+    start_task(task);
 }
 
 
@@ -2087,9 +2075,9 @@ void ATAPICdrom::mmc_mechanisim_status(uint8_t* packet)
 
     memset(result, 0, sizeof(result));
 
-    AutoRef<CDGenericTransfer> task(new CDGenericTransfer(*this, length, max_transfer));
+    CDGenericTransfer* task = new (_task_storage) CDGenericTransfer(*this, length, max_transfer);
     memcpy(task->get_data(), result, length);
-    start_task(task.get());
+    start_task(task);
 }
 
 
@@ -2211,25 +2199,19 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
 
 void ATAPICdrom::do_identify_packet_device()
 {
-    AutoRef<ATATask> autoref(new CDIdentifyTask(*this));
-    start_task(autoref.get());
+    start_task(new (_task_storage) CDIdentifyTask(*this));
 }
 
 
 void ATAPICdrom::do_packet_command()
 {
-    AutoRef<PacketTask> autoref(new PacketTask(*this));
-    start_task(autoref.get());
+    start_task(new (_task_storage) PacketTask(*this));
 }
 
 
 void ATAPICdrom::do_device_reset()
 {
-    AutoRef<ATATask> task(get_task());
-
-    if (task.get()) {
-        task->cancel();
-    }
+    cancel_task();
 
     _cdrom_state &= ~LOCK_STATE_MASK;
 

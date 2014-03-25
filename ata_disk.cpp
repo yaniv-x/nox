@@ -44,8 +44,6 @@ enum {
     SECTOR_SIZE = 512,
     SECTOR_MASK = SECTOR_SIZE - 1,
 
-    NUM_IO_REQUESTS = 1000,
-
     ATA3_MAX_CYL = 16383,
     ATA3_MAX_HEAD = 16,
     ATA3_MAX_SEC = 63,
@@ -75,7 +73,7 @@ public:
 
     void cancel()
     {
-        _disk.put_io_block(_io_block);
+        _disk.remove_pio_source(false);
         _disk.remove_task(this);
     }
 
@@ -93,18 +91,12 @@ public:
 
     void end()
     {
-        AutoRef<ATATask> auto_ref(this->ref());
-
-        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
         _disk.remove_pio_source(true);
     }
 
     void error()
     {
-        AutoRef<ATATask> auto_ref(this->ref());
-
-        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
         _disk.remove_pio_source(false);
         _disk.command_abort_error();
@@ -112,6 +104,8 @@ public:
 
     void redv_done(IOVec* vec, int err)
     {
+        ATADisk* disk = &_disk;
+
         if (err) {
             D_MESSAGE("failed %d", err)
              error();
@@ -119,7 +113,7 @@ public:
             start_bunch();
         }
 
-        _disk.dec_async_count();
+        disk->dec_async_count();
     }
 
     void get_bunch()
@@ -197,19 +191,17 @@ public:
 
     void redv_done_direct(IOVec* vec, int err)
     {
-        AutoRef<ATATask> auto_ref(this->ref());
+        ATADisk* disk = &_disk;
 
-        _disk.remove_task(this);
+        disk->remove_task(this);
 
         if (err) {
-            _disk.command_abort_error(*_dma_state);
+            disk->command_abort_error(*_dma_state);
         } else {
-            _disk.notify_command_done(*_dma_state);
+            disk->notify_command_done(*_dma_state);
         }
 
-        _dma_state = NULL;
-
-        _disk.dec_async_count();
+        disk->dec_async_count();
     }
 
     void redv_done_indirect(IOVec* vec, int err)
@@ -311,7 +303,7 @@ public:
 
     void cancel()
     {
-        _disk.put_io_block(_io_block);
+        _disk.remove_pio_dest(false);
         _disk.remove_task(this);
     }
 
@@ -334,18 +326,12 @@ public:
 
     void end()
     {
-        AutoRef<ATATask> auto_ref(this->ref());
-
-        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
         _disk.remove_pio_dest(true);
     }
 
     void error()
     {
-        AutoRef<ATATask> auto_ref(this->ref());
-
-        _disk.put_io_block(_io_block);
         _disk.remove_task(this);
         _disk.remove_pio_dest(false);
         _disk.command_abort_error();
@@ -354,6 +340,8 @@ public:
 
     void writev_done(IOVec* vec, int err)
     {
+        ATADisk* disk = &_disk;
+
         if (err) {
             W_MESSAGE("failed %d", err)
             error();
@@ -363,7 +351,7 @@ public:
             start_bunch();
         }
 
-        _disk.dec_async_count();
+        disk->dec_async_count();
     }
 
     void write_bunch()
@@ -430,18 +418,17 @@ public:
 
     void writev_done(IOVec*, int err)
     {
-        AutoRef<ATATask> auto_ref(this->ref());
+        ATADisk* disk =&_disk;
 
-        _disk.remove_task(this);
+        disk->remove_task(this);
 
         if (err) {
-            _disk.command_abort_error(*_dma_state);
+            disk->command_abort_error(*_dma_state);
         } else {
-            _disk.notify_command_done(*_dma_state);
+            disk->notify_command_done(*_dma_state);
         }
-        _dma_state = NULL;
 
-        _disk.dec_async_count();
+        disk->dec_async_count();
     }
 
     void copy()
@@ -533,11 +520,6 @@ public:
         _disk.remove_task(this);
     }
 
-    void done()
-    {
-        _disk.remove_task(this);
-        _disk.notify_command_done();
-    }
 
     virtual void start()
     {
@@ -552,8 +534,10 @@ public:
             W_MESSAGE("failed %d", err);
         }
 
-        done();
-        _disk.dec_async_count();
+        ATADisk* disk =&_disk;
+        disk->remove_task(this);
+        disk->notify_command_done();
+        disk->dec_async_count();
     }
 
 private:
@@ -580,6 +564,7 @@ public:
 
     void cancel()
     {
+        _disk.remove_pio_source(false);
         _disk.remove_task(this);
     }
 
@@ -725,6 +710,13 @@ ATADisk::ATADisk(VMPart& owner, Wire& wire, const std::string& file_name, bool r
 {
     ASSERT(ATADEV_IO_BLOCK_SIZE >= ATADISK_BUNCH_MAX * SECTOR_SIZE);
 
+    ASSERT(sizeof(ReadTask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(ReadDMATask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(WriteTask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(WriteDMATask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(SyncTask) <= ATADEV_TASK_STORAGE_SIZE);
+    ASSERT(sizeof(IdentifyTask) <= ATADEV_TASK_STORAGE_SIZE);
+
     if (read_only) {
         _block_dev.reset(new ROBlockDevice(file_name, SECTOR_SIZE));
     } else {
@@ -851,8 +843,7 @@ void ATADisk::do_read_sectors_common(uint64_t start, uint64_t end, uint bunch)
     }
 
     set_power_mode(POWER_ACTIVE);
-    AutoRef<ATATask> autoref(new ReadTask(*this, start, end, bunch));
-    start_task(autoref.get());
+    start_task(new (_task_storage) ReadTask(*this, start, end, bunch));
 }
 
 
@@ -931,8 +922,7 @@ void ATADisk::do_read_dma_common(uint64_t start, uint64_t end)
     }
 
     set_power_mode(POWER_ACTIVE);
-    AutoRef<ATATask> autoref(new ReadDMATask(*this, start, end));
-    start_task(autoref.get());
+    start_task(new (_task_storage) ReadDMATask(*this, start, end));
 }
 
 
@@ -958,8 +948,7 @@ void ATADisk::do_write_sectors_common(uint64_t start, uint64_t end, uint bunch)
     }
 
     set_power_mode(POWER_ACTIVE);
-    AutoRef<ATATask> autoref(new WriteTask(*this, start, end, bunch));
-    start_task(autoref.get());
+    start_task(new (_task_storage) WriteTask(*this, start, end, bunch));
 }
 
 
@@ -1011,8 +1000,7 @@ void ATADisk::do_write_dma_common(uint64_t start, uint64_t end)
     }
 
     set_power_mode(POWER_ACTIVE);
-    AutoRef<ATATask> autoref(new WriteDMATask(*this, start, end));
-    start_task(autoref.get());
+    start_task(new (_task_storage) WriteDMATask(*this, start, end));
 }
 
 
@@ -1032,8 +1020,7 @@ void ATADisk::do_write_dma_ext()
 
 void ATADisk::do_identify_device()
 {
-    AutoRef<ATATask> autoref(new IdentifyTask(*this));
-    start_task(autoref.get());
+    start_task(new (_task_storage) IdentifyTask(*this));
 }
 
 
@@ -1073,8 +1060,7 @@ void ATADisk::do_set_features()
         D_MESSAGE("disable cache");
         _sync_mode = true;
         _block_dev->set_sync_mode(true);
-        AutoRef<ATATask> autoref(new SyncTask(*this));
-        start_task(autoref.get());
+        start_task(new (_task_storage) SyncTask(*this));
         break;
     }
     case ATA_FEATURE_ENABLE_LOOK_AHEAD:
@@ -1120,8 +1106,7 @@ void ATADisk::do_initialize_device_parameters()
 
 void ATADisk::do_flush()
 {
-    AutoRef<ATATask> autoref(new SyncTask(*this));
-    start_task(autoref.get());
+    start_task(new (_task_storage) SyncTask(*this));
 }
 
 

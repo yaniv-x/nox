@@ -36,34 +36,27 @@ class Wire;
 
 enum {
     ATADEV_IO_BLOCK_SIZE = 64 * KB,
+    ATADEV_TASK_STORAGE_SIZE = 560,
 };
+
 
 class ATATask {
 public:
-    ATATask()
-        : _refs (1)
-    {
-    }
-
-    ATATask* ref() { _refs.inc(); return this;}
-    void unref() { if (!_refs.dec()) delete this;}
-
     virtual void start() = 0;
     virtual void cancel() = 0;
     virtual bool dma_write_start(DMAState& state) { return false;}
     virtual bool dma_read_start(DMAState& state) { return false;}
 
 protected:
-    virtual ~ATATask() {}
-
-private:
-    Atomic _refs;
+    virtual ~ATATask() { PANIC("");}
 };
+
 
 class PIODataSource {
 public:
     virtual uint16_t get_word() = 0;
 };
+
 
 class PIODataDest {
 public:
@@ -132,12 +125,12 @@ protected:
 
     void start_task(ATATask* task);
     void remove_task(ATATask* task);
-    ATATask* get_task();
+    void cancel_task();
     void dec_async_count();
     void inc_async_count() { _async_count.inc();}
+    void async_wait();
 
-    uint8_t* get_io_block();
-    void put_io_block(uint8_t*);
+    uint8_t* get_io_block() { return _io_block;}
 
 private:
     void soft_reset();
@@ -149,22 +142,19 @@ private:
     Wire& _irq_wire;
 
     Atomic _async_count;
-    Mutex _stop_mutex;
-    bool _async_stop;
+    Mutex _async_mutex;
+    Condition _async_condition;
+    uint _async_flags;
 
     uint _irq_level;
     PowerState _power_mode;
 
-    Mutex _tasks_mutex;
     ATATask* _task;
-    ATATask* _dead_task;
 
     PIODataSource* _pio_source;
     PIODataDest* _pio_dest;
 
-    Mutex _io_blocks_mutex;
-    uint8_t* _io_blocks_data;
-    std::list<uint8_t*> _free_blocks_list;
+    uint8_t* _io_block;
 
     uint _multiword_mode;
     uint _ultra_mode;
@@ -180,6 +170,9 @@ protected:
     uint _lba_low;
     uint _lba_mid;
     uint _lba_high;
+
+    uint8_t _task_storage[ATADEV_TASK_STORAGE_SIZE]
+                         __attribute__ ((aligned (__BIGGEST_ALIGNMENT__)));
 };
 
 

@@ -31,12 +31,6 @@
 #include "wire.h"
 #include "dma_state.h"
 
-enum {
-    ATA_DEV_NUM_IO_BLOCKS = 1,
-
-    MULTIWORD_DMA_MODE_MAX = 2,
-    ULTRA_DMA_MODE_MAX = 5,
-};
 
 #ifdef ATA_DEBUG
 #define ATA_LOG(format, ...) D_MESSAGE(format, ## __VA_ARGS__)
@@ -45,26 +39,31 @@ enum {
 #endif
 
 
+enum {
+    MULTIWORD_DMA_MODE_MAX = 2,
+    ULTRA_DMA_MODE_MAX = 5,
+};
+
+enum {
+    ASYNC_FLAG_STOP = 1 << 0,
+    ASYNC_FLAG_SIGNAL = 1 << 1,
+};
+
+
 ATADevice::ATADevice(const char* name, VMPart& owner, Wire& wire)
     : VMPart("", owner)
     , _irq_wire (wire)
     , _async_count (0)
-    , _async_stop (false)
+    , _async_flags (0)
     , _irq_level (0)
     , _task (NULL)
-    , _dead_task (NULL)
     , _pio_source (NULL)
     , _pio_dest (NULL)
 {
-    _io_blocks_data = (uint8_t*)memalign(ATADEV_IO_BLOCK_SIZE,
-                                         ATADEV_IO_BLOCK_SIZE * ATA_DEV_NUM_IO_BLOCKS);
+    _io_block = (uint8_t*)memalign(ATADEV_IO_BLOCK_SIZE, ATADEV_IO_BLOCK_SIZE);
 
-    if (!_io_blocks_data) {
+    if (!_io_block) {
         THROW("memalign failed");
-    }
-
-    for (uint i = 0; i < ATA_DEV_NUM_IO_BLOCKS; i++) {
-        _free_blocks_list.push_front(_io_blocks_data + i * ATADEV_IO_BLOCK_SIZE);
     }
 }
 
@@ -73,46 +72,25 @@ ATADevice::~ATADevice()
 {
     ASSERT(_task == NULL);
 
-    if (_dead_task) {
-        _dead_task->unref();
-    }
-
-    free(_io_blocks_data);
+    free(_io_block);
 }
 
 
-uint8_t* ATADevice::get_io_block()
+void ATADevice::async_wait()
 {
-    Lock lock(_io_blocks_mutex);
+    Lock lock(_async_mutex);
 
-    if (_free_blocks_list.empty()) {
-        return NULL;
+    while  (_async_count.val()) {
+        D_MESSAGE("async task");
+        _async_flags |= ASYNC_FLAG_SIGNAL;
+        _async_condition.wait(_async_mutex);
     }
-
-    uint8_t* ret = _free_blocks_list.front();
-    _free_blocks_list.pop_front();
-
-    return ret;
 }
 
 
-void ATADevice::put_io_block(uint8_t* block)
+void ATADevice::cancel_task()
 {
-    ASSERT(block);
-
-    Lock lock(_io_blocks_mutex);
-    _free_blocks_list.push_front(block);
-}
-
-
-void ATADevice::reset(bool cold)
-{
-    if (cold) {
-        _reverting_to_power_on_default = true;
-    }
-
-    //Lock lock(_tasks_mutex);
-    D_MESSAGE("");
+    async_wait();
 
     if (_task) {
         D_MESSAGE("active task");
@@ -120,13 +98,17 @@ void ATADevice::reset(bool cold)
     }
 
     ASSERT(_task == NULL);
+}
 
-    if (_dead_task) {
-        _dead_task->unref();
-        _dead_task = NULL;
-    }
+
+void ATADevice::reset(bool cold)
+{
+    D_MESSAGE("");
+
+    cancel_task();
 
     if (cold) {
+        _reverting_to_power_on_default = true;
         _irq_wire.reset();
     } else {
         _irq_wire.drop();
@@ -153,52 +135,40 @@ void ATADevice::reset(bool cold)
 
 void ATADevice::start_task(ATATask* task)
 {
-    Lock lock(_tasks_mutex);
-
-    if (_dead_task) {
-        _dead_task->unref();
-        _dead_task = NULL;
-    }
-
     ASSERT(_task == NULL);
-    _task = task->ref();
     _status |= ATA_STATUS_BUSY_MASK;
-    lock.unlock();
-    task->start();
+    _task = task;
+    _task->start();
 }
 
 
 void ATADevice::remove_task(ATATask* task)
 {
-    Lock lock(_tasks_mutex);
+    Lock lock(_mutex);
 
-    ASSERT(task == _task && _dead_task == NULL);
+    ASSERT(task == _task);
     _task = NULL;
-    _dead_task = task;
-}
-
-
-ATATask* ATADevice::get_task()
-{
-    Lock lock(_tasks_mutex);
-
-    if (!_task) {
-        return NULL;
-    }
-
-    return _task->ref();
 }
 
 
 void ATADevice::dec_async_count()
 {
-    uint32_t count = _async_count.dec();
+    if (_async_count.dec()) {
+        return;
+    }
 
-    if (!count) {
-        Lock lock(_stop_mutex);
-        if (_async_stop && !_async_count.val()) {
-            _async_stop = false;
+    Lock lock(_async_mutex);
+
+    if (_async_flags && !_async_count.val()) {
+
+        if ((_async_flags & ASYNC_FLAG_STOP)) {
+            _async_flags &= ~ASYNC_FLAG_STOP;
             transition_done();
+        }
+
+        if ((_async_flags & ASYNC_FLAG_SIGNAL)) {
+            _async_flags &= ~ASYNC_FLAG_SIGNAL;
+            _async_condition.signal();
         }
     }
 }
@@ -206,26 +176,25 @@ void ATADevice::dec_async_count()
 
 bool ATADevice::stop()
 {
-    Lock lock(_stop_mutex);
+    Lock lock(_async_mutex);
 
     if (!_async_count.val()) {
         return true;
     }
 
-    _async_stop = true;
+    _async_flags |= ASYNC_FLAG_STOP;
+
     return false;
 }
 
 
 void ATADevice::down()
 {
-    AutoRef<ATATask> task(get_task());
-
-    if (!task.get()) {
+    if (!_task) {
         return;
     }
 
-    task->cancel();
+    _task->cancel();
 }
 
 
@@ -316,9 +285,9 @@ void ATADevice::dma_wait()
 
 void ATADevice::dma_write_start(DMAState& state)
 {
-    AutoRef<ATATask> task(get_task());
+    Lock lock(_mutex);
 
-    if (!task.get() || !task->dma_write_start(state)) {
+    if (!_task || !_task->dma_write_start(state)) {
         D_MESSAGE("no active dma client");
         state.done();
     }
@@ -327,9 +296,9 @@ void ATADevice::dma_write_start(DMAState& state)
 
 void ATADevice::dma_read_start(DMAState& state)
 {
-    AutoRef<ATATask> task(get_task());
+    Lock lock(_mutex);
 
-    if (!task.get() || !task->dma_read_start(state)) {
+    if (!_task || !_task->dma_read_start(state)) {
         D_MESSAGE("no active dma client");
         state.done();
     }
