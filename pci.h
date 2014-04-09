@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -48,6 +48,10 @@
 
 #define PCI_CLASS_SYSTEM 0x08
 #define PCI_SUBCLASS_SYSTEM_OTHER 0x80
+
+#define PCI_CLASS_NIC 0x02
+#define PCI_SUBCLASS_ETHERNET 0x00
+#define PCI_PROGIF_ETHERNET 0x00
 
 enum {
     PCI_CONF_VENDOR = 0x00,

@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -52,6 +52,7 @@ class FirmwareFile;
 class CPU;
 class PMController;
 class NoxDisplay;
+class NIC;
 
 
 class NoxVM: public VMPart {
@@ -156,6 +157,7 @@ private:
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
+    std::auto_ptr<NIC> _nic;
     std::auto_ptr<Speaker> _speaker;
     std::auto_ptr<FirmwareFile> _bios_file;
     NoxDisplay* _display;

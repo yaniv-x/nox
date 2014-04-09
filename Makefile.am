@@ -54,7 +54,8 @@ nox_SOURCES =					\
     gdb_target.cpp          \
     pm_controller.cpp       \
     io_apic.cpp             \
-	run_loop.cpp
+	run_loop.cpp            \
+    nic.cpp
 
 INCLUDES =												\
 	-Wall -Werror -Wno-sign-compare -Wno-switch-enum						\

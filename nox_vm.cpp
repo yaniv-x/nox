@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -45,6 +45,7 @@
 #include "rtc.h"
 #include "keyboard.h"
 #include "vga.h"
+#include "nic.h"
 #include "pm_controller.h"
 #include "display.h"
 #include "admin_server.h"
@@ -358,6 +359,7 @@ NoxVM::NoxVM(const char* name)
     , _kbd (new KbdController(*this))
     , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
+    , _nic (new NIC(*this))
     , _speaker (new Speaker(*this))
     , _bios_file (new FirmwareFile())
     , _display (NULL)
