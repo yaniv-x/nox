@@ -56,42 +56,39 @@ enum {
 
     APIC_OFFSET_ID = 0x020 / 16,
     APIC_OFFSET_VERSION = 0x030 / 16,
+    APIC_OFFSET_TPR = 0x080 / 16,
+    APIC_OFFSET_ARBITRATION_PRIORITY = 0x090 / 16,
+    APIC_OFFSET_PROCESSOR_PRIORITY = 0x0a0 / 16,
+    APIC_OFFSET_EOI = 0x0b0 / 16,
+    APIC_OFFSET_LOGICAL_DEST = 0x0d0 / 16,
+    APIC_OFFSET_DEST_FORMAT = 0x0e0 / 16,
     APIC_OFFSET_SPURIOUS = 0x0f0 / 16,
+    APIC_OFFSET_ISR = 0x100 / 16,
+    APIC_OFFSET_TMR = 0x180 / 16,
+    APIC_OFFSET_IRR = 0x200 / 16,
+    APIC_OFFSET_ERROR = 0x280 / 16,
+    APIC_OFFSET_CMD_LOW = 0x300 / 16,
+    APIC_OFFSET_CMD_HIGH = 0x310 / 16,
     APIC_OFFSET_LVT_TIMER = 0x320 / 16,
     APIC_OFFSET_LVT_THERMAL = 0x330 / 16,
     APIC_OFFSET_LVT_PERFORMANCE = 0x340 / 16,
     APIC_OFFSET_LVT_INT_0 = 0x350 / 16,
     APIC_OFFSET_LVT_INT_1 = 0x360 / 16,
     APIC_OFFSET_LVT_ERROR = 0x370 / 16,
-    APIC_OFFSET_EOI = 0x0b0 / 16,
-    APIC_OFFSET_TPR = 0x080 / 16,
-    APIC_OFFSET_DIV_CONF = 0x3e0 / 16,
     APIC_OFFSET_TIMER_INIT_COUNT = 0x380 / 16,
     APIC_OFFSET_TIMER_CURRENT_COUNT = 0x390 / 16,
-    APIC_OFFSET_ERROR = 0x280 / 16,
-    APIC_OFFSET_CMD_LOW = 0x300 / 16,
-    APIC_OFFSET_CMD_HIGH = 0x310 / 16,
-    APIC_OFFSET_LOGICAL_DEST = 0x0d0 / 16,
-    APIC_OFFSET_DEST_FORMAT = 0x0e0 / 16,
-    APIC_OFFSET_ISR = 0x100 / 16,
-    APIC_OFFSET_TMR = 0x180 / 16,
-    APIC_OFFSET_IRR = 0x200 / 16,
-    APIC_OFFSET_PROCESSOR_PRIORITY = 0x0a0 / 16,
-    APIC_OFFSET_ARBITRATION_PRIORITY = 0x090 / 16,
-
+    APIC_OFFSET_DIV_CONF = 0x3e0 / 16,
 
     APIC_ID_SHIFT = 24,
 
     APIC_VERSION_AMD = 0x10,
     APIC_VERSION_LVT_SHIFT = 16,
 
-
     APIC_LVT_TIMER_MODE_BIT = 17,
     APIC_LVT_MASK_BIT = 16,
     APIC_LVT_TRIGGER_MODE_BIT = 15,
     APIC_LVT_VECTOR_MASK = 0xff,
     APIC_LVT_TYPE_MASK = 0x300,
-
 
     APIC_LVT_TIMER_MASK = APIC_LVT_VECTOR_MASK | (1 << APIC_LVT_MASK_BIT) |
                           (1 << APIC_LVT_TIMER_MODE_BIT),
@@ -267,6 +264,7 @@ CPU::CPU(NoxVM& vm)
     , _debug_opaque (NULL)
     , _init_trap (false)
     , _interrupt_kvm_timer_active (false)
+    , _amd_processor (is_amd_processor())
 {
     ASSERT(_id < MAX_CPUS);
     cpus[_id] = this;
@@ -316,12 +314,6 @@ CPU::~CPU()
 
 void CPU::setup_cpuid()
 {
-    //todo: disable x2APIC CPUID.01H:ECX[21]
-
-    //todo: for now test if we are on AMD. (apic imp follow AMD spec)
-
-    //todo: review cpuid result and stip it down according to vm benefits
-
     const int NUM_CPUID_ENTS = 100;
 
     struct {
@@ -337,16 +329,31 @@ void CPU::setup_cpuid()
 
     for (int i = 0;  i < cpuid_info.cpuid2.nent; i++) {
         struct kvm_cpuid_entry2* entries = cpuid_info.cpuid2.entries;
+
         if (entries[i].function == 1) {
             _version_information = entries[i].eax;
-            entries[i].ecx &= ~(1 << 21);
+            entries[i].ecx &= ~(1 << 21); // no x2APIC
+            entries[i].ecx &= ~(1 << 24); // no TSC-Deadline
             entries[i].ebx &= 0xffff; // clera apic id and cpu count
             entries[i].ebx |= (_id << 24);
             entries[i].ebx |= (get_nox().get_cpu_count() << 16);
             entries[i].edx |= (1 << 28); // set HTT
             entries[i].edx |= (1 << 9); // indicates APIC exists and is enabled
-            D_MESSAGE("cpuid.1 0x%x 0x%x 0x%x 0x%x",
+            D_MESSAGE("cpuid.1 0x%08x 0x%08x 0x%08x 0x%08x",
                       entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
+        }
+
+        if (entries[i].function == 4) {
+            entries[i].eax &= 0x3fff;
+            entries[i].eax |= (get_nox().get_cpu_count() - 1) << 14;
+            entries[i].eax |= (get_nox().get_cpu_count() - 1) << 26;
+        }
+
+        if (entries[i].function == 0x0b) {
+             entries[i].eax = 0;
+             entries[i].ebx = 0;
+             entries[i].ecx = 0;
+             entries[i].edx = 0;
         }
 
         if (entries[i].function == 0x80000001) {
@@ -356,7 +363,7 @@ void CPU::setup_cpuid()
                       entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
         }
 
-        if (entries[i].function == 0x80000008) {
+        if (_amd_processor && entries[i].function == 0x80000008) {
             uint num_cores = get_nox().get_cpu_count();
 
             ASSERT(num_cores > 0 && num_cores <= 128);
@@ -367,25 +374,28 @@ void CPU::setup_cpuid()
                       entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
         }
 
-        if (entries[i].function == 0x8000001e) {
+        if (_amd_processor && entries[i].function == 0x8000001e) {
             entries[i].eax = 0; // clear ExtendedApicId
             D_MESSAGE("cpuid.0x8000001e 0x%x 0x%x 0x%x 0x%x",
                       entries[i].eax, entries[i].ebx, entries[i].ecx,entries[i]. edx);
         }
+
+        if (entries[i].function == 0) {
+            std::string id_string;
+            char str[5];
+            uint32_t* str_ptr = (uint32_t*)str;
+
+            str[4] = 0;
+            *str_ptr = cpuid_info.ents[0].ebx;
+            id_string += str;
+            *str_ptr = cpuid_info.ents[0].edx;
+            id_string += str;
+            *str_ptr = cpuid_info.ents[0].ecx;
+            id_string += str;
+
+            D_MESSAGE("%s version 0x%x", id_string.c_str(), _version_information);
+        }
     }
-
-    std::string id_string;
-    char str[5];
-    uint32_t* str_ptr = (uint32_t*)str;
-    str[4] = 0;
-    *str_ptr = cpuid_info.ents[0].ebx;
-    id_string += str;
-    *str_ptr = cpuid_info.ents[0].edx;
-    id_string += str;
-    *str_ptr = cpuid_info.ents[0].ecx;
-    id_string += str;
-
-    D_MESSAGE("%s version 0x%x", id_string.c_str(), _version_information);
 
     if (ioctl(_vcpu_fd.get(), KVM_SET_CPUID2, &cpuid_info) == -1) {
          THROW("set cpuid failed");
@@ -1170,8 +1180,12 @@ inline void CPU::apic_command(uint32_t cmd_low)
         for (;;) sleep(2);
         break;
     case APIC_CMD_MT_READ:
-        W_MESSAGE("not implemented: APIC_CMD_MT_READ. sleeping forever...");
-        for (;;) sleep(2);
+        if (_amd_processor) {
+            W_MESSAGE("not implemented: APIC_CMD_MT_READ. sleeping forever...");
+            for (;;) sleep(2);
+        } else {
+            // todo: send apic error
+        }
         break;
     case APIC_CMD_MT_NMI:
         apic_command_nmi(cmd_low);

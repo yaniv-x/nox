@@ -217,7 +217,7 @@ static void append_four_bytes(std::string& str, uint32_t four_bytes)
 }
 
 
-bool is_amd_proccesor()
+bool is_amd_processor()
 {
     uint32_t eax;
     uint32_t ebx;

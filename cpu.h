@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -253,6 +253,7 @@ private:
     Mutex _interrupt_kvm_mutex;
     Timer* _interrupt_kvm_timer;
     bool _interrupt_kvm_timer_active;
+    bool _amd_processor;
 
     friend void sig_usr1_handler(int sig_num);
 };
