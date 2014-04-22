@@ -28,6 +28,7 @@
 #define _H_NIC
 
 #include "pci_device.h"
+#include "run_loop.h"
 
 class NoxVM;
 
@@ -46,6 +47,39 @@ public:
     virtual ~NIC();
 
 private:
+    class Queue {
+    public:
+        void reset(uint32_t qx_cause_mask);
+        void set_addr_low(uint32_t val);
+        void set_addr_high(uint32_t val);
+        void set_length(uint32_t val) { _length = val; _q_size = MAX(1, _length / 16);}
+        void set_head(uint32_t head) { _head = head;}
+        void set_tail(uint32_t tail) { _tail = tail;}
+        bool is_empty() { return _head == _tail;}
+        bool pop() { return ++_head;}
+        uint64_t head_address() { return _address + (_head % _q_size) * 16;}
+        uint32_t get_qx_cause_mask() { return _qx_cause_mask;}
+        uint32_t get_tail() { return _tail;}
+        uint32_t get_head() { return _head;}
+
+    private:
+        uint64_t _address;
+        uint32_t _length;
+        uint32_t _head;
+        uint32_t _tail;
+        uint32_t _qx_cause_mask;
+        uint32_t _q_size;
+    };
+
+    void tr_cmd(uint cmd);
+    void tr_wait(uint cmd);
+    void tr_set_state(int state);
+    void do_tx(Queue& queue);
+    void tx_trigger_handler();
+    void rx_trigger_handler();
+    void interface_event_handler();
+    void* thread_main();
+
     void csr_read(uint64_t src, uint64_t length, uint8_t* dest);
     void csr_write(const uint8_t* src, uint64_t length, uint64_t dest);
     uint32_t io_read_dword(uint16_t port);
@@ -61,6 +95,9 @@ private:
     void mdi_write(uint reg);
 
     virtual void reset();
+    virtual bool start();
+    virtual bool stop();
+    virtual void down();
 
     void common_reset();
     void init_eeprom();
@@ -88,7 +125,19 @@ private:
 private:
     Mutex _mutex;
     bool _link;
+    int _tr_state;
+    int _tr_command;
     uint32_t _io_address;
+    AutoFD _interface;
+    RunLoop _transceiver;
+    Event* _tx_trigger;
+    Event* _rx_trigger;
+    FDEvent* _interface_event;
+    Thread _thread;
+    Mutex _tr_cmd_lock;
+    Condition _tr_cmd_condition;
+    Mutex _tr_state_lock;
+    Condition _tr_state_condition;
 
     uint32_t _ctrl;
     uint32_t _status;
@@ -99,18 +148,6 @@ private:
     uint32_t _soft_sem;
     uint32_t _ext_conf_ctrl;
     uint32_t _mdi_ctrl;
-
-    class Queue {
-    public:
-        void reset();
-        void set_addr_low(uint32_t val);
-        void set_addr_high(uint32_t val);
-
-        uint64_t address;
-        uint32_t length;
-        uint32_t head;
-        uint32_t tail;
-    };
 
     uint32_t _rx_ctrl;
     uint32_t _rx_checksum_ctrl;

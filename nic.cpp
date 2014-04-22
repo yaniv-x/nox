@@ -24,6 +24,12 @@
     IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <linux/if.h>
+#include <linux/if_tun.h>
+
 #include "nic.h"
 #include "pci_bus.h"
 #include "pci.h"
@@ -236,8 +242,10 @@ enum {
     NIC_PACKET_BUFF_ALLOC_TX_SHIFT = 16,
 
     NIC_INT_CAUSE_READ_ASSERTED = (1 << 31),
-    NIC_INT_CAUSE_TxQ1_WRITTEN_BACK= (1 << 23),
-    NIC_INT_CAUSE_TxQ0_WRITTEN_BACK= (1 << 22),
+    NIC_INT_CAUSE_TxQ1_WRITTEN_BACK = (1 << 23),
+    NIC_INT_CAUSE_TxQ0_WRITTEN_BACK = (1 << 22),
+    NIC_INT_CAUSE_RxQ1_WRITTEN_BACK = (1 << 21),
+    NIC_INT_CAUSE_RxQ0_WRITTEN_BACK = (1 << 20),
     NIC_INT_CAUSE_MDIO_COMPLETE = (1 << 9),
     NIC_INT_CAUSE_LINK_CHANGE = (1 << 2),
     NIC_INT_CAUSE_TX_QUEUE_EMPTY = (1 << 1),
@@ -508,6 +516,21 @@ enum {
 };
 
 
+enum {
+    TR_INIT,
+    TR_WAITING,
+    TR_RUNNING,
+    TR_TERMINATED,
+};
+
+
+enum {
+    TR_CMD_WAIT,
+    TR_CMD_RUN,
+    TR_CMD_QUIT,
+};
+
+
 static const uint8_t mac_address[] = { 0x00, 0x24, 0x1d, 0xc6, 0x0f, 0xeb};
 
 
@@ -543,26 +566,51 @@ static void debug_unhandled_attention()
 }
 
 
-void NIC::Queue::reset()
+void NIC::Queue::reset(uint32_t qx_cause_mask)
 {
-    head = 0;
-    tail = 0;
-    length = 0;
-    address &= NIC_RX_DESCRIPTOR_ADDRESS_MASK;
+    _head = 0;
+    _tail = 0;
+    _length = 0;
+    _address &= NIC_RX_DESCRIPTOR_ADDRESS_MASK;
+    _q_size = 1;
+    _qx_cause_mask = qx_cause_mask;
 }
 
 
 void NIC::Queue::set_addr_low(uint32_t val)
 {
-    address &= ~0xffffffff;
-    address |= (val & NIC_RX_DESCRIPTOR_ADDRESS_MASK);
+    _address &= ~0xffffffff;
+    _address |= (val & NIC_RX_DESCRIPTOR_ADDRESS_MASK);
 }
 
 
 void NIC::Queue::set_addr_high(uint32_t val)
 {
-    address &= 0xffffffff;
-    address |= (uint64_t(val) << 32);
+    _address &= 0xffffffff;
+    _address |= (uint64_t(val) << 32);
+}
+
+
+static int init_interface(const char* interface_name)
+{
+    AutoFD tun(open("/dev/net/tun", O_RDWR | O_NONBLOCK ));
+
+    if (!tun.is_valid()) {
+        THROW_SYS_ERROR("opne tun failed");
+    }
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    ifr.ifr_flags = IFF_TAP;
+    strncpy(ifr.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ);
+
+    if (ioctl(tun.get(), TUNSETIFF, &ifr) == -1 ){
+        THROW_SYS_ERROR("opne tun failed");
+    }
+
+    I_MESSAGE("net intrface is %s", ifr.ifr_ifrn.ifrn_name);
+
+    return tun.release();
 }
 
 
@@ -571,6 +619,18 @@ NIC::NIC(NoxVM& nox)
                 mk_pci_class_code(PCI_CLASS_NIC, PCI_SUBCLASS_ETHERNET, PCI_PROGIF_ETHERNET),
                 true)
     , _link (true)
+    // tunctl -p -u <user> -g <group> -t tap0
+    // ifconfig tap0 up
+    // brctl addif br0 tap0
+    , _tr_state (TR_INIT)
+    , _tr_command (TR_CMD_WAIT)
+    , _interface (init_interface("tap0"))
+    , _tx_trigger (_transceiver.create_event((void_callback_t)&NIC::tx_trigger_handler, this))
+    , _rx_trigger (_transceiver.create_event((void_callback_t)&NIC::rx_trigger_handler, this))
+    , _interface_event (_transceiver.create_fd_event(_interface.get(),
+                                                     (void_callback_t)&NIC::interface_event_handler,
+                                                     this))
+    , _thread ((Thread::start_proc_t)&NIC::thread_main, this)
 {
 
     add_mmio_region(NIC_CSR_BAR, NIC_CSR_SPACE_SIZE, this,
@@ -584,11 +644,188 @@ NIC::NIC(NoxVM& nox)
     pci_bus->add_device(*this);
 
     init_eeprom();
+
+    tr_wait(TR_WAITING);
 }
 
 
 NIC::~NIC()
 {
+    Lock lock(_tr_cmd_lock);
+    _tr_command = TR_CMD_QUIT;
+    _tr_cmd_condition.signal();
+    lock.unlock();
+    _transceiver.run_break();
+    _thread.join();
+    _tx_trigger->destroy();
+    _rx_trigger->destroy();
+}
+
+
+void NIC::tr_cmd(uint cmd)
+{
+    Lock lock(_tr_cmd_lock);
+    _tr_command = cmd;
+    _tr_cmd_condition.signal();
+}
+
+
+void NIC::tr_wait(uint state)
+{
+    Lock lock(_tr_state_lock);
+
+    while (_tr_state != state) {
+        _tr_state_condition.wait(_tr_state_lock);
+    }
+}
+
+
+void NIC::tr_set_state(int state)
+{
+    Lock cmd_lock(_tr_state_lock);
+    _tr_state = state;
+    _tr_state_condition.signal();
+}
+
+
+bool NIC::start()
+{
+    if (!PCIDevice::start()) {
+        return false;
+    }
+
+    tr_cmd(TR_CMD_RUN);
+
+    update_interrupt_level();
+
+    return true;
+}
+
+
+bool NIC::stop()
+{
+    Lock lock(_tr_cmd_lock);
+    _tr_command = TR_CMD_WAIT;
+    _tr_cmd_condition.signal();
+    lock.unlock();
+    _transceiver.run_break();
+
+    Lock state_lock(_tr_state_lock);
+
+    while (_tr_state != TR_WAITING) {
+        _tr_state_condition.wait(_tr_state_lock);
+    }
+
+    state_lock.unlock();
+
+    return PCIDevice::stop();
+}
+
+
+void NIC::down()
+{
+    Lock lock(_tr_cmd_lock);
+    _tr_command = TR_CMD_QUIT;
+    _tr_cmd_condition.signal();
+    lock.unlock();
+
+    PCIDevice::down();
+}
+
+
+void NIC::do_tx(Queue& queue)
+{
+    for (;;) {
+        Lock lock(_mutex);
+
+        if (queue.is_empty()) {
+            break;
+        }
+
+        if (!_link || !(_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
+            break;
+        }
+
+        uint64_t descriptor[2];
+        uint64_t descriptor_address = queue.head_address();
+        memory_bus->read(descriptor_address, sizeof(descriptor), &descriptor);
+        descriptor[1] |= (1ULL << 32);
+        memory_bus->write(&descriptor, sizeof(descriptor), descriptor_address);
+        queue.pop();
+
+        interrupt(NIC_INT_CAUSE_TX_QUEUE_EMPTY | NIC_INT_CAUSE_TX_WRITTEN_BACK |
+                  queue.get_qx_cause_mask());
+    }
+}
+
+
+void NIC::tx_trigger_handler()
+{
+    do_tx(_tx_queue[0]);
+    do_tx(_tx_queue[1]);
+}
+
+
+void NIC::rx_trigger_handler()
+{
+}
+
+
+void NIC::interface_event_handler()
+{
+    uint8_t buf[1024];
+
+    D_MESSAGE("");
+
+    for (;;) {
+        ssize_t n = read(_interface.get(), buf, sizeof(buf));
+
+        if (n == -1) {
+            if (errno == EAGAIN) {
+                return;
+            }
+            W_MESSAGE("%s (%d)", strerror(errno), errno);
+        } else {
+            D_MESSAGE("n=%lu", n);
+        }
+    }
+}
+
+
+void* NIC::thread_main()
+{
+    try {
+        Lock cmd_lock(_tr_cmd_lock);
+
+        for (;;) {
+            switch (_tr_command) {
+            case TR_CMD_WAIT:
+                tr_set_state(TR_WAITING);
+               _tr_cmd_condition.wait(_tr_cmd_lock);
+                break;
+            case TR_CMD_RUN:
+                tr_set_state(TR_RUNNING);
+                cmd_lock.unlock();
+                _transceiver.run();
+                cmd_lock.lock();
+                break;
+            case TR_CMD_QUIT:
+                tr_set_state(TR_TERMINATED);
+                cmd_lock.unlock();
+                return NULL;
+            default:
+                THROW("invlaid command");
+            }
+        }
+    } catch (Exception& e) {
+        E_MESSAGE("unhndled exception -> %s", e.what());
+    } catch (std::exception& e) {
+         E_MESSAGE("unhndled exception -> %s", e.what());
+    } catch (...) {
+         E_MESSAGE("unhndled exception");
+    }
+
+    return NULL;
 }
 
 
@@ -676,10 +913,10 @@ void NIC::common_reset()
     _tx_int_delay_val = 0;
     _tx_int_abs_delay_val = 0;
 
-    _tx_queue[0].reset();
-    _tx_queue[1].reset();
-    _rx_queue[0].reset();
-    _rx_queue[1].reset();
+    _tx_queue[0].reset(NIC_INT_CAUSE_TxQ0_WRITTEN_BACK);
+    _tx_queue[1].reset(NIC_INT_CAUSE_TxQ1_WRITTEN_BACK);
+    _rx_queue[0].reset(NIC_INT_CAUSE_RxQ0_WRITTEN_BACK);
+    _rx_queue[1].reset(NIC_INT_CAUSE_RxQ1_WRITTEN_BACK);
 
     _rom_read = 0;
 
@@ -870,16 +1107,16 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             NIC_TRACE("STATUS 0x%x", _status);
             break;
         case NIC_REG_TX_DESCRIPTOR_HEAD_0:
-            *dest_32 = _tx_queue[0].head;
+            *dest_32 = _tx_queue[0].get_head();
             break;
         case NIC_REG_TX_DESCRIPTOR_HEAD_1:
-            *dest_32 = _tx_queue[1].head;
+            *dest_32 = _tx_queue[1].get_head();
             break;
         case NIC_REG_TX_DESCRIPTOR_TAIL_0:
-            *dest_32 = _tx_queue[0].tail;
+            *dest_32 = _tx_queue[0].get_tail();
             break;
         case NIC_REG_TX_DESCRIPTOR_TAIL_1:
-            *dest_32 = _tx_queue[1].tail;
+            *dest_32 = _tx_queue[1].get_tail();
             break;
         case NIC_REG_SOFT_SEM:
             *dest_32 = _soft_sem;
@@ -1529,52 +1766,15 @@ void NIC::speed_detection()
 }
 
 
-// fornow: throw all tx frames
-void NIC::tx_trigger()
+inline void NIC::tx_trigger()
 {
-    debug_attention();
-
-    if (!(_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
-        return;
-    }
-
-    uint32_t cause = 0;
-
-    for (; _tx_queue[0].tail != _tx_queue[0].head; _tx_queue[0].head++) {
-        uint64_t descriptor[2];
-        uint q_size = _tx_queue[0].length / sizeof(descriptor);
-        uint64_t address = _tx_queue[0].address + (_tx_queue[0].head % q_size) * 16;
-
-        D_MESSAGE("Q0 %u size %u", _tx_queue[0].head, q_size);
-
-        memory_bus->read(address, sizeof(descriptor), &descriptor);
-        descriptor[1] |= (1ULL << 32);
-        memory_bus->write(&descriptor, sizeof(descriptor), address);
-        cause |= NIC_INT_CAUSE_TX_QUEUE_EMPTY | NIC_INT_CAUSE_TX_WRITTEN_BACK |
-                 NIC_INT_CAUSE_TxQ0_WRITTEN_BACK;
-    }
-
-    for (; _tx_queue[1].tail != _tx_queue[1].head; _tx_queue[1].head++) {
-        uint64_t descriptor[2];
-        uint q_size = _tx_queue[1].length / sizeof(descriptor);
-        uint64_t address = _tx_queue[1].address + (_tx_queue[1].head % q_size) * 16;
-
-        D_MESSAGE("Q1 %u size %u", _tx_queue[0].head, q_size);
-
-        memory_bus->read(address, sizeof(descriptor), &descriptor);
-        descriptor[1] |= (1ULL << 32);
-        memory_bus->write(&descriptor, sizeof(descriptor), address);
-        cause |= NIC_INT_CAUSE_TX_QUEUE_EMPTY | NIC_INT_CAUSE_TX_WRITTEN_BACK |
-                 NIC_INT_CAUSE_TxQ1_WRITTEN_BACK;
-    }
-
-    interrupt(cause);
+    _tx_trigger->trigger();
 }
 
 
-void NIC::rx_trigger()
+inline void NIC::rx_trigger()
 {
-    debug_unhandled_attention();
+    _rx_trigger->trigger();
 }
 
 
@@ -1775,16 +1975,16 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             break;
         case NIC_REG_RX_DESCRIPTOR_LENGTH_0:
         case NIC_REG_RX_DESCRIPTOR_LENGTH_1:
-             _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_LENGTH_0) >> 8].length =
-                                                            *src_32 & NIC_RX_DESCRIPTOR_LENGTH_MASK;
+             _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_LENGTH_0) >> 8].set_length(
+                                                           *src_32 & NIC_RX_DESCRIPTOR_LENGTH_MASK);
              break;
         case NIC_REG_RX_DESCRIPTOR_HEAD_0:
         case NIC_REG_RX_DESCRIPTOR_HEAD_1:
-            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_HEAD_0) >> 8].head = *src_32 & 0xffff;
+            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_HEAD_0) >> 8].set_head(*src_32 & 0xffff);
             break;
         case NIC_REG_RX_DESCRIPTOR_TAIL_0:
         case NIC_REG_RX_DESCRIPTOR_TAIL_1:
-            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8].tail = *src_32 & 0xffff;
+            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8].set_tail(*src_32 & 0xffff);
             rx_trigger();
             break;
         case NIC_REG_RX_INT_DELAY_TIMER:
@@ -1835,16 +2035,16 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             break;
         case NIC_REG_TX_DESCRIPTOR_LENGTH_0:
         case NIC_REG_TX_DESCRIPTOR_LENGTH_1:
-             _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_LENGTH_0) >> 8].length =
-                                                            *src_32 & NIC_TX_DESCRIPTOR_LENGTH_MASK;
+             _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_LENGTH_0) >> 8].set_length(
+                                                           *src_32 & NIC_TX_DESCRIPTOR_LENGTH_MASK);
              break;
         case NIC_REG_TX_DESCRIPTOR_HEAD_0:
         case NIC_REG_TX_DESCRIPTOR_HEAD_1:
-            _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_HEAD_0) >> 8].head = *src_32 & 0xffff;
+            _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_HEAD_0) >> 8].set_head(*src_32 & 0xffff);
             break;
         case NIC_REG_TX_DESCRIPTOR_TAIL_0:
         case NIC_REG_TX_DESCRIPTOR_TAIL_1:
-            _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8].tail = *src_32 & 0xffff;
+            _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8].set_tail(*src_32 & 0xffff);
             tx_trigger();
             break;
         case NIC_REG_TX_INT_DELAY_VAL:
