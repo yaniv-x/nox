@@ -29,15 +29,21 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <arpa/inet.h>
 
 #include "nic.h"
 #include "pci_bus.h"
 #include "pci.h"
 #include "memory_bus.h"
 
-// Emulates Intel® 82574 GbE (82574l-gbe-controller-datasheet.pdf)
+// Emulates Intel 82574 GbE (82574l-gbe-controller-datasheet.pdf)
 
-#define NIC_TRACE(...)
+#ifdef DO_NIC_LOG
+#define NIC_LOG(format, ...) \
+    D_MESSAGE("NIC[%lu]: %lu "format, pthread_self(), get_monolitic_time(), ## __VA_ARGS__)
+#else
+    #define NIC_LOG(format, ...)
+#endif
 
 #define NIC_VENDOR_ID 0x8086
 #define NIC_DEV_ID 0x10D3
@@ -88,9 +94,9 @@ enum {
     NIC_REG_RX_DESCRIPTOR_LENGTH_0 = 0x02808,
     NIC_REG_RX_DESCRIPTOR_HEAD_0 = 0x02810,
     NIC_REG_RX_DESCRIPTOR_TAIL_0 = 0x02818,
-    NIC_REG_RX_INT_DELAY_TIMER = 0x02820,
+    NIC_REG_RX_INT_DELAY_VAL = 0x02820,
     NIC_REG_RX_DESCRIPTOR_CTRL_0 = 0x02828,
-    NIC_REG_RX_INT_ABS_DELAY_TIMER = 0x0282c,
+    NIC_REG_RX_INT_ABS_DELAY_VAL = 0x0282c,
     NIC_REG_RX_DESCRIPTOR_ADDRESS_LOW_1 = NIC_REG_RX_DESCRIPTOR_ADDRESS_LOW_0 + 0x100,
     NIC_REG_RX_DESCRIPTOR_ADDRESS_HIGH_1 = NIC_REG_RX_DESCRIPTOR_ADDRESS_HIGH_0 + 0x100,
     NIC_REG_RX_DESCRIPTOR_LENGTH_1 = NIC_REG_RX_DESCRIPTOR_LENGTH_0 + 0x100,
@@ -115,8 +121,7 @@ enum {
     NIC_REG_TX_ARBITRATION_COUNT_1 = NIC_REG_TX_ARBITRATION_COUNT_0 + 0x100,
 
     NIC_REG_STAT_START = 0x04000,
-    NIC_REG_STAT_END = /*0x04100,*/ 0x4124, /* linux read statistic that is not defined (acording
-                                               to spec) for 82574 */
+    NIC_REG_STAT_END = 0x04100,
 
     NIC_REG_RX_CHECKSUM_CTRL = 0x05000,
     NIC_REG_RX_FILTER_CTRL = 0x05008,
@@ -189,16 +194,36 @@ enum {
 
     NIC_MNG_CTRL_DIS_ARP_IP_CHECK = (1 << 28),
 
+    NIC_RX_CTRL_FLXBUF_SHIFT = 27,
+    NIC_RX_CTRL_FLXBUF_MASK = (0x0f << NIC_RX_CTRL_FLXBUF_SHIFT),
+    NIC_RX_CTRL_SECRC = (1 << 26),
+    NIC_RX_CTRL_BSEX = (1 << 25),
+    NIC_RX_CTRL_CFIEN = (1 << 19),
+    NIC_RX_CTRL_VFE = (1 << 18),
+    NIC_RX_CTRL_BSIZE_SHIFT = 16,
+    NIC_RX_CTRL_BSIZE_MASK = (0x03 << NIC_RX_CTRL_BSIZE_SHIFT),
+    NIC_RX_CTRL_ACCEPT_BROADCAST = (1 << 15),
+    NIC_RX_CTRL_MULTICAST_OFFSET_SHIFT = 12,
+    NIC_RX_CTRL_MULTICAST_OFFSET_MASK = (0x03 << NIC_RX_CTRL_MULTICAST_OFFSET_SHIFT),
+    NIC_RX_CTRL_DTYP_MASK = (0x03 << 10),
+    NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_SHIFT = 8,
+    NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_MASK = (0x03 << NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_SHIFT),
+    NIC_RX_CTRL_LONG_PACKET_ENABLE = (1 << 5),
+    NIC_RX_CTRL_PROMISCUOUS_MULTICAST = (1 << 4),
+    NIC_RX_CTRL_PROMISCUOUS_UNICAST = (1 << 3),
     NIC_RX_CTRL_ENABLE = (1 << 1),
     NIC_RX_CTRL_RESERVED = (1 << 0) | (1 << 14) | (1 << 21) | (1 << 24) | (1 << 31),
 
+    NIC_RX_CHECKSUM_CTRL_PACKET_DISABLE = (1 << 13),
     NIC_RX_CHECKSUM_CTRL_UDP = (1 << 9),
     NIC_RX_CHECKSUM_CTRL_IP = (1 << 8),
+    NIC_RX_CHECKSUM_CTRL_START_MASK = 0xff,
     NIC_RX_CHECKSUM_RESERVED = (1 << 10) | ~((1 << 14) - 1),
 
     NIC_RX_DESCRIPTOR_LENGTH_MASK = 0x0fff80,
 
-    NIC_RX_FILTER_CTRL_MASK = 0xffff0000,
+    NIC_RX_FILTER_CTRL_EXSTEN = (1 << 15),
+    NIC_RX_FILTER_CTRL_RESERVED = 0xffff0000,
 
     NIC_MULTI_RQ_CMD_ENABLE_MASK = 0x3,
     NIC_MULTI_RQ_CMD_RSS_MASK = (0xffff << 16),
@@ -246,7 +271,11 @@ enum {
     NIC_INT_CAUSE_TxQ0_WRITTEN_BACK = (1 << 22),
     NIC_INT_CAUSE_RxQ1_WRITTEN_BACK = (1 << 21),
     NIC_INT_CAUSE_RxQ0_WRITTEN_BACK = (1 << 20),
+    NIC_INT_CAUSE_TXD_LOW = (1 << 15),
     NIC_INT_CAUSE_MDIO_COMPLETE = (1 << 9),
+    NIC_INT_CAUSE_RX_TIMER = (1 << 7),
+    NIC_INT_CAUSE_RX_OVERRUN = (1 << 6),
+    NIC_INT_CAUSE_RX_DESCRIPTOR_THRESHOLD = (1 << 4),
     NIC_INT_CAUSE_LINK_CHANGE = (1 << 2),
     NIC_INT_CAUSE_TX_QUEUE_EMPTY = (1 << 1),
     NIC_INT_CAUSE_TX_WRITTEN_BACK = (1 << 0),
@@ -291,7 +320,11 @@ enum {
     NIC_LED_CTRL_RESERVED = (0xff << 24) | (1 << 20) | (1 << 12) | (1 << 4),
 };
 
+
 #define NIC_RX_DESCRIPTOR_ADDRESS_MASK ~0x0f
+#define NIC_RECEIVE_ADDR_VALID (1UL << 63)
+#define NIC_RECEIVE_ADDR_SELECT_MASK (0x03UL << 48)
+#define NIC_RECEIVE_ADDR_SELECT_DEST (0UL << 48)
 
 
 enum {
@@ -322,6 +355,25 @@ enum {
     NIC_CTRL_RESREVED_SET = (1 << 3),
     NIC_CTRL_RESREVED_MASK = NIC_CTRL_RESREVED_SET | (1 << 1) | (1 << 4) | (1 << 7) |(1 << 10) |
                              (0x7f << 13) | (0x1f << 21) | (1 << 29),
+};
+
+
+enum {
+    STAT_OFFSET_RX_MISSED_PACKETS = 0x10 / 4,
+    STAT_OFFSET_RX_SIZE_ERR = 0x40 / 4,
+    STAT_OFFSET_RX_64 = 0x5c / 4,
+    STAT_OFFSET_RX_128 = 0x60 / 4,
+    STAT_OFFSET_RX_256 = 0x64 / 4,
+    STAT_OFFSET_RX_512 = 0x68 / 4,
+    STAT_OFFSET_RX_1024 = 0x6c / 4,
+    STAT_OFFSET_RX_GOOD_PACKETS = 0x74 / 4,
+    STAT_OFFSET_RX_BROADCAST = 0x78 / 4,
+    STAT_OFFSET_RX_MULTICAST = 0x7c / 4,
+    STAT_OFFSET_RX_GOOD_OCTETS_LOW = 0x88 / 4,
+    STAT_OFFSET_RX_UNDERSIZE = 0xa4 / 4,
+    STAT_OFFSET_RX_OVERSIZE = 0xac / 4,
+    STAT_OFFSET_RX_TOTAL_OCTETS_LOW = 0xc0 / 4,
+    STAT_OFFSET_RX_TOTAL_PACKETS = 0xd0 / 4,
 };
 
 
@@ -517,6 +569,23 @@ enum {
 
 
 enum {
+    NIC_MIN_PACKET_SIZE = 64,
+    NIC_MAX_PACKET_SIZE = 1522,
+    NIC_MAX_LONG_PACKET_SIZE = 16384,
+
+    ETHER_HEADER_LENGTH = 14,
+    ETHER_ADDRESS_LENGTH = 6,
+    ETHER_CRC_SIZE = 4,
+
+    ETHER_TYPE_ARP = 0x0806,
+    ETHER_TYPE_VLAN = 0x8100,
+    ETHER_TYPE_IPV6 = 0x86dd,
+
+    IP6_HEADER_LENGTH = 40,
+};
+
+
+enum {
     TR_INIT,
     TR_WAITING,
     TR_RUNNING,
@@ -530,8 +599,105 @@ enum {
     TR_CMD_QUIT,
 };
 
+typedef struct __attribute__ ((__packed__)) CommonTxDescriptor {
+    uint8_t specific_0[11];
+    uint8_t command;
+    uint8_t status;
+    uint8_t specific_1[3];
+} CommonTxDescriptor;
 
-static const uint8_t mac_address[] = { 0x00, 0x24, 0x1d, 0xc6, 0x0f, 0xeb};
+
+typedef struct __attribute__ ((__packed__)) LegacyTxDescriptor {
+    uint64_t address;
+    uint16_t length;
+    uint8_t checksum_offset;
+    uint8_t command;
+    uint8_t status;
+    uint8_t checksum_start;
+    uint16_t vlan; /*If the packet type is 802.1q and RCTL.VME = 1b, then the VLAN Tag field
+                     records the VLAN information and the four byte VLAN information is stripped
+                     from the packet data storage. Otherwise, the special field contains 0000h
+
+                     (12bit VLAN Identifier + 1bit CFI + PRI 3bit Priority)
+                   */
+} LegacyTxDescriptor;
+
+
+enum {
+    TX_DESCRIPTOR_CMD_IDE = (1 << 7),
+    TX_DESCRIPTOR_CMD_VLAN = (1 << 6),
+    TX_DESCRIPTOR_CMD_EXTENSION = (1 << 5),
+    TX_DESCRIPTOR_CMD_REPORT_STATUS = (1 << 3),
+    TX_DESCRIPTOR_CMD_TSE = (1 << 2),
+    TX_DESCRIPTOR_INSERT_CHECKSUM = (1 << 2),
+    TX_DESCRIPTOR_CMD_IP4 = (1 << 1),
+    TX_DESCRIPTOR_INSERT_FCS = (1 << 1),
+    TX_DESCRIPTOR_END_OF_PACKET = (1 << 0),
+    TX_DESCRIPTOR_CMD_TCP = (1 << 0),
+
+    TX_DESCRIPTOR_STATUS_DD = (1 << 0),
+    TX_DESCRIPTOR_STATUS_EXTCMD_TS = (1 << 4),
+
+    TX_EXT_DESC_TYPE_SHIFT = 20,
+    TX_EXT_DESC_TYPE_MASK = (0x0f << TX_EXT_DESC_TYPE_SHIFT),
+    TX_EXT_DESC_TYPE_CONTEXT = 0,
+    TX_EXT_DESC_TYPE_DATA = 1,
+
+    TX_DESCRIPTOR_POPTS_IXSM = (1 << 0),
+    TX_DESCRIPTOR_POPTS_TXSM = (1 << 1),
+};
+
+
+typedef struct __attribute__ ((__packed__)) TxDataDescriptor {
+    uint64_t address;
+    union {
+        uint32_t mix;
+        uint8_t mix_v[3];
+    };
+    uint8_t status;
+    uint8_t packet_opt;
+    uint16_t vlan;
+} TxDataDescriptor;
+
+
+typedef struct __attribute__ ((__packed__)) LegacyRxDescriptor {
+    uint64_t address;
+    uint16_t length;
+    uint16_t checksum;
+    uint8_t status;
+    uint8_t error;
+    uint16_t vlan;
+} LegacyRxDescriptor;
+
+
+typedef struct __attribute__ ((__packed__)) RxExtReadDescriptor {
+    uint64_t address;
+    uint64_t status;
+} RxExtReadDescriptor;
+
+
+typedef struct __attribute__ ((__packed__)) RxExtWBDescriptor {
+    uint32_t mrq;
+    union {
+        uint32_t rss;
+        struct __attribute__ ((__packed__)) {
+            uint16_t ip_identification;
+            uint16_t packet_checksum;
+        } no_rss;
+    };
+    uint32_t status;
+    uint16_t length;
+    uint16_t vlan;
+} RxExtWBDescriptor;
+
+
+enum {
+    RX_DESCRIPTOR_STATUS_DD = (1 << 0),
+    RX_DESCRIPTOR_STATUS_EOP = (1 << 1),
+};
+
+
+static const uint8_t mac_address[] = { 0x02, 0xf1, 0xf2, 0xf3, 0xf4, 0xff};
 
 
 static uint16_t checksum16(void* start, uint size)
@@ -545,6 +711,23 @@ static uint16_t checksum16(void* start, uint size)
     }
 
     return res;
+}
+
+
+uint32_t net_sum16(uint8_t* buf, int len)
+{
+    uint16_t* header = (uint16_t*)buf;
+    uint32_t sum = 0;
+
+    for (int i = 0; i < len / 2; ++i) {
+        sum += ntohs(header[i]);
+    }
+
+    if (len & 1) {
+        sum += ((uint16_t)buf[len - 1]) << 8;
+    }
+
+    return sum;
 }
 
 
@@ -562,18 +745,27 @@ static void debug_attention()
 
 static void debug_unhandled_attention()
 {
-    raise(SIGTRAP);
+    //raise(SIGTRAP);
 }
 
 
 void NIC::Queue::reset(uint32_t qx_cause_mask)
 {
-    _head = 0;
+    _public_head = 0;
+    _private_head = 0;
     _tail = 0;
     _length = 0;
     _address &= NIC_RX_DESCRIPTOR_ADDRESS_MASK;
     _q_size = 1;
     _qx_cause_mask = qx_cause_mask;
+    _descriptor_ctrl = NIC_TX_DESCRIPTOR_CTRL_SET;
+}
+
+
+void NIC::Queue::begin()
+{
+    _q_size = MAX(1, _length / 16);
+    _private_head = _public_head % _q_size;
 }
 
 
@@ -591,26 +783,79 @@ void NIC::Queue::set_addr_high(uint32_t val)
 }
 
 
-static int init_interface(const char* interface_name)
+NIC::NicTimer::NicTimer(const char* name, Timer* a, Timer* b)
+    : _name (name)
+    , _timer (a)
+    , _abs_timer (b)
 {
-    AutoFD tun(open("/dev/net/tun", O_RDWR | O_NONBLOCK ));
+}
 
-    if (!tun.is_valid()) {
-        THROW_SYS_ERROR("opne tun failed");
+
+NIC::NicTimer::~NicTimer()
+{
+    _timer->destroy();
+    _abs_timer->destroy();
+}
+
+
+void NIC::NicTimer::reset()
+{
+    disarm();
+    _delay_val = 0;
+    _abs_delay_val = 0;
+}
+
+
+inline void NIC::NicTimer::disarm()
+{
+    NIC_LOG("%s", _name.c_str());
+
+    _timer->disarm();
+    _abs_timer->disarm();
+    _abs_timer_armed = false;
+}
+
+
+void NIC::NicTimer::resume()
+{
+    _timer->resume();
+    _abs_timer->resume();
+}
+
+
+void NIC::NicTimer::suspend()
+{
+    _timer->suspend();
+    _abs_timer->suspend();
+}
+
+
+void NIC::NicTimer::set_val(uint32_t val)
+{
+    _delay_val = (val & 0xffff) * 1024;
+}
+
+
+void NIC::NicTimer::set_abs_val(uint32_t val)
+{
+    _abs_delay_val = (val & 0xffff) * 1024;
+}
+
+
+inline void NIC::NicTimer::arm()
+{
+    NIC_LOG("%s", _name.c_str());
+
+    if (_delay_val) {
+        NIC_LOG("%s: rel %u", _name.c_str(), _delay_val);
+        _timer->arm(_delay_val, false);
     }
 
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TAP;
-    strncpy(ifr.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ);
-
-    if (ioctl(tun.get(), TUNSETIFF, &ifr) == -1 ){
-        THROW_SYS_ERROR("opne tun failed");
+    if (!_abs_timer_armed && _abs_delay_val) {
+        NIC_LOG("%s: abs %u", _name.c_str(), _abs_delay_val);
+        _abs_timer->arm(_abs_delay_val, false);
+        _abs_timer_armed = true;
     }
-
-    I_MESSAGE("net intrface is %s", ifr.ifr_ifrn.ifrn_name);
-
-    return tun.release();
 }
 
 
@@ -618,21 +863,18 @@ NIC::NIC(NoxVM& nox)
     : PCIDevice("nic", *pci_bus, NIC_VENDOR_ID, NIC_DEV_ID, NIC_DEV_REVISION,
                 mk_pci_class_code(PCI_CLASS_NIC, PCI_SUBCLASS_ETHERNET, PCI_PROGIF_ETHERNET),
                 true)
-    , _link (true)
-    // tunctl -p -u <user> -g <group> -t tap0
-    // ifconfig tap0 up
-    // brctl addif br0 tap0
     , _tr_state (TR_INIT)
     , _tr_command (TR_CMD_WAIT)
-    , _interface (init_interface("tap0"))
     , _tx_trigger (_transceiver.create_event((void_callback_t)&NIC::tx_trigger_handler, this))
     , _rx_trigger (_transceiver.create_event((void_callback_t)&NIC::rx_trigger_handler, this))
-    , _interface_event (_transceiver.create_fd_event(_interface.get(),
-                                                     (void_callback_t)&NIC::interface_event_handler,
-                                                     this))
+    , _interface_event (NULL)
+    , _tx_timer ("tx",_transceiver.create_timer((void_callback_t)&NIC::tx_timer_handler, this),
+                 _transceiver.create_timer((void_callback_t)&NIC::tx_timer_handler, this))
+    , _rx_timer ("rx",_transceiver.create_timer((void_callback_t)&NIC::rx_timer_handler, this),
+                 _transceiver.create_timer((void_callback_t)&NIC::rx_timer_handler, this))
     , _thread ((Thread::start_proc_t)&NIC::thread_main, this)
 {
-
+    ASSERT(NUM_STATISTIC_REGS == (NIC_REG_STAT_END - NIC_REG_STAT_START) / 4 + 1);
     add_mmio_region(NIC_CSR_BAR, NIC_CSR_SPACE_SIZE, this,
                     (read_mem_proc_t)&NIC::csr_read,
                     (write_mem_proc_t)&NIC::csr_write, false);
@@ -659,6 +901,10 @@ NIC::~NIC()
     _thread.join();
     _tx_trigger->destroy();
     _rx_trigger->destroy();
+
+    if (_interface_event) {
+        _interface_event->destroy();
+    }
 }
 
 
@@ -698,6 +944,9 @@ bool NIC::start()
 
     update_interrupt_level();
 
+    _tx_timer.resume();
+    _rx_timer.resume();
+
     return true;
 }
 
@@ -718,6 +967,9 @@ bool NIC::stop()
 
     state_lock.unlock();
 
+    _tx_timer.suspend();
+    _rx_timer.suspend();
+
     return PCIDevice::stop();
 }
 
@@ -733,62 +985,636 @@ void NIC::down()
 }
 
 
-void NIC::do_tx(Queue& queue)
+void NIC::tx_write_back(Queue& queue)
 {
-    for (;;) {
-        Lock lock(_mutex);
-
-        if (queue.is_empty()) {
-            break;
-        }
-
-        if (!_link || !(_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
-            break;
-        }
-
-        uint64_t descriptor[2];
-        uint64_t descriptor_address = queue.head_address();
-        memory_bus->read(descriptor_address, sizeof(descriptor), &descriptor);
-        descriptor[1] |= (1ULL << 32);
-        memory_bus->write(&descriptor, sizeof(descriptor), descriptor_address);
-        queue.pop();
-
-        interrupt(NIC_INT_CAUSE_TX_QUEUE_EMPTY | NIC_INT_CAUSE_TX_WRITTEN_BACK |
-                  queue.get_qx_cause_mask());
+    if (!queue.get_wb_count()) {
+        return;
     }
+
+    NIC_LOG("q[%u] head %u private %u tail %u", &queue - _tx_queue,
+            queue.get_public_head(),
+            queue.get_private_head(),
+            queue.get_tail());
+
+    queue.relase_used();
+    interrupt(queue.get_qx_cause_mask() | NIC_INT_CAUSE_TX_WRITTEN_BACK |
+              (queue.is_empty() ? NIC_INT_CAUSE_TX_QUEUE_EMPTY : 0));
+}
+
+
+void NIC::tx_write_back()
+{
+    NIC_LOG("");
+
+    _tx_timer.disarm();
+    tx_write_back(_tx_queue[0]);
+    tx_write_back(_tx_queue[1]);
+}
+
+
+void NIC::tx_timer_handler()
+{
+    Lock lock(_mutex);
+    NIC_LOG("");
+    tx_write_back();
+}
+
+
+void NIC::rx_write_back(Queue& queue, uint32_t cause)
+{
+    if (!queue.get_wb_count()) {
+        return;
+    }
+
+    NIC_LOG("q[%u] head %u private %u tail %u", &queue - _rx_queue,
+            queue.get_public_head(),
+            queue.get_private_head(),
+            queue.get_tail());
+
+    queue.relase_used();
+    interrupt(queue.get_qx_cause_mask() | cause);
+}
+
+
+void NIC::rx_write_back(uint32_t cause)
+{
+    NIC_LOG("");
+
+    _rx_timer.disarm();
+    rx_write_back(_rx_queue[0], cause);
+    rx_write_back(_rx_queue[1], cause);
+}
+
+
+void NIC::rx_timer_handler()
+{
+    Lock lock(_mutex);
+    NIC_LOG("");
+    rx_write_back(NIC_INT_CAUSE_RX_TIMER);
+}
+
+
+inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
+{
+    if (!descriptor.address || !descriptor.length) {
+        debug_unhandled_attention();
+    }
+
+    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address,
+                                                              descriptor.length));
+
+    if (!direct.get()) {
+        debug_unhandled_attention();
+    }
+
+    uint8_t *buf = direct->get_ptr();
+
+    if (!(descriptor.command & TX_DESCRIPTOR_END_OF_PACKET)) {
+        debug_unhandled_attention();
+    }
+
+    if ((descriptor.command & TX_DESCRIPTOR_CMD_VLAN)) {
+        debug_unhandled_attention();
+    }
+
+    if ((descriptor.command & TX_DESCRIPTOR_INSERT_CHECKSUM)) {
+        debug_unhandled_attention();
+    }
+
+    if (!(descriptor.command & TX_DESCRIPTOR_INSERT_FCS)) {
+        debug_unhandled_attention();
+    }
+
+    if ((descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
+        debug_unhandled_attention();
+    }
+
+    if (write(_interface.get(), buf, descriptor.length) != descriptor.length) {
+        debug_unhandled_attention();
+    }
+}
+
+
+inline void NIC::handle_tx_context(TxContextDescriptor& descriptor)
+{
+    if ((descriptor.mix_v[3] & TX_DESCRIPTOR_CMD_TSE)) {
+        _seg_context = descriptor;
+    } else {
+        _offload_context = descriptor;
+    }
+}
+
+
+static uint32_t insert_cheacksum(uint offset, uint start, uint end, uint8_t* buf,
+                                 uint buf_length)
+{
+    if (offset + 2 > buf_length || start + 2 > buf_length) {
+        W_MESSAGE("bad values: start %u offset %u buf length %u", start, offset, buf_length);
+        return 0;
+    }
+
+    if (!end) {
+        end = buf_length;
+    } if (end > buf_length || end <= start) {
+        W_MESSAGE("bad values: start %u end %u buf length %u", start, end, buf_length);
+        return 0;
+    }
+
+    uint32_t sum = net_sum16(buf + start, end - start);
+
+    while (sum >> 16) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    sum = (sum) ? ~sum : 0xffff;
+
+    uint16_t* sum_ptr = (uint16_t*)(buf + offset);
+
+    uint32_t save = (1 << 31) | *sum_ptr;
+    *sum_ptr = htons(sum);
+
+    return save;
+}
+
+
+static inline void restore_cheacksum(uint32_t data, uint8_t offset, uint8_t* buf)
+{
+    if (!(data & (1 << 31))) {
+        return;
+    }
+
+    *(uint16_t*)(buf + offset) = data;
+}
+
+
+inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
+{
+    uint length = descriptor.mix & 0xfffff;
+
+    if (!length || !descriptor.address) {
+        debug_unhandled_attention();
+    }
+
+    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address, length));
+
+    if (!direct.get()) {
+        debug_unhandled_attention();
+    }
+
+    if (!(descriptor.mix_v[3] & TX_DESCRIPTOR_END_OF_PACKET)) {
+        debug_unhandled_attention();
+    }
+
+    if ((descriptor.mix_v[3] & TX_DESCRIPTOR_CMD_VLAN)) {
+        debug_unhandled_attention();
+    }
+
+    if (!(descriptor.mix_v[3] & TX_DESCRIPTOR_INSERT_FCS)) {
+        debug_unhandled_attention();
+    }
+
+    if ((descriptor.mix_v[3] & TX_DESCRIPTOR_CMD_TSE)) {
+        debug_unhandled_attention();
+    }
+
+    if ((descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
+        debug_unhandled_attention();
+    }
+
+    uint8_t *buf = direct->get_ptr();
+
+    uint32_t ipfix = (descriptor.packet_opt & TX_DESCRIPTOR_POPTS_IXSM) ?
+                                insert_cheacksum(_offload_context.ipcso, _offload_context.ipcss,
+                                                 _offload_context.ipcse, buf, length) : 0;
+    uint32_t tufix = (descriptor.packet_opt & TX_DESCRIPTOR_POPTS_TXSM) ?
+                                insert_cheacksum(_offload_context.tucso, _offload_context.tucss,
+                                                 _offload_context.tucse, buf, length) : 0;
+
+    uint n = write(_interface.get(), buf, length);
+
+    restore_cheacksum(ipfix, _offload_context.ipcso, buf);
+    restore_cheacksum(tufix, _offload_context.tucso, buf);
+
+    if (n != length) {
+        debug_unhandled_attention();
+    }
+}
+
+
+bool NIC::do_tx(Queue& queue)
+{
+    Lock lock(_mutex);
+
+    if (!phy_link_is_up() || !(_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
+        return false;
+    }
+
+    if (queue.is_empty()) {
+        NIC_LOG("q[%u]: empty", &queue - _tx_queue);
+        tx_write_back(queue);
+        return false;;
+    }
+
+    NIC_LOG("q[%u] head %u private %u tail %u ctrl 0x%x", &queue - _tx_queue,
+            queue.get_public_head(),
+            queue.get_private_head(),
+            queue.get_tail(),
+            queue.get_descriptor_ctrl());
+
+    CommonTxDescriptor descriptor;
+    uint64_t descriptor_address = queue.head_address();
+
+    NIC_LOG("q[%u] address  0x%lx base 0x%lx size %u", &queue - _tx_queue,
+                descriptor_address,
+                queue.get_base_address(),
+                queue.num_items());
+
+    memory_bus->read(descriptor_address, sizeof(descriptor), &descriptor);
+
+    if (!(descriptor.command & TX_DESCRIPTOR_CMD_EXTENSION)) {
+        handle_legacy_tx((LegacyTxDescriptor&)descriptor);
+    } else {
+        switch (descriptor.specific_0[10] >> 4) {
+        case TX_EXT_DESC_TYPE_CONTEXT:
+            handle_tx_context((TxContextDescriptor&)descriptor);
+            break;
+        case TX_EXT_DESC_TYPE_DATA: {
+            handle_tx_data((TxDataDescriptor&)descriptor);
+            break;
+        }
+        default:
+            W_MESSAGE("invalid ext descriptor type", descriptor.specific_0[10] >> 4);
+            debug_unhandled_attention();
+        };
+    }
+
+    queue.pop();
+
+    NIC_LOG("q[%u] POP head %u private %u tail %u", &queue - _tx_queue,
+                queue.get_public_head(),
+                queue.get_private_head(),
+                queue.get_tail());
+
+    if (descriptor.command & TX_DESCRIPTOR_CMD_REPORT_STATUS) {
+        descriptor.status |= TX_DESCRIPTOR_STATUS_DD;
+        memory_bus->write(&descriptor, sizeof(descriptor), descriptor_address);
+        NIC_LOG("q[%u] DD", &queue - _tx_queue);
+    }
+
+    if (queue.get_low_Threshold() && queue.get_unused_count() == queue.get_low_Threshold() * 8) {
+        interrupt(NIC_INT_CAUSE_TXD_LOW);
+        NIC_LOG("q[%u] low Threshold hit", &queue - _tx_queue);
+    }
+
+    if ((descriptor.command & TX_DESCRIPTOR_CMD_IDE)) {
+        NIC_LOG("q[%u] IDE", &queue - _tx_queue);
+        _tx_timer.arm();
+    }
+
+    if (queue.get_wb_threshold()) {
+        NIC_LOG("q[%u] wb threshold", &queue - _tx_queue);
+        if (queue.get_wb_count() == queue.get_wb_threshold()) {
+            NIC_LOG("q[%u] write back Threshold hit", &queue - _tx_queue);
+            tx_write_back(queue);
+        }
+    } else if ((descriptor.command & TX_DESCRIPTOR_CMD_REPORT_STATUS) &&
+               !(descriptor.command & TX_DESCRIPTOR_CMD_IDE)) {
+        NIC_LOG("q[%u] imidiate", &queue - _tx_queue);
+        tx_write_back();
+    }
+
+    return true;
+}
+
+
+void NIC::trancive()
+{
+    bool more;
+
+    do {
+        more = recive_data();
+        _transceiver.run_timers();
+        more = do_tx(_tx_queue[0]) || more;
+        _transceiver.run_timers();
+        more = do_tx(_tx_queue[1]) || more;
+        _transceiver.run_timers();
+        pthread_yield();
+    } while (more);
 }
 
 
 void NIC::tx_trigger_handler()
 {
-    do_tx(_tx_queue[0]);
-    do_tx(_tx_queue[1]);
+    NIC_LOG("");
+    trancive();
 }
 
 
 void NIC::rx_trigger_handler()
 {
+    NIC_LOG("");
+    trancive();
+}
+
+
+static void ether_addr_to_str(std::string& str, uint8_t* mac)
+{
+    sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+
+static void ether_to_str(std::string& str, uint8_t* buf, uint length)
+{
+    if (length < ETHER_HEADER_LENGTH) {
+        sprintf(str, "bad ether: too short (%u)", length);
+    }
+
+    std::string dest;
+    ether_addr_to_str(dest, buf);
+    std::string source;
+    ether_addr_to_str(source, buf + 6);
+    uint16_t type = ntohs(*(uint16_t*)(buf + 12));
+    std::string type_str;
+    switch (type) {
+    case ETHER_TYPE_IPV6:
+        if (length < ETHER_HEADER_LENGTH + IP6_HEADER_LENGTH ) {
+            type_str = "ERR too short";
+            break;
+        }
+        sprintf(type_str, "IPv6 - payload %u", ntohs(*(uint16_t*)(buf + ETHER_HEADER_LENGTH + 4)));
+        break;
+    case ETHER_TYPE_ARP:
+        sprintf(type_str, "ARP");
+        break;
+    case ETHER_TYPE_VLAN:
+        sprintf(type_str, "VLAN");
+        break;
+    default:
+        type_str = "?";
+    };
+
+    sprintf(str, "length %u dest %s source %s type 0x%02x%02x: %s",
+            length, dest.c_str(), source.c_str(), buf[12], buf[13],
+            type_str.c_str());
+}
+
+
+// broadcast  FF:FF:FF:FF:FF:FF
+// multicast  x1:xx:xx:xx:xx:xx
+//             ^
+//             bit XXXXXXX1b
+
+static const uint8_t ether_broadcast_addr[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+
+static const uint pointer_offset_table[] = {32, 34, 35, 36};
+
+bool NIC::ether_filter(uint8_t* address)
+{
+    if ((address[0] & 1)) {
+        // multicate or broadcast
+
+        if ((_rx_ctrl & NIC_RX_CTRL_PROMISCUOUS_MULTICAST)) {
+            return true;
+        }
+
+        if (memcmp(address, ether_broadcast_addr, ETHER_ADDRESS_LENGTH) == 0 &&
+                                            (_rx_ctrl & NIC_RX_CTRL_ACCEPT_BROADCAST)) {
+            return true;
+        }
+
+        uint pointer_offset = (_rx_ctrl & NIC_RX_CTRL_MULTICAST_OFFSET_MASK);
+        pointer_offset >>= NIC_RX_CTRL_MULTICAST_OFFSET_SHIFT;
+        pointer_offset = pointer_offset_table[pointer_offset];
+        uint pointer = (*(uint64_t*)address >> pointer_offset) & 0xfff;
+
+        return !!(_multicast_table[pointer >> 5] & (1 << (pointer & 0x1f)));
+
+    }
+
+    if ((_rx_ctrl & NIC_RX_CTRL_PROMISCUOUS_UNICAST)) {
+        return true;
+    }
+
+    uint64_t* addr_table = (uint64_t*)_receive_addr_table;
+
+    for (uint i = 0; i < NUM_RECEIVE_ADDR - 1 /*The software device driver can use only
+                                                 entries 0-14. Entry 15 is reserved for
+                                                 manageability firmware usage.*/; i++) {
+        if ((addr_table[i] & (NIC_RECEIVE_ADDR_VALID | NIC_RECEIVE_ADDR_SELECT_MASK)) !=
+                                          (NIC_RECEIVE_ADDR_VALID | NIC_RECEIVE_ADDR_SELECT_DEST)) {
+            continue;
+        }
+
+        if (memcmp(address, addr_table, ETHER_ADDRESS_LENGTH) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+void NIC::push(uint8_t* packet, uint length)
+{
+    Lock lock(_mutex);
+
+    // todo: handle receive filter control register (RFCTL)
+    // todo: handle TCP ACK
+
+    if (!phy_link_is_up() || !(_tx_ctrl & NIC_RX_CTRL_ENABLE)) {
+        return;
+    }
+
+    ++_statistic[STAT_OFFSET_RX_TOTAL_PACKETS];
+    uint64_t* stat_64 = (uint64_t*)&_statistic[STAT_OFFSET_RX_TOTAL_OCTETS_LOW];
+    *stat_64 += length;
+
+    if ((_multi_rq_command & NIC_MULTI_RQ_CMD_ENABLE_MASK) == 1) {
+        debug_unhandled_attention();
+    }
+
+    if (_rx_queue[0].is_empty()) {
+        NIC_LOG("empty")
+        ++_statistic[STAT_OFFSET_RX_MISSED_PACKETS];
+        interrupt(NIC_INT_CAUSE_RX_OVERRUN);
+        return;
+    }
+
+    NIC_LOG("q[%u] head %u private %u tail %u ctrl 0x%x", 0,
+            _rx_queue[0].get_public_head(),
+            _rx_queue[0].get_private_head(),
+            _rx_queue[0].get_tail(),
+            _rx_queue[0].get_descriptor_ctrl());
+
+    if (length + ETHER_CRC_SIZE < NIC_MIN_PACKET_SIZE) {
+        NIC_LOG("bad packet size");
+        ++_statistic[STAT_OFFSET_RX_SIZE_ERR];
+        ++_statistic[STAT_OFFSET_RX_UNDERSIZE];
+        return;
+    }
+
+    if((length + ETHER_CRC_SIZE > NIC_MAX_PACKET_SIZE &&
+                                            !(_rx_ctrl & NIC_RX_CTRL_LONG_PACKET_ENABLE)) ||
+                                            length + ETHER_CRC_SIZE > NIC_MAX_LONG_PACKET_SIZE) {
+        NIC_LOG("bad packet size");
+        ++_statistic[STAT_OFFSET_RX_SIZE_ERR];
+        ++_statistic[STAT_OFFSET_RX_OVERSIZE];
+        return;
+    }
+
+    if (length + ETHER_CRC_SIZE == 64) {
+        ++_statistic[STAT_OFFSET_RX_64];
+    } else if (length + ETHER_CRC_SIZE < 128) {
+        ++_statistic[STAT_OFFSET_RX_128];
+    } else if (length + ETHER_CRC_SIZE < 256) {
+        ++_statistic[STAT_OFFSET_RX_256];
+    } else if (length + ETHER_CRC_SIZE < 512) {
+        ++_statistic[STAT_OFFSET_RX_512];
+    } else if (length + ETHER_CRC_SIZE < 1024) {
+        ++_statistic[STAT_OFFSET_RX_1024];
+    }
+
+    ++_statistic[STAT_OFFSET_RX_GOOD_PACKETS];
+    stat_64 = (uint64_t*)&_statistic[STAT_OFFSET_RX_GOOD_OCTETS_LOW];
+    *stat_64 += length;
+
+    if ((_rx_ctrl & NIC_RX_CTRL_DTYP_MASK) || !(_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN)) {
+        debug_unhandled_attention();
+    }
+
+    //extended Rx descriptor
+
+    if ((_rx_ctrl & NIC_RX_CTRL_VFE)) {
+        debug_unhandled_attention();
+    }
+
+    if ((_rx_ctrl & NIC_RX_CTRL_CFIEN)) {
+        debug_unhandled_attention();
+    }
+
+    if (!(_rx_ctrl & NIC_RX_CTRL_SECRC)) {
+        debug_unhandled_attention();
+    }
+
+    uint buff_size = ((_rx_ctrl & NIC_RX_CTRL_FLXBUF_MASK) >> NIC_RX_CTRL_FLXBUF_SHIFT);
+    if (buff_size) {
+        buff_size = buff_size * KB;
+    }else {
+        buff_size = (_rx_ctrl & NIC_RX_CTRL_BSEX) ? NIC_MAX_LONG_PACKET_SIZE * 2 : 2048;
+        buff_size >>= ((_rx_ctrl & NIC_RX_CTRL_BSIZE_MASK) >> NIC_RX_CTRL_BSIZE_SHIFT);
+    }
+
+    RxExtReadDescriptor read_descriptor;
+    uint64_t descriptor_address = _rx_queue[0].head_address();
+
+    NIC_LOG("q[%u] address  0x%lx base 0x%lx size %u", 0,
+                  descriptor_address,
+                  _rx_queue[0].get_base_address(),
+                  _rx_queue[0].num_items());
+
+    memory_bus->read(descriptor_address, sizeof(read_descriptor), &read_descriptor);
+
+    if (!read_descriptor.address) {
+        debug_unhandled_attention();
+    }
+
+    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(read_descriptor.address, buff_size));
+
+    if (!direct.get()) {
+        debug_unhandled_attention();
+    }
+
+    ASSERT(length <= buff_size);
+
+    memcpy(direct.get()->get_ptr(), packet, length);
+    RxExtWBDescriptor wb_descriptor;
+    wb_descriptor.mrq = 0;
+
+    if ((_rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_PACKET_DISABLE)) {
+        wb_descriptor.rss = 0;
+    } else {
+        uint32_t start = _rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_START_MASK;
+        wb_descriptor.no_rss.packet_checksum = checksum16(packet + start,
+                                                          MAX(0, (int)(length - start)));
+        wb_descriptor.no_rss.ip_identification = 0; // software device driver should ignore this
+                                                    // field when status.IPIDV is not set
+    }
+
+    wb_descriptor.length = length;
+    wb_descriptor.status = RX_DESCRIPTOR_STATUS_DD | RX_DESCRIPTOR_STATUS_EOP;
+    wb_descriptor.vlan = 0;
+
+    memory_bus->write(&wb_descriptor, sizeof(wb_descriptor), descriptor_address);
+    _rx_queue[0].pop();
+
+     NIC_LOG("q[%u] POP head %u private %u tail %u ctrl 0x%x", 0,
+             _rx_queue[0].get_public_head(),
+             _rx_queue[0].get_private_head(),
+             _rx_queue[0].get_tail(),
+             _rx_queue[0].get_descriptor_ctrl());
+
+    uint descriptor_threshold = ((_rx_ctrl & NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_MASK) >>
+                                                        NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_SHIFT) + 1;
+    descriptor_threshold = _rx_queue[0].num_items() >> descriptor_threshold;
+
+    if (_rx_queue[0].get_unused_count() == descriptor_threshold) {
+        NIC_LOG("descriptor threshold hit");
+        rx_write_back(NIC_INT_CAUSE_RX_DESCRIPTOR_THRESHOLD);
+    } else if (!_rx_timer.private_delay_val()){
+        NIC_LOG("q[%u] imidiate wb", 0);
+        rx_write_back(NIC_INT_CAUSE_RX_TIMER);
+    } else {
+        NIC_LOG("q[%u] set timers", 0);
+        _rx_timer.arm();
+    }
+}
+
+
+void NIC::drop(uint8_t *buf, ssize_t n)
+{
+#ifndef DO_NIC_LOG
+    std::string str;
+    ether_to_str(str, buf, n);
+    D_MESSAGE("%s", str.c_str());
+#else
+    D_MESSAGE("");
+#endif
+}
+
+
+bool NIC::recive_data()
+{
+    ssize_t n = read(_interface.get(), _in_buf, sizeof(_in_buf));
+
+    if (n == -1) {
+        if (errno == EAGAIN) {
+            return false;
+        }
+
+        E_MESSAGE("%s (%d)", strerror(errno), errno);
+        debug_unhandled_attention();
+        return false;
+    }
+
+#ifdef DO_NIC_LOG
+    std::string str;
+    ether_to_str(str, _in_buf, n);
+    D_MESSAGE("%s", str.c_str());
+#endif
+    if (!ether_filter(_in_buf)) {
+        drop(_in_buf, n);
+    } else {
+        push(_in_buf, n);
+    }
+
+    return true;
 }
 
 
 void NIC::interface_event_handler()
 {
-    uint8_t buf[1024];
-
-    D_MESSAGE("");
-
-    for (;;) {
-        ssize_t n = read(_interface.get(), buf, sizeof(buf));
-
-        if (n == -1) {
-            if (errno == EAGAIN) {
-                return;
-            }
-            W_MESSAGE("%s (%d)", strerror(errno), errno);
-        } else {
-            D_MESSAGE("n=%lu", n);
-        }
-    }
+    trancive();
 }
 
 
@@ -886,6 +1712,9 @@ void NIC::init_eeprom()
 
 void NIC::common_reset()
 {
+    _tx_timer.reset();
+    _rx_timer.reset();
+
     _int_cause = 0;
     _int_throttling = 0;
     _int_mask = 0;
@@ -902,21 +1731,19 @@ void NIC::common_reset()
     memset(_rx_rss_key, 0, sizeof(_rx_rss_key));
     _multi_rq_command = 0;
     _rx_filter_ctrl = 0;
-    _rx_int_delay_timer = 0;
-    _rx_int_abs_delay_timer = 0;
 
     _tx_ctrl = NIC_TX_CTRL_PAD_SHORT | NIC_TX_CTRL_MULTI_REQ |
                (NIC_TX_CTRL_RR_THRESH_INIT_VAL << NIC_TX_CTRL_RR_THRESH_SHIFT);
-    _tx_descriptor_ctrl_1 = _tx_descriptor_ctrl_0 = NIC_TX_DESCRIPTOR_CTRL_SET;
     _tx_arbitration_count_1 = _tx_arbitration_count_0 = NIC_TX_ARBITRATION_COUNT_INIT_COUNT |
                                                         NIC_TX_ARBITRATION_COUNT_ENABLE;
-    _tx_int_delay_val = 0;
-    _tx_int_abs_delay_val = 0;
 
     _tx_queue[0].reset(NIC_INT_CAUSE_TxQ0_WRITTEN_BACK);
     _tx_queue[1].reset(NIC_INT_CAUSE_TxQ1_WRITTEN_BACK);
     _rx_queue[0].reset(NIC_INT_CAUSE_RxQ0_WRITTEN_BACK);
     _rx_queue[1].reset(NIC_INT_CAUSE_RxQ1_WRITTEN_BACK);
+
+    memset(&_offload_context, 0, sizeof(_offload_context));
+    memset(&_seg_context, 0, sizeof(_seg_context));
 
     _rom_read = 0;
 
@@ -956,6 +1783,10 @@ void NIC::reset()
                    NIC_3GIO_CTRL_1_ADJUSTMENT;
     _3gio_ctrl_2 = 0;
     _soft_sem = 0;
+    _receive_addr_table[(NUM_RECEIVE_ADDR - 1) * 2] = 0;
+    _receive_addr_table[(NUM_RECEIVE_ADDR - 1) * 2 + 1] = 0;
+
+    memset(_statistic, 0, sizeof(_statistic));
 
     nv_load();
 
@@ -1078,14 +1909,14 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
     length = length >> 2;
 
     for (; length--; dest_32++, src += 4) {
-        NIC_TRACE("read 0x%x", src);
+        NIC_LOG("read 0x%x", src);
 
         Lock lock(_mutex);
 
         switch (src) {
         case NIC_REG_INT_CAUSE_READ:
             *dest_32 = _int_cause;
-            D_MESSAGE("INT_CAUSE_READ 0x%x", _int_cause);
+            NIC_LOG("INT_CAUSE_READ 0x%x", _int_cause);
 
             if (_int_mask == 0) {
                 _int_cause = 0;
@@ -1104,13 +1935,13 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             break;
         case NIC_REG_STATUS:
             *dest_32 = _status;
-            NIC_TRACE("STATUS 0x%x", _status);
+            NIC_LOG("STATUS 0x%x", _status);
             break;
         case NIC_REG_TX_DESCRIPTOR_HEAD_0:
-            *dest_32 = _tx_queue[0].get_head();
+            *dest_32 = _tx_queue[0].get_public_head();
             break;
         case NIC_REG_TX_DESCRIPTOR_HEAD_1:
-            *dest_32 = _tx_queue[1].get_head();
+            *dest_32 = _tx_queue[1].get_public_head();
             break;
         case NIC_REG_TX_DESCRIPTOR_TAIL_0:
             *dest_32 = _tx_queue[0].get_tail();
@@ -1163,10 +1994,10 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             *dest_32 = _wakeup_filter;
             break;
         case NIC_REG_TX_DESCRIPTOR_CTRL_0:
-            *dest_32 = _tx_descriptor_ctrl_0;
+            *dest_32 = _tx_queue[0].get_descriptor_ctrl();
             break;
         case NIC_REG_TX_DESCRIPTOR_CTRL_1:
-            *dest_32 = _tx_descriptor_ctrl_1;
+            *dest_32 = _tx_queue[1].get_descriptor_ctrl();
             break;
         case NIC_REG_TX_ARBITRATION_COUNT_0:
             *dest_32 = _tx_arbitration_count_0;
@@ -1206,8 +2037,7 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             *dest_32 = _time_sync_rx_ctrl;
             break;
         case NIC_REG_STAT_START ... NIC_REG_STAT_END:
-            NIC_TRACE("NIC_REG_STAT_START 0x%lx", src);
-            *dest_32 = 0;
+            *dest_32 = _statistic[(src - NIC_REG_STAT_START) >> 2];
             break;
         case NIC_REG_TIME_SYNC_MESS_TYPE:
             *dest_32 = _time_sync_mess_type;
@@ -1255,6 +2085,11 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
         case NIC_REG_INT_AUTO_MASK:
             *dest_32 = _auto_mask;
             break;
+        case NIC_REG_STAT_END + 4 ... 0x4124: /* linux driver read statistic that is not defined
+                                                 (acording to spec) for 82574
+                                              */
+            *dest_32 = 0;
+            break;
         default:
             W_MESSAGE("unhandled 0x%lx", src);
             *dest_32 = 0;
@@ -1270,10 +2105,10 @@ inline void NIC::update_interrupt_level()
 
     if (level) {
         _int_cause |= NIC_INT_CAUSE_READ_ASSERTED;
-        D_MESSAGE("set trigger 0x%x cause 0x%x mask 0x%x", level, _int_cause, _int_mask);
+        NIC_LOG("set trigger 0x%x cause 0x%x mask 0x%x", level, _int_cause, _int_mask);
     } else {
         _int_cause &= ~NIC_INT_CAUSE_READ_ASSERTED;
-        D_MESSAGE("clear cause 0x%x mask 0x%x", _int_cause, _int_mask);
+        NIC_LOG("clear cause 0x%x mask 0x%x", _int_cause, _int_mask);
     }
 
     set_interrupt_level(level);
@@ -1284,6 +2119,58 @@ inline void NIC::interrupt(uint32_t cause)
 {
     _int_cause |= cause;
     update_interrupt_level();
+}
+
+
+void NIC::phy_reset_interface(const char* interface_name)
+{
+    // tunctl -p -u <user> -g <group> -t tap0
+    // ifconfig tap0 up
+    // brctl addif br0 tap0
+
+    try {
+        if (_interface_event) {
+            _interface_event->destroy();
+            _interface_event = NULL;
+        }
+
+        _interface.reset(-1);
+
+        if (!is_phy_power_up()) {
+            return;
+        }
+
+        AutoFD tun(open("/dev/net/tun", O_RDWR | O_NONBLOCK ));
+
+        if (!tun.is_valid()) {
+            int err = errno;
+            W_MESSAGE("opne tun failed  %d %s", err, strerror(err));
+            return;
+        }
+
+        struct ifreq ifr;
+
+        memset(&ifr, 0, sizeof(ifr));
+        ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+        strncpy(ifr.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ);
+
+        if (ioctl(tun.get(), TUNSETIFF, &ifr) < 0){
+            int err = errno;
+            W_MESSAGE("TUNSETIFF failed  %d %s", err, strerror(err));
+            return;
+        }
+
+        I_MESSAGE("net intrface is %s", ifr.ifr_ifrn.ifrn_name);
+
+        _interface_event = _transceiver.create_fd_event(tun.get(),
+                                                     (void_callback_t)&NIC::interface_event_handler,
+                                                     this);
+        _interface.reset(tun.release());
+    } catch (Exception& e) {
+        W_MESSAGE("%s", e.what());
+    } catch (...) {
+        W_MESSAGE("unknown exeption");
+    };
 }
 
 
@@ -1299,7 +2186,7 @@ void NIC::phy_reset_common()
 
 void NIC::phy_update_link_state()
 {
-    if (_link) {
+    if (phy_link_is_up()) {
         _phy_status |= PHY_STATUS_LINK_UP;
         _phy_1000_status |= PHY_1000_STATUS_LOCAL_RECEIVER_OPERATIONAL |
                             PHY_1000_STATUS_REMOTE_RECEIVER_OPERATIONAL;
@@ -1347,6 +2234,7 @@ void NIC::phy_reset()
 
     _status |= NIC_STATUS_PHYRA;
 
+    phy_reset_interface("tap0");
     phy_update_link_state();
     auto_negotiation();
 }
@@ -1387,6 +2275,7 @@ void NIC::phy_soft_reset()
     _phy_0_copper_status_1 &= PHY_P0_COPPER_STATUS_1_MSI_CROSSOVER;
     _phy_0_oem_bits &= (PHY_P0_OEM_BITS_GBE_DISABLE | PHY_P0_OEM_BITS_LPLU);
 
+    phy_reset_interface("tap0");
     phy_update_link_state();
 
     if (is_auto_negotiation()) {
@@ -1476,7 +2365,7 @@ void NIC::auto_negotiation()
 
     _phy_status |= PHY_STATUS_AUTO_NEGO_COMPLETE;
 
-    if (!_link) {
+    if (!phy_link_is_up()) {
         _phy_partner_ability = 0;
         _phy_1000_status &= ~(PHY_1000_STATUS_PARTNER_CAPABLE_1000FD |
                               PHY_1000_STATUS_PARTNER_CAPABLE_1000HD);
@@ -1543,7 +2432,7 @@ void NIC::mdi_write_common(uint reg)
     switch (reg) {
     case PHY_REG_PAGE:
         _phy_page = (_mdi_ctrl & 0xff);
-        NIC_TRACE("page %u", _phy_page);
+        NIC_LOG("page %u", _phy_page);
         break;
     case PHY_REG_CTRL:
         _phy_ctrl = _mdi_ctrl & ~PHY_CTRL_RESERVED;
@@ -1641,7 +2530,7 @@ void NIC::mdi_page0_write(uint reg)
 
 void NIC::mdi_write(uint reg)
 {
-    NIC_TRACE("%u", reg);
+    NIC_LOG("%u", reg);
 
     switch (_phy_page) {
     case 0:
@@ -1738,7 +2627,7 @@ void NIC::mdi_page0_read(uint reg)
 
 void NIC::mdi_read(uint reg)
 {
-    NIC_TRACE("%u", reg);
+    NIC_LOG("%u", reg);
 
     switch (_phy_page) {
     case 0:
@@ -1789,16 +2678,18 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
     length = length / 4;
 
     for (; length--; src_32++, dest += 4) {
-        NIC_TRACE("csr write 0x%x  0x%x", dest, *src_32);
+        NIC_LOG("csr write 0x%x  0x%x", dest, *src_32);
 
         Lock lock(_mutex);
 
         switch (dest) {
         case NIC_REG_INT_MASK_CLEAR:
+            NIC_LOG("NIC_REG_INT_MASK_CLEAR 0x%x", *src_32);
             _int_mask &= ~*src_32;
             update_interrupt_level();
             break;
         case NIC_REG_INT_MASK_SET:
+            NIC_LOG("NIC_REG_INT_MASK_SET 0x%x", *src_32);
             _int_mask = *src_32 & NIC_INT_MASK_SET_MASK;
             update_interrupt_level();
             break;
@@ -1846,7 +2737,6 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
                                                                   NIC_MDI_CTRL_OP_SHIFT, _mdi_ctrl);
                 debug_attention();
             }
-
             break;
         }
         case NIC_REG_CTRL:
@@ -1874,18 +2764,36 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
 
             break;
         case NIC_REG_RX_CTRL:
+            if ((_rx_ctrl & NIC_RX_CTRL_ENABLE) != (*src_32 & NIC_RX_CTRL_ENABLE)) {
+                if ((*src_32 & NIC_RX_CTRL_ENABLE)) {
+                    NIC_LOG("start RX");
+                    _rx_queue[0].begin();
+                    _rx_queue[1].begin();
+                } else {
+                    NIC_LOG("stop RX");
+                    rx_write_back(0);
+                }
+            }
             _rx_ctrl = *src_32 & ~NIC_RX_CTRL_RESERVED;
 
             if ((_rx_ctrl & NIC_RX_CTRL_ENABLE)) {
-                D_MESSAGE("NIC_RX_CTRL_ENABLE");
                 rx_trigger();
             }
             break;
         case NIC_REG_TX_CTRL:
+            if ((_tx_ctrl & NIC_TX_CTRL_ENABLE) != (*src_32 & NIC_TX_CTRL_ENABLE)) {
+                if ((*src_32 & NIC_TX_CTRL_ENABLE)) {
+                    NIC_LOG("start TX");
+                    _tx_queue[0].begin();
+                    _tx_queue[1].begin();
+                } else {
+                    NIC_LOG("stop TX");
+                    tx_write_back();
+                }
+            }
             _tx_ctrl = *src_32 & ~NIC_TX_CTRL_RESERVED;
 
             if ((_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
-                D_MESSAGE("NIC_TX_CTRL_ENABLE");
                 tx_trigger();
             }
             break;
@@ -1905,7 +2813,7 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
                     _rom_read |= NIC_EEPROM_READ_DONE;
                 }
 
-                NIC_TRACE("rom read: address 0x%x val 0x%x", address, _rom_read >> 16);
+                NIC_LOG("rom read: address 0x%x val 0x%x", address, _rom_read >> 16);
             }
             break;
         case NIC_REG_PACKET_BUFF_ALLOC: {
@@ -1937,14 +2845,17 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
         }
         case NIC_REG_INT_CAUSE_READ:
             _int_cause &= ~*src_32;
+            NIC_LOG("NIC_REG_INT_CAUSE_READ 0x%x", *src_32);
             update_interrupt_level();
             break;
         case NIC_REG_INT_CAUSE_SET:
             _int_cause |= *src_32 & NIC_INT_CAUSE_SET_MASK;
+            NIC_LOG("NIC_REG_INT_CAUSE_SET 0x%x", *src_32);
             update_interrupt_level();
             break;
         case NIC_REG_INT_AUTO_MASK:
             _auto_mask = *src_32 & NIC_INT_AUTO_MASK_MASK;
+            NIC_LOG("NIC_REG_INT_AUTO_MASK 0x%x 0x%x", *src_32, *src_32 & NIC_INT_AUTO_MASK_MASK);
             break;
         case NIC_REG_EXT_CTRL:
             _ext_ctrl = *src_32 & ~(NIC_EXT_CTRL_RESERVED | NIC_EXT_CTRL_EEPROM_RESET |
@@ -1966,12 +2877,16 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             _wakeup_filter = *src_32 & ~NIC_WAKEUP_FILTER_RESERVED;
             break;
         case NIC_REG_RX_DESCRIPTOR_ADDRESS_LOW_0:
+            _rx_queue[0].set_addr_low(*src_32);
+            break;
         case NIC_REG_RX_DESCRIPTOR_ADDRESS_LOW_1:
-            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_ADDRESS_LOW_0) >> 8].set_addr_low(*src_32);
+            _rx_queue[1].set_addr_low(*src_32);
             break;
         case NIC_REG_RX_DESCRIPTOR_ADDRESS_HIGH_0:
+            _rx_queue[0].set_addr_high(*src_32);
+            break;
         case NIC_REG_RX_DESCRIPTOR_ADDRESS_HIGH_1:
-            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_ADDRESS_HIGH_0) >> 8].set_addr_high(*src_32);
+            _rx_queue[1].set_addr_high(*src_32);
             break;
         case NIC_REG_RX_DESCRIPTOR_LENGTH_0:
         case NIC_REG_RX_DESCRIPTOR_LENGTH_1:
@@ -1980,44 +2895,45 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
              break;
         case NIC_REG_RX_DESCRIPTOR_HEAD_0:
         case NIC_REG_RX_DESCRIPTOR_HEAD_1:
-            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_HEAD_0) >> 8].set_head(*src_32 & 0xffff);
+            NIC_LOG("rx[%u] head %u q items is %u",
+                      (dest - NIC_REG_RX_DESCRIPTOR_HEAD_0) >> 8,
+                      *src_32 & 0xffff,
+                      _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_HEAD_0) >> 8].num_items());
+            _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_HEAD_0) >> 8].set_public_head(*src_32 & 0xffff);
             break;
         case NIC_REG_RX_DESCRIPTOR_TAIL_0:
         case NIC_REG_RX_DESCRIPTOR_TAIL_1:
+            NIC_LOG("rx[%u] tail %u q items is %u",
+                      (dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8,
+                      *src_32 & 0xffff,
+                      _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8].num_items());
             _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8].set_tail(*src_32 & 0xffff);
             rx_trigger();
             break;
-        case NIC_REG_RX_INT_DELAY_TIMER:
-            _rx_int_delay_timer = *src_32 & 0xffff;
+        case NIC_REG_RX_INT_DELAY_VAL:
+           _rx_timer.set_val(*src_32);
 
-            if (_rx_int_delay_timer) {
-                D_MESSAGE("NIC_REG_RX_INT_DELAY_TIMER");
-                debug_attention();
-            }
+            NIC_LOG("NIC_REG_RX_INT_DELAY_VAL %u", *src_32 & 0xffff);
 
-            if (*src_32 & ~(1 << 31)) {
-                D_MESSAGE("NIC_REG_RX_INT_DELAY_TIMER: immediate expiration of the timer");
-                debug_attention();
+            if (*src_32 & (1 << 31)) {
+                NIC_LOG("NIC_REG_RX_INT_DELAY_TIMER: now");
+                rx_write_back(NIC_INT_CAUSE_RX_TIMER);
             }
             break;
-        case NIC_REG_RX_INT_ABS_DELAY_TIMER:
-            _rx_int_abs_delay_timer = *src_32 & 0xffff;
-
-            if (_rx_int_abs_delay_timer) {
-                D_MESSAGE("NIC_REG_RX_INT_ABS_DELAY_TIMER");
-                debug_attention();
-            }
-
+        case NIC_REG_RX_INT_ABS_DELAY_VAL:
+            NIC_LOG("NIC_REG_RX_INT_ABS_DELAY_VAL");
+            _rx_timer.set_abs_val(*src_32);
             break;
         case NIC_REG_TX_DESCRIPTOR_CTRL_0:
-            _tx_descriptor_ctrl_0 = combine32(_tx_descriptor_ctrl_0,
+            NIC_LOG("NIC_REG_TX_DESCRIPTOR_CTRL_0: %u", *src_32);
+            _tx_queue[0].set_descriptor_ctrl(combine32(_tx_queue[0].get_descriptor_ctrl(),
                                               ~NIC_TX_DESCRIPTOR_CTRL_RESERVED,
-                                              *src_32);
+                                              *src_32));
             break;
         case NIC_REG_TX_DESCRIPTOR_CTRL_1:
-            _tx_descriptor_ctrl_1 = combine32(_tx_descriptor_ctrl_1,
+            _tx_queue[1].set_descriptor_ctrl(combine32(_tx_queue[1].get_descriptor_ctrl(),
                                               ~NIC_TX_DESCRIPTOR_CTRL_RESERVED,
-                                              *src_32);
+                                              *src_32));
             break;
         case NIC_REG_TX_ARBITRATION_COUNT_0:
             _tx_arbitration_count_0 = *src_32 & ~NIC_TX_ARBITRATION_COUNT_RESERVED;
@@ -2040,34 +2956,34 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
              break;
         case NIC_REG_TX_DESCRIPTOR_HEAD_0:
         case NIC_REG_TX_DESCRIPTOR_HEAD_1:
-            _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_HEAD_0) >> 8].set_head(*src_32 & 0xffff);
+            NIC_LOG("tx[%u] head is %u q items is %u",
+                      (dest - NIC_REG_TX_DESCRIPTOR_HEAD_0) >> 8,
+                      *src_32 & 0xffff,
+                      _rx_queue[(dest - NIC_REG_TX_DESCRIPTOR_HEAD_0) >> 8].num_items());
+            _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_HEAD_0) >> 8].set_public_head(*src_32 & 0xffff);
             break;
         case NIC_REG_TX_DESCRIPTOR_TAIL_0:
         case NIC_REG_TX_DESCRIPTOR_TAIL_1:
+            NIC_LOG("tx[%u] tail is %u q items is %u",
+                      (dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8,
+                      *src_32 & 0xffff,
+                      _rx_queue[(dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8].num_items());
             _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8].set_tail(*src_32 & 0xffff);
             tx_trigger();
             break;
         case NIC_REG_TX_INT_DELAY_VAL:
-            _tx_int_delay_val = *src_32 & 0xffff;
+            _tx_timer.set_val(*src_32);
 
-            if (_tx_int_delay_val) {
-                D_MESSAGE("NIC_REG_TX_INT_DELAY_VAL");
-                debug_attention();
-            }
+            NIC_LOG("NIC_REG_TX_INT_DELAY_VAL %u", *src_32 & 0xffff)
 
-            if (*src_32 & ~(1 << 31)) {
-                D_MESSAGE("NIC_REG_TX_INT_DELAY_VAL: immediate expiration of the timer");
-                debug_attention();
+            if (*src_32 & (1 << 31)) {
+                NIC_LOG("NIC_REG_TX_INT_DELAY_VAL: now");
+                tx_write_back();
             }
             break;
         case NIC_REG_TX_INT_ABS_DELAY_VAL:
-            _tx_int_abs_delay_val = *src_32 & 0xffff;
-
-            if (_tx_int_abs_delay_val) {
-               D_MESSAGE("NIC_REG_TX_INT_DELAY_VAL");
-                debug_attention();
-            }
-
+            _tx_timer.set_abs_val(*src_32);
+            NIC_LOG("NIC_REG_TX_INT_DELAY_VAL %u", *src_32 & 0xffff);
             break;
         case NIC_REG_RX_CHECKSUM_CTRL:
             _rx_checksum_ctrl = *src_32 & ~NIC_RX_CHECKSUM_RESERVED;
@@ -2105,7 +3021,7 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             _rx_rss_key[(dest - NIC_REG_RX_RSS_KEY_START) >> 2] = *src_32;
             break;
         case NIC_REG_RX_FILTER_CTRL:
-            _rx_filter_ctrl = *src_32 & ~NIC_RX_FILTER_CTRL_MASK;
+            _rx_filter_ctrl = *src_32 & ~NIC_RX_FILTER_CTRL_RESERVED;
             break;
         case NIC_REG_RX_DESCRIPTOR_CTRL_0:
         case NIC_REG_RX_DESCRIPTOR_CTRL_1:

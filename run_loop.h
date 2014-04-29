@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -138,6 +138,7 @@ private:
 
     friend class EpollEvent;
     friend class IntervalTimer;
+    friend class NIC; // temporarily in order to give NIC::trancive() access to run_timers()
 };
 
 
