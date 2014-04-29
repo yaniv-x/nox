@@ -361,19 +361,39 @@ enum {
 enum {
     STAT_OFFSET_RX_MISSED_PACKETS = 0x10 / 4,
     STAT_OFFSET_RX_SIZE_ERR = 0x40 / 4,
+    STAT_OFFSET_RX_FCRUC = 0x58 / 4,
     STAT_OFFSET_RX_64 = 0x5c / 4,
     STAT_OFFSET_RX_128 = 0x60 / 4,
     STAT_OFFSET_RX_256 = 0x64 / 4,
     STAT_OFFSET_RX_512 = 0x68 / 4,
     STAT_OFFSET_RX_1024 = 0x6c / 4,
+    STAT_OFFSET_RX_ABOVE = 0x70 / 4,
     STAT_OFFSET_RX_GOOD_PACKETS = 0x74 / 4,
     STAT_OFFSET_RX_BROADCAST = 0x78 / 4,
     STAT_OFFSET_RX_MULTICAST = 0x7c / 4,
+    STAT_OFFSET_TX_GOOD_PACKETS = 0x80 / 4,
     STAT_OFFSET_RX_GOOD_OCTETS_LOW = 0x88 / 4,
+    STAT_OFFSET_RX_GOOD_OCTETS_HIGH = STAT_OFFSET_RX_GOOD_OCTETS_LOW + 1,
+    STAT_OFFSET_TX_GOOD_OCTETS_LOW = 0x90 / 4,
+    STAT_OFFSET_TX_GOOD_OCTETS_HIGH = STAT_OFFSET_TX_GOOD_OCTETS_LOW + 1,
     STAT_OFFSET_RX_UNDERSIZE = 0xa4 / 4,
     STAT_OFFSET_RX_OVERSIZE = 0xac / 4,
     STAT_OFFSET_RX_TOTAL_OCTETS_LOW = 0xc0 / 4,
+    STAT_OFFSET_RX_TOTAL_OCTETS_HIGH = STAT_OFFSET_RX_TOTAL_OCTETS_LOW + 1,
+    STAT_OFFSET_TX_TOTAL_OCTETS_LOW = 0xc8 / 4,
+    STAT_OFFSET_TX_TOTAL_OCTETS_HIGH = STAT_OFFSET_TX_TOTAL_OCTETS_LOW + 1,
     STAT_OFFSET_RX_TOTAL_PACKETS = 0xd0 / 4,
+    STAT_OFFSET_TX_TOTAL_PACKETS = 0xd4 / 4,
+    STAT_OFFSET_TX_64 = 0xd8 / 4,
+    STAT_OFFSET_TX_128 = 0xdc / 4,
+    STAT_OFFSET_TX_256 = 0xe0 / 4,
+    STAT_OFFSET_TX_512 = 0xe4 / 4,
+    STAT_OFFSET_TX_1024 = 0xe8 / 4,
+    STAT_OFFSET_TX_ABOVE = 0xec / 4,
+    STAT_OFFSET_TX_MULTICAST = 0xf0 / 4,
+    STAT_OFFSET_TX_BROADCAST = 0xf4 / 4,
+    STAT_OFFSET_TX_TCP_SEG_FAILED = 0xfc / 4,
+    STAT_OFFSET_INTERRUPT_ASSERTION =  0x100 / 4,
 };
 
 
@@ -599,6 +619,14 @@ enum {
     TR_CMD_QUIT,
 };
 
+
+enum {
+    STAT_CTRL_CLEAR_ON_READ = (1 << 0),
+    STAT_CTRL_HIGH_PART = (1 << 1),
+    STAT_CTRL_WRITABLE = (1 << 2),
+};
+
+
 typedef struct __attribute__ ((__packed__)) CommonTxDescriptor {
     uint8_t specific_0[11];
     uint8_t command;
@@ -697,6 +725,7 @@ enum {
 };
 
 
+static const uint8_t ether_broadcast_addr[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 static const uint8_t mac_address[] = { 0x02, 0xf1, 0xf2, 0xf3, 0xf4, 0xff};
 
 
@@ -883,11 +912,12 @@ NIC::NIC(NoxVM& nox)
                   (io_read_dword_proc_t)&NIC::io_read_dword,
                   (io_write_dword_proc_t)&NIC::io_write_dword);
 
-    pci_bus->add_device(*this);
-
+    init_statistic_ctrl();
     init_eeprom();
 
     tr_wait(TR_WAITING);
+
+    pci_bus->add_device(*this);
 }
 
 
@@ -905,6 +935,32 @@ NIC::~NIC()
     if (_interface_event) {
         _interface_event->destroy();
     }
+}
+
+
+static void fix_64bit_stat_ctrl(uint8_t* ctrl, uint offset)
+{
+    ctrl[offset] &= ~STAT_CTRL_CLEAR_ON_READ;
+    ctrl[offset + 1] |= STAT_CTRL_HIGH_PART;
+}
+
+
+void NIC::init_statistic_ctrl()
+{
+    memset(_statistic_ctrl, STAT_CTRL_CLEAR_ON_READ, sizeof(_statistic_ctrl));
+
+    for (int i = STAT_OFFSET_RX_FCRUC; i <= STAT_OFFSET_RX_ABOVE; i++) {
+        _statistic_ctrl[i] |= STAT_CTRL_WRITABLE;
+    }
+
+    for (int i = STAT_OFFSET_TX_TOTAL_OCTETS_LOW; i <= STAT_OFFSET_TX_TCP_SEG_FAILED; i++) {
+        _statistic_ctrl[i] |= STAT_CTRL_WRITABLE;
+    }
+
+    fix_64bit_stat_ctrl(_statistic_ctrl, STAT_OFFSET_RX_GOOD_OCTETS_LOW);
+    fix_64bit_stat_ctrl(_statistic_ctrl, STAT_OFFSET_TX_GOOD_OCTETS_LOW);
+    fix_64bit_stat_ctrl(_statistic_ctrl, STAT_OFFSET_RX_TOTAL_OCTETS_LOW);
+    fix_64bit_stat_ctrl(_statistic_ctrl, STAT_OFFSET_TX_TOTAL_OCTETS_LOW);
 }
 
 
@@ -1054,6 +1110,37 @@ void NIC::rx_timer_handler()
 }
 
 
+void NIC::update_tx_stat(uint8_t* dest, uint length)
+{
+    if (length == 64) {
+        stat32_inc(STAT_OFFSET_TX_64);
+    } else if (length < 128) {
+        stat32_inc(STAT_OFFSET_TX_128);
+    } else if (length < 256) {
+        stat32_inc(STAT_OFFSET_TX_256);
+    } else if (length < 512) {
+        stat32_inc(STAT_OFFSET_TX_512);
+    } else if (length < 1024) {
+        stat32_inc(STAT_OFFSET_TX_1024);
+    } else  {
+        stat32_inc(STAT_OFFSET_TX_ABOVE);
+    }
+
+    if (dest[0] & 1) {
+        stat32_inc(STAT_OFFSET_TX_MULTICAST);
+
+        if (memcmp(dest, ether_broadcast_addr, ETHER_ADDRESS_LENGTH) == 0) {
+            stat32_inc(STAT_OFFSET_TX_BROADCAST);
+        }
+    }
+
+    stat32_inc(STAT_OFFSET_TX_GOOD_PACKETS);
+    stat64_add(STAT_OFFSET_TX_GOOD_OCTETS_LOW, length);
+    stat32_inc(STAT_OFFSET_TX_TOTAL_PACKETS);
+    stat64_add(STAT_OFFSET_TX_TOTAL_OCTETS_LOW, length);
+}
+
+
 inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
 {
     if (!descriptor.address || !descriptor.length) {
@@ -1068,6 +1155,7 @@ inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
     }
 
     uint8_t *buf = direct->get_ptr();
+    uint8_t *dest = buf;
 
     if (!(descriptor.command & TX_DESCRIPTOR_END_OF_PACKET)) {
         debug_unhandled_attention();
@@ -1092,6 +1180,8 @@ inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
     if (write(_interface.get(), buf, descriptor.length) != descriptor.length) {
         debug_unhandled_attention();
     }
+
+    update_tx_stat(dest, descriptor.length + ETHER_CRC_SIZE);
 }
 
 
@@ -1182,6 +1272,7 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
     }
 
     uint8_t *buf = direct->get_ptr();
+    uint8_t *dest = buf;
 
     uint32_t ipfix = (descriptor.packet_opt & TX_DESCRIPTOR_POPTS_IXSM) ?
                                 insert_cheacksum(_offload_context.ipcso, _offload_context.ipcss,
@@ -1197,6 +1288,8 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
 
     if (n != length) {
         debug_unhandled_attention();
+    } else {
+        update_tx_stat(dest, length + ETHER_CRC_SIZE);
     }
 }
 
@@ -1365,8 +1458,6 @@ static void ether_to_str(std::string& str, uint8_t* buf, uint length)
 //             ^
 //             bit XXXXXXX1b
 
-static const uint8_t ether_broadcast_addr[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-
 static const uint pointer_offset_table[] = {32, 34, 35, 36};
 
 bool NIC::ether_filter(uint8_t* address)
@@ -1414,6 +1505,26 @@ bool NIC::ether_filter(uint8_t* address)
     return false;
 }
 
+inline void NIC::stat32_inc(uint index)
+{
+    if (_statistic[index] == ~0) {
+        return;
+    }
+
+    ++_statistic[index];
+}
+
+
+inline void NIC::stat64_add(uint index, uint64_t val)
+{
+    if (_statistic[index] == ~0ULL) {
+        return;
+    }
+
+    uint64_t* stat_64 = (uint64_t*)&_statistic[index];
+    *stat_64 += val;
+}
+
 
 void NIC::push(uint8_t* packet, uint length)
 {
@@ -1426,17 +1537,16 @@ void NIC::push(uint8_t* packet, uint length)
         return;
     }
 
-    ++_statistic[STAT_OFFSET_RX_TOTAL_PACKETS];
-    uint64_t* stat_64 = (uint64_t*)&_statistic[STAT_OFFSET_RX_TOTAL_OCTETS_LOW];
-    *stat_64 += length;
+    stat32_inc(STAT_OFFSET_RX_TOTAL_PACKETS);
+    stat64_add(STAT_OFFSET_RX_TOTAL_OCTETS_LOW, length + ETHER_CRC_SIZE);
 
     if ((_multi_rq_command & NIC_MULTI_RQ_CMD_ENABLE_MASK) == 1) {
         debug_unhandled_attention();
     }
 
     if (_rx_queue[0].is_empty()) {
-        NIC_LOG("empty")
-        ++_statistic[STAT_OFFSET_RX_MISSED_PACKETS];
+        NIC_LOG("empty");
+        stat32_inc(STAT_OFFSET_RX_MISSED_PACKETS);
         interrupt(NIC_INT_CAUSE_RX_OVERRUN);
         return;
     }
@@ -1449,8 +1559,8 @@ void NIC::push(uint8_t* packet, uint length)
 
     if (length + ETHER_CRC_SIZE < NIC_MIN_PACKET_SIZE) {
         NIC_LOG("bad packet size");
-        ++_statistic[STAT_OFFSET_RX_SIZE_ERR];
-        ++_statistic[STAT_OFFSET_RX_UNDERSIZE];
+        stat32_inc(STAT_OFFSET_RX_SIZE_ERR);
+        stat32_inc(STAT_OFFSET_RX_UNDERSIZE);
         return;
     }
 
@@ -1458,26 +1568,27 @@ void NIC::push(uint8_t* packet, uint length)
                                             !(_rx_ctrl & NIC_RX_CTRL_LONG_PACKET_ENABLE)) ||
                                             length + ETHER_CRC_SIZE > NIC_MAX_LONG_PACKET_SIZE) {
         NIC_LOG("bad packet size");
-        ++_statistic[STAT_OFFSET_RX_SIZE_ERR];
-        ++_statistic[STAT_OFFSET_RX_OVERSIZE];
+        stat32_inc(STAT_OFFSET_RX_SIZE_ERR);
+        stat32_inc(STAT_OFFSET_RX_OVERSIZE);
         return;
     }
 
     if (length + ETHER_CRC_SIZE == 64) {
-        ++_statistic[STAT_OFFSET_RX_64];
+        stat32_inc(STAT_OFFSET_RX_64);
     } else if (length + ETHER_CRC_SIZE < 128) {
-        ++_statistic[STAT_OFFSET_RX_128];
+        stat32_inc(STAT_OFFSET_RX_128);
     } else if (length + ETHER_CRC_SIZE < 256) {
-        ++_statistic[STAT_OFFSET_RX_256];
+        stat32_inc(STAT_OFFSET_RX_256);
     } else if (length + ETHER_CRC_SIZE < 512) {
-        ++_statistic[STAT_OFFSET_RX_512];
+        stat32_inc(STAT_OFFSET_RX_512);
     } else if (length + ETHER_CRC_SIZE < 1024) {
-        ++_statistic[STAT_OFFSET_RX_1024];
+        stat32_inc(STAT_OFFSET_RX_1024);
+    } else {
+         stat32_inc(STAT_OFFSET_RX_ABOVE);
     }
 
-    ++_statistic[STAT_OFFSET_RX_GOOD_PACKETS];
-    stat_64 = (uint64_t*)&_statistic[STAT_OFFSET_RX_GOOD_OCTETS_LOW];
-    *stat_64 += length;
+    stat32_inc(STAT_OFFSET_RX_GOOD_PACKETS);
+    stat64_add(STAT_OFFSET_RX_GOOD_OCTETS_LOW, length + ETHER_CRC_SIZE);
 
     if ((_rx_ctrl & NIC_RX_CTRL_DTYP_MASK) || !(_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN)) {
         debug_unhandled_attention();
@@ -2036,9 +2147,19 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
         case NIC_REG_TIME_SYNC_RX_CTRL:
             *dest_32 = _time_sync_rx_ctrl;
             break;
-        case NIC_REG_STAT_START ... NIC_REG_STAT_END:
-            *dest_32 = _statistic[(src - NIC_REG_STAT_START) >> 2];
+        case NIC_REG_STAT_START ... NIC_REG_STAT_END: {
+            uint index = (src - NIC_REG_STAT_START) >> 2;
+            *dest_32 = _statistic[index];
+
+            if ((_statistic_ctrl[index] & STAT_CTRL_CLEAR_ON_READ)) {
+                _statistic[index] = 0;
+
+                if ((_statistic_ctrl[index] & STAT_CTRL_HIGH_PART)) {
+                    _statistic[index - 1] = 0;
+                }
+            }
             break;
+        }
         case NIC_REG_TIME_SYNC_MESS_TYPE:
             *dest_32 = _time_sync_mess_type;
             break;
@@ -2104,7 +2225,10 @@ inline void NIC::update_interrupt_level()
     uint level = _int_mask & _int_cause;
 
     if (level) {
-        _int_cause |= NIC_INT_CAUSE_READ_ASSERTED;
+        if (!(_int_cause & NIC_INT_CAUSE_READ_ASSERTED)) {
+            _int_cause |= NIC_INT_CAUSE_READ_ASSERTED;
+            stat32_inc(STAT_OFFSET_INTERRUPT_ASSERTION);
+        }
         NIC_LOG("set trigger 0x%x cause 0x%x mask 0x%x", level, _int_cause, _int_mask);
     } else {
         _int_cause &= ~NIC_INT_CAUSE_READ_ASSERTED;
@@ -3068,6 +3192,14 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
                 _status &= ~NIC_STATUS_PHYRA;
             }
             break;
+        case NIC_REG_STAT_START ... NIC_REG_STAT_END: {
+            uint index = (dest - NIC_REG_STAT_START) >> 2;
+
+            if ((_statistic_ctrl[index] & STAT_CTRL_WRITABLE)) {
+                _statistic[index] = *src_32;
+            }
+            break;
+        }
         default:
             W_MESSAGE("unhandled reg 0x%lx val 0x%lx", dest, *src_32);
             debug_unhandled_attention();

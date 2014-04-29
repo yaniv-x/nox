@@ -146,6 +146,7 @@ private:
     };
 
 private:
+    void init_statistic_ctrl();
     void tx_timer_handler();
     void tx_write_back(Queue& queue);
     void tx_write_back();
@@ -155,6 +156,7 @@ private:
     void tr_cmd(uint cmd);
     void tr_wait(uint cmd);
     void tr_set_state(int state);
+    void update_tx_stat(uint8_t* dest, uint length);
     void handle_legacy_tx(LegacyTxDescriptor& descriptor);
     void handle_tx_data(TxDataDescriptor& descriptor);
     void handle_tx_context(TxContextDescriptor& descriptor);
@@ -168,6 +170,8 @@ private:
     void drop(uint8_t *buf, ssize_t n);
     bool recive_data();
     void trancive();
+    void stat32_inc(uint index);
+    void stat64_add(uint index, uint64_t val);
 
     void csr_read(uint64_t src, uint64_t length, uint8_t* dest);
     void csr_write(const uint8_t* src, uint64_t length, uint64_t dest);
@@ -282,6 +286,7 @@ private:
     uint32_t _redirection_table[NIC_REDIRECTION_TABLE_SIZE / 4];
     uint32_t _multicast_table[MULTICAST_TABLE_SIZE];
     uint32_t _statistic[NUM_STATISTIC_REGS];
+    uint8_t _statistic_ctrl[NUM_STATISTIC_REGS];
 
     enum {
         EEPROM_WORDS = 64 * 2,
