@@ -259,14 +259,14 @@ void IOApic::internal_eoi(uint pin)
         return;
     }
 
+    REDIRECT(pin) &= ~REDIRECT_FLAG_REMOTE_IRR;
+
     if (!(REDIRECT(pin) & REDIRECT_FLAG_LEVEL_MODE)) {
         D_MESSAGE("unexpected: trigger mode changed");
-        REDIRECT(pin) &= ~REDIRECT_FLAG_REMOTE_IRR;
         return;
     }
 
     if (!_irq_pins[pin]) {
-        REDIRECT(pin) &= ~REDIRECT_FLAG_REMOTE_IRR;
         return;
     }
 
