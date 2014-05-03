@@ -778,18 +778,6 @@ static inline uint32_t combine32(uint32_t val, uint32_t mask, uint32_t store)
 }
 
 
-static void debug_attention()
-{
-    //raise(SIGTRAP);
-}
-
-
-static void debug_unhandled_attention()
-{
-    //raise(SIGTRAP);
-}
-
-
 void NIC::Queue::reset(uint32_t qx_cause_mask)
 {
     _public_head = 0;
@@ -1765,7 +1753,8 @@ void NIC::push(uint8_t* packet, uint length)
     stat64_add(STAT_OFFSET_RX_TOTAL_OCTETS_LOW, length + ETHER_CRC_SIZE);
 
     if ((_multi_rq_command & NIC_MULTI_RQ_CMD_ENABLE_MASK) == 1) {
-        debug_unhandled_attention();
+        W_MESSAGE_SOME(100, "unhandled NIC_MULTI_RQ_CMD_ENABLE_MASK");
+        return;
     }
 
     if (_rx_queue[0].is_empty()) {
@@ -1815,21 +1804,16 @@ void NIC::push(uint8_t* packet, uint length)
     stat64_add(STAT_OFFSET_RX_GOOD_OCTETS_LOW, length + ETHER_CRC_SIZE);
 
     if ((_rx_ctrl & NIC_RX_CTRL_DTYP_MASK) || !(_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN)) {
-        debug_unhandled_attention();
+        W_MESSAGE_SOME(100, "unhandled descriptor type");
+        return;
     }
 
     //extended Rx descriptor
 
-    if ((_rx_ctrl & NIC_RX_CTRL_VFE)) {
-        debug_unhandled_attention();
-    }
-
-    if ((_rx_ctrl & NIC_RX_CTRL_CFIEN)) {
-        debug_unhandled_attention();
-    }
-
-    if (!(_rx_ctrl & NIC_RX_CTRL_SECRC)) {
-        debug_unhandled_attention();
+    if ((_rx_ctrl & (NIC_RX_CTRL_VFE | NIC_RX_CTRL_CFIEN | NIC_RX_CTRL_SECRC)) !=
+                                                                                NIC_RX_CTRL_SECRC) {
+        W_MESSAGE_SOME(100, "unhandled options 0x%x", _rx_ctrl);
+        return;
     }
 
     uint buff_size = ((_rx_ctrl & NIC_RX_CTRL_FLXBUF_MASK) >> NIC_RX_CTRL_FLXBUF_SHIFT);
@@ -1851,13 +1835,15 @@ void NIC::push(uint8_t* packet, uint length)
     memory_bus->read(descriptor_address, sizeof(read_descriptor), &read_descriptor);
 
     if (!read_descriptor.address) {
-        debug_unhandled_attention();
+        D_MESSAGE("null descriptor");
+        return;
     }
 
     std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(read_descriptor.address, buff_size));
 
     if (!direct.get()) {
-        debug_unhandled_attention();
+        D_MESSAGE("data access failed 0x%lx %u", read_descriptor.address, buff_size);
+        return;
     }
 
     ASSERT(length <= buff_size);
@@ -1927,8 +1913,7 @@ bool NIC::recive_data()
             return false;
         }
 
-        E_MESSAGE("%s (%d)", strerror(errno), errno);
-        debug_unhandled_attention();
+        W_MESSAGE("%s (%d)", strerror(errno), errno);
         return false;
     }
 
@@ -2219,7 +2204,7 @@ void NIC::soft_reset()
     */
 
     D_MESSAGE("");
-    debug_attention();
+
     init_eeprom();
     common_reset();
 
@@ -2410,7 +2395,6 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             break;
         case NIC_REG_INT_MASK_CLEAR:
             W_MESSAGE("read from write only reg 0x%lx", src);
-            debug_attention();
             break;
         case  NIC_REG_TIME_SYNC_TX_STAMP_LOW:
             D_MESSAGE("NIC_REG_TIME_SYNC_TX_STAMP_LOW");
@@ -2448,7 +2432,6 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
         default:
             W_MESSAGE("unhandled 0x%lx", src);
             *dest_32 = 0;
-            debug_unhandled_attention();
         }
     }
 }
@@ -2570,7 +2553,7 @@ void NIC::phy_update_link_state()
 void NIC::phy_reset()
 {
     D_MESSAGE("");
-    debug_attention();
+
     phy_reset_common();
 
     _phy_ctrl = PHY_CTRL_AUTO_NEGOTIATION | PHY_CTRL_DUPLEX_MODE | PHY_CTRL_SPEED_MSB;
@@ -2629,7 +2612,7 @@ bool NIC::is_auto_negotiation()
 void NIC::phy_soft_reset()
 {
     D_MESSAGE("");
-    debug_attention();
+
     phy_reset_common();
 
     _phy_ctrl &= PHY_CTRL_SPEED_LSB | PHY_CTRL_AUTO_NEGOTIATION  | PHY_CTRL_POWER_DOWN |
@@ -2804,12 +2787,12 @@ void NIC::mdi_write_common(uint reg)
 
         if (_phy_ctrl & PHY_CTRL_RESTART_AUTO_NEGOTIATION) {
             _phy_ctrl &= ~PHY_CTRL_RESTART_AUTO_NEGOTIATION;
+
             if (is_auto_negotiation()) {
                 auto_negotiation();
                 D_MESSAGE("PHY_CTRL_RESTART_AUTO_NEGOTIATION");
             } else {
                 W_MESSAGE("PHY_CTRL_RESTART_AUTO_NEGOTIATION: nop");
-                debug_attention();
             }
         }
 
@@ -2819,8 +2802,7 @@ void NIC::mdi_write_common(uint reg)
         }
 
         if (_phy_ctrl & PHY_CTRL_LOOPBACK) {
-            W_MESSAGE("PHY_CTRL_LOOPBACK");
-            debug_attention();
+            W_MESSAGE("unhabled PHY_CTRL_LOOPBACK");
         }
         break;
     case PHY_REG_AUTO_NEGO_ADVERTIS:
@@ -2832,7 +2814,6 @@ void NIC::mdi_write_common(uint reg)
     default:
         _mdi_ctrl |= NIC_MDI_CTRL_ERROR;
         W_MESSAGE("invalid reg %u page %u (0x%x))", reg, _phy_page, _phy_ctrl);
-        debug_unhandled_attention();
     }
 }
 
@@ -2844,27 +2825,22 @@ void NIC::mdi_page0_write(uint reg)
         _phy_0_copper_ctrl_1 = _mdi_ctrl;
         if (_phy_0_copper_ctrl_1 & PHY_P0_COPPER_CTRL_1_DISABLE_LINK_PULSES) {
             W_MESSAGE("Disable link pulse");
-            debug_attention();
         }
 
         if (_phy_0_copper_ctrl_1 & PHY_P0_COPPER_CTRL_1_FORCE_LINK_GOOD) {
             W_MESSAGE("Force link good");
-            debug_attention();
         }
 
         if (_phy_0_copper_ctrl_1 & PHY_P0_COPPER_CTRL_1_TRANSMITTER_DISABLE) {
             W_MESSAGE("Transmitter disable");
-            debug_attention();
         }
 
         if (_phy_0_copper_ctrl_1 & PHY_P0_COPPER_CTRL_1_POWER_DOWN) {
             W_MESSAGE("Power down");
-            debug_attention();
         }
 
         if (_phy_0_copper_ctrl_1 & PHY_P0_COPPER_CTRL_1_DISABLE_JABBER) {
             W_MESSAGE("Disable jabber function");
-            debug_attention();
         }
         break;
     case PHY_REG_P0_BIAS_1:
@@ -2883,7 +2859,6 @@ void NIC::mdi_page0_write(uint reg)
                 auto_negotiation();
             } else {
                 W_MESSAGE("PHY_CTRL_RESTART_AUTO_NEGOTIATION: nop");
-                debug_attention();
             }
         }
         break;
@@ -2966,7 +2941,6 @@ void NIC::mdi_read_common(uint reg)
     default:
         _mdi_ctrl |= NIC_MDI_CTRL_ERROR;
         W_MESSAGE("invalid reg %u page %u (0x%x))", reg, _phy_page, _phy_ctrl);
-        debug_unhandled_attention();
     }
 }
 
@@ -3100,7 +3074,6 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             default:
                 W_MESSAGE("invalid op 0x%x 0x%x",(_mdi_ctrl & NIC_MDI_CTRL_OP_MASK) >>
                                                                   NIC_MDI_CTRL_OP_SHIFT, _mdi_ctrl);
-                debug_attention();
             }
             break;
         }
@@ -3443,7 +3416,6 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
         }
         default:
             W_MESSAGE("unhandled reg 0x%lx val 0x%lx", dest, *src_32);
-            debug_unhandled_attention();
         }
     }
 }
