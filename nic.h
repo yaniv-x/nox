@@ -41,6 +41,7 @@ enum {
     NIC_RSS_KEY_SIZE = 40,
     NIC_REDIRECTION_TABLE_SIZE = 128,
     NUM_STATISTIC_REGS = 65,
+    NIC_MAX_LONG_PACKET_SIZE = 16384,
 };
 
 
@@ -156,6 +157,12 @@ private:
     void tr_cmd(uint cmd);
     void tr_wait(uint cmd);
     void tr_set_state(int state);
+    void set_tx_packet_error(LegacyTxDescriptor& descriptor);
+    void set_tx_packet_error(TxDataDescriptor& descriptor);
+    void set_tx_packet_error(bool eop);
+    bool tx_put_data(uint8_t* buf, uint length);
+    void tx_segment(TxDataDescriptor& descriptor);
+    void handle_tx_segments(TxDataDescriptor& descriptor, uint8_t *buf, uint length);
     void update_tx_stat(uint8_t* dest, uint length);
     void handle_legacy_tx(LegacyTxDescriptor& descriptor);
     void handle_tx_data(TxDataDescriptor& descriptor);
@@ -214,7 +221,11 @@ private:
 
 private:
     Mutex _mutex;
-    uint8_t _in_buf[16384 /*max long packet size*/];
+    uint8_t _in_buf[NIC_MAX_LONG_PACKET_SIZE];
+    uint8_t _out_buf[NIC_MAX_LONG_PACKET_SIZE];
+    uint8_t* _out_buf_end;
+    uint8_t* _out_buf_pos;
+    bool _tx_packet_error;
     int _tr_state;
     int _tr_command;
     uint32_t _io_address;
@@ -232,6 +243,8 @@ private:
     Condition _tr_state_condition;
     TxContextDescriptor _seg_context;
     TxContextDescriptor _offload_context;
+    uint8_t _seg_tcp_save;
+    uint _seg_max_mess_length;
 
     uint32_t _ctrl;
     uint32_t _status;

@@ -60,6 +60,7 @@
 #define NIC_IO_ADDR_PORT 0
 #define NIC_IO_DATA_PORT 4
 
+#define SUM_RESTORE_BIT (1 << 31)
 
 enum {
     NIC_REG_CTRL = 0x00,
@@ -591,7 +592,6 @@ enum {
 enum {
     NIC_MIN_PACKET_SIZE = 64,
     NIC_MAX_PACKET_SIZE = 1522,
-    NIC_MAX_LONG_PACKET_SIZE = 16384,
 
     ETHER_HEADER_LENGTH = 14,
     ETHER_ADDRESS_LENGTH = 6,
@@ -601,7 +601,18 @@ enum {
     ETHER_TYPE_VLAN = 0x8100,
     ETHER_TYPE_IPV6 = 0x86dd,
 
+    IP4_LENGTH_OFFSET = 2,
+    IP4_ID_OFFSET = 4,
+
     IP6_HEADER_LENGTH = 40,
+    IP6_LENGTH_OFFSET = 4,
+
+    UDP_LENGTH_OFFSET = 4,
+
+    TCP_SEQUENCE_OFFSET = 4,
+    TCP_HIGH_FLAGS_OFFSET = 13,
+    TCP_FIN = (1 << 0),
+    TCP_PSH = (1 << 3),
 };
 
 
@@ -653,6 +664,7 @@ typedef struct __attribute__ ((__packed__)) LegacyTxDescriptor {
 
 enum {
     TX_DESCRIPTOR_CMD_IDE = (1 << 7),
+    TX_DESCRIPTOR_CMD_SNAP = (1 << 6),
     TX_DESCRIPTOR_CMD_VLAN = (1 << 6),
     TX_DESCRIPTOR_CMD_EXTENSION = (1 << 5),
     TX_DESCRIPTOR_CMD_REPORT_STATUS = (1 << 3),
@@ -680,7 +692,7 @@ typedef struct __attribute__ ((__packed__)) TxDataDescriptor {
     uint64_t address;
     union {
         uint32_t mix;
-        uint8_t mix_v[3];
+        uint8_t mix_v[4];
     };
     uint8_t status;
     uint8_t packet_opt;
@@ -1144,44 +1156,64 @@ void NIC::update_tx_stat(uint8_t* dest, uint length)
 inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
 {
     if (!descriptor.address || !descriptor.length) {
-        debug_unhandled_attention();
+        D_MESSAGE("null descriptor");
+        return;
     }
 
+    if (_tx_packet_error) {
+        if((descriptor.command & TX_DESCRIPTOR_END_OF_PACKET)) {
+            _tx_packet_error = false;
+        }
+        return;
+    }
+
+    if ((descriptor.command & (TX_DESCRIPTOR_CMD_VLAN | TX_DESCRIPTOR_INSERT_FCS |
+                               TX_DESCRIPTOR_INSERT_CHECKSUM)) != TX_DESCRIPTOR_INSERT_FCS ||
+                                            (descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
+        D_MESSAGE("unhandled cmd 0x%x status 0x%x", descriptor.command, descriptor.status);
+        set_tx_packet_error(descriptor);
+        return;
+    }
+
+    uint length = descriptor.length;
+
     std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address,
-                                                              descriptor.length));
+                                                              length));
 
     if (!direct.get()) {
-        debug_unhandled_attention();
+        D_MESSAGE("data access failed 0x%lx %u", descriptor.address, length);
+        set_tx_packet_error(descriptor);
+        return;
     }
 
     uint8_t *buf = direct->get_ptr();
-    uint8_t *dest = buf;
 
     if (!(descriptor.command & TX_DESCRIPTOR_END_OF_PACKET)) {
-        debug_unhandled_attention();
+
+        if (!tx_put_data(buf, length)) {
+            set_tx_packet_error(descriptor);
+            return;
+        }
+        return;
+
+    } else if (_out_buf_pos != _out_buf) {
+
+        if (!tx_put_data(buf, length)) {
+            set_tx_packet_error(descriptor);
+            return;
+        }
+
+        length =  _out_buf_pos - _out_buf;
+        _out_buf_pos = _out_buf;
+        buf = _out_buf;
     }
 
-    if ((descriptor.command & TX_DESCRIPTOR_CMD_VLAN)) {
-        debug_unhandled_attention();
+    if (write(_interface.get(), buf, length) != length) {
+        int err = errno;
+        W_MESSAGE("write failed %d %s", err, strerror(err));
     }
 
-    if ((descriptor.command & TX_DESCRIPTOR_INSERT_CHECKSUM)) {
-        debug_unhandled_attention();
-    }
-
-    if (!(descriptor.command & TX_DESCRIPTOR_INSERT_FCS)) {
-        debug_unhandled_attention();
-    }
-
-    if ((descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
-        debug_unhandled_attention();
-    }
-
-    if (write(_interface.get(), buf, descriptor.length) != descriptor.length) {
-        debug_unhandled_attention();
-    }
-
-    update_tx_stat(dest, descriptor.length + ETHER_CRC_SIZE);
+    update_tx_stat(buf, descriptor.length + ETHER_CRC_SIZE);
 }
 
 
@@ -1191,6 +1223,11 @@ inline void NIC::handle_tx_context(TxContextDescriptor& descriptor)
         _seg_context = descriptor;
     } else {
         _offload_context = descriptor;
+    }
+
+    if (_out_buf_pos != _out_buf_pos) {
+        D_MESSAGE("new context while expecting data");
+        set_tx_packet_error(false);
     }
 }
 
@@ -1205,22 +1242,26 @@ static uint32_t insert_cheacksum(uint offset, uint start, uint end, uint8_t* buf
 
     if (!end) {
         end = buf_length;
-    } if (end > buf_length || end <= start) {
+    } else {
+        end++;
+    }
+
+    if (end > buf_length || end <= start) {
         W_MESSAGE("bad values: start %u end %u buf length %u", start, end, buf_length);
         return 0;
     }
 
     uint32_t sum = net_sum16(buf + start, end - start);
 
-    while (sum >> 16) {
+    do {
         sum = (sum & 0xffff) + (sum >> 16);
-    }
+    } while (sum >> 16);
 
     sum = (sum) ? ~sum : 0xffff;
 
     uint16_t* sum_ptr = (uint16_t*)(buf + offset);
 
-    uint32_t save = (1 << 31) | *sum_ptr;
+    uint32_t save = SUM_RESTORE_BIT | *sum_ptr;
     *sum_ptr = htons(sum);
 
     return save;
@@ -1229,11 +1270,178 @@ static uint32_t insert_cheacksum(uint offset, uint start, uint end, uint8_t* buf
 
 static inline void restore_cheacksum(uint32_t data, uint8_t offset, uint8_t* buf)
 {
-    if (!(data & (1 << 31))) {
+    if (!(data & SUM_RESTORE_BIT)) {
         return;
     }
 
     *(uint16_t*)(buf + offset) = data;
+}
+
+
+inline void NIC::tx_segment(TxDataDescriptor& descriptor)
+{
+    uint8_t* header = _out_buf;
+    uint length = _out_buf_pos - _out_buf;
+    uint ipfix = 0;
+
+    if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_IP4)) {
+        //IP4
+        *(uint16_t*)(header + _seg_context.ipcss + IP4_LENGTH_OFFSET) = htons(length -
+                                                                        _seg_context.ipcss);
+        if ((descriptor.packet_opt & TX_DESCRIPTOR_POPTS_IXSM)) {
+            ipfix = insert_cheacksum(_seg_context.ipcso, _seg_context.ipcss,
+                                     _seg_context.ipcse, header,
+                                     _seg_context.hdrlen);
+        }
+    } else {
+        //IP6
+        *(uint16_t*)(header + _seg_context.ipcss + IP6_LENGTH_OFFSET) =
+                                                            htons(length - _seg_context.ipcss -
+                                                            IP6_HEADER_LENGTH);
+    }
+
+    if (!(_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_TCP)) {
+        //UDP
+        *(uint16_t*)(header + _seg_context.tucss + UDP_LENGTH_OFFSET) =
+                                                            htons(length - _seg_context.tucss);
+    }
+
+    uint32_t tufix;
+
+    if ((descriptor.packet_opt & TX_DESCRIPTOR_POPTS_TXSM)) {
+        uint32_t sum = net_sum16(header + _seg_context.tucss, length - _seg_context.tucss);
+        sum += length - _seg_context.tucss; // add the pseudo header length
+
+        do {
+            sum = (sum & 0xffff) + (sum >> 16);
+        } while (sum >> 16);
+
+        sum = (sum) ? ~sum : 0xffff;
+
+        uint16_t* sum_ptr = (uint16_t*)(header + _seg_context.tucso);
+
+        tufix = SUM_RESTORE_BIT | *sum_ptr;
+        *sum_ptr = htons(sum);
+    } else {
+        tufix = 0;
+    }
+
+    if (write(_interface.get(), header, length) != length) {
+        int err = errno;
+        W_MESSAGE("write failed %d %s", err, strerror(err));
+    }
+
+    if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_IP4)) {
+        uint16_t id = ntohs(*(uint16_t*)(header + _seg_context.ipcss + IP4_ID_OFFSET));
+        *(uint16_t*)(header + _seg_context.ipcss + IP4_ID_OFFSET) = htons(id + 1);
+    }
+
+    if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_TCP)) {
+        uint32_t sequence = ntohl(*(uint32_t*)(header + _seg_context.tucss + TCP_SEQUENCE_OFFSET));
+        uint32_t payload_length = length - _seg_context.hdrlen;
+        *(uint32_t*)(header + _seg_context.tucss + TCP_SEQUENCE_OFFSET) =
+                                                                  htonl(sequence + payload_length);
+    }
+
+    restore_cheacksum(ipfix, _seg_context.ipcso, header);
+    restore_cheacksum(tufix, _seg_context.tucso, header);
+
+    update_tx_stat(header, length  + ETHER_CRC_SIZE);
+}
+
+
+inline bool NIC::tx_put_data(uint8_t* buf, uint length)
+{
+    if (length > _out_buf_end - _out_buf_pos) {
+        D_MESSAGE("too long");
+        return false;
+    }
+
+    memcpy(_out_buf_pos, buf, length);
+    _out_buf_pos += length;
+
+    return true;
+}
+
+
+inline void NIC::handle_tx_segments(TxDataDescriptor& descriptor, uint8_t* buf, uint length)
+{
+    if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_SNAP)) {
+        D_MESSAGE("unhandled SNAP");
+        set_tx_packet_error(descriptor);
+        return;
+    }
+
+    if (_out_buf_pos - _out_buf < _seg_context.hdrlen) {
+        uint n = _seg_context.hdrlen - (_out_buf_pos - _out_buf);
+        n = MIN(n, length);
+
+        if (!tx_put_data(buf, n)) {
+            set_tx_packet_error(descriptor);
+            return;
+        }
+
+        buf += n;
+        length -= n;
+
+        if (_out_buf_pos - _out_buf == _seg_context.hdrlen) {
+            _seg_max_mess_length = _seg_context.hdrlen + _seg_context.mss;
+
+            if (_seg_max_mess_length > sizeof(_out_buf)) {
+                set_tx_packet_error(descriptor);
+                return;
+            }
+
+            if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_TCP)) {
+                _seg_tcp_save = _out_buf[_seg_context.tucss + TCP_HIGH_FLAGS_OFFSET];
+                _out_buf[_seg_context.tucss + TCP_HIGH_FLAGS_OFFSET] &= ~(TCP_PSH | TCP_FIN);
+            }
+        }
+    }
+
+    while (length) {
+        uint n = MIN(length, _seg_max_mess_length - (_out_buf_pos - _out_buf));
+
+        if (!tx_put_data(buf, n)) {
+            set_tx_packet_error(descriptor);
+            return;
+        }
+
+        length -= n;
+        buf += n;
+
+        if (!length && (descriptor.mix_v[3] & TX_DESCRIPTOR_END_OF_PACKET)) {
+
+            if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_TCP)) {
+                _out_buf[_seg_context.tucss + TCP_HIGH_FLAGS_OFFSET] = _seg_tcp_save;
+            }
+
+            tx_segment(descriptor);
+            _out_buf_pos = _out_buf;
+        } else if (_out_buf_pos - _out_buf == _seg_max_mess_length) {
+            tx_segment(descriptor);
+            _out_buf_pos = _out_buf + _seg_context.hdrlen;
+        }
+    }
+}
+
+
+void NIC::set_tx_packet_error(bool eop)
+{
+    _out_buf_pos = _out_buf;
+    _tx_packet_error = (eop) ? false : true;
+}
+
+
+void NIC::set_tx_packet_error(LegacyTxDescriptor& descriptor)
+{
+    set_tx_packet_error(!!(descriptor.command & TX_DESCRIPTOR_END_OF_PACKET));
+}
+
+
+void NIC::set_tx_packet_error(TxDataDescriptor& descriptor)
+{
+    set_tx_packet_error(!!(descriptor.mix_v[3] & TX_DESCRIPTOR_END_OF_PACKET));
 }
 
 
@@ -1242,37 +1450,55 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
     uint length = descriptor.mix & 0xfffff;
 
     if (!length || !descriptor.address) {
-        debug_unhandled_attention();
+        D_MESSAGE("null descriptor");
+        return;
+    }
+
+    if (_tx_packet_error) {
+        if((descriptor.mix_v[3] & TX_DESCRIPTOR_END_OF_PACKET)) {
+            _tx_packet_error = false;
+        }
+        return;
+    }
+
+    if ((descriptor.mix_v[3] & (TX_DESCRIPTOR_CMD_VLAN | TX_DESCRIPTOR_INSERT_FCS)) !=
+            TX_DESCRIPTOR_INSERT_FCS || (descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
+        D_MESSAGE("unhandled cmd 0x%x status 0x%x", descriptor.mix_v[3], descriptor.status);
+        set_tx_packet_error(descriptor);
+        return;
     }
 
     std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address, length));
 
     if (!direct.get()) {
-        debug_unhandled_attention();
-    }
-
-    if (!(descriptor.mix_v[3] & TX_DESCRIPTOR_END_OF_PACKET)) {
-        debug_unhandled_attention();
-    }
-
-    if ((descriptor.mix_v[3] & TX_DESCRIPTOR_CMD_VLAN)) {
-        debug_unhandled_attention();
-    }
-
-    if (!(descriptor.mix_v[3] & TX_DESCRIPTOR_INSERT_FCS)) {
-        debug_unhandled_attention();
-    }
-
-    if ((descriptor.mix_v[3] & TX_DESCRIPTOR_CMD_TSE)) {
-        debug_unhandled_attention();
-    }
-
-    if ((descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
-        debug_unhandled_attention();
+        D_MESSAGE("data access failed 0x%lx %u", descriptor.address, length);
+        set_tx_packet_error(descriptor);
+        return;
     }
 
     uint8_t *buf = direct->get_ptr();
-    uint8_t *dest = buf;
+
+    if ((descriptor.mix_v[3] & TX_DESCRIPTOR_CMD_TSE)) {
+        handle_tx_segments(descriptor, buf, length);
+        return;
+    }
+
+    if (!(descriptor.mix_v[3] & TX_DESCRIPTOR_END_OF_PACKET)) {
+        if (!tx_put_data(buf, length)) {
+            set_tx_packet_error(descriptor);
+            return;
+        }
+        return;
+
+    } else if (_out_buf_pos != _out_buf) {
+        if (!tx_put_data(buf, length)) {
+            set_tx_packet_error(descriptor);
+            return;
+        }
+        length =  _out_buf_pos - _out_buf;
+        _out_buf_pos = _out_buf;
+        buf = _out_buf;
+    }
 
     uint32_t ipfix = (descriptor.packet_opt & TX_DESCRIPTOR_POPTS_IXSM) ?
                                 insert_cheacksum(_offload_context.ipcso, _offload_context.ipcss,
@@ -1281,16 +1507,15 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
                                 insert_cheacksum(_offload_context.tucso, _offload_context.tucss,
                                                  _offload_context.tucse, buf, length) : 0;
 
-    uint n = write(_interface.get(), buf, length);
+    if (write(_interface.get(), buf, length) != length) {
+        int err = errno;
+        W_MESSAGE("write failed %d %s", err, strerror(err));
+    }
 
     restore_cheacksum(ipfix, _offload_context.ipcso, buf);
     restore_cheacksum(tufix, _offload_context.tucso, buf);
 
-    if (n != length) {
-        debug_unhandled_attention();
-    } else {
-        update_tx_stat(dest, length + ETHER_CRC_SIZE);
-    }
+    update_tx_stat(buf, length + ETHER_CRC_SIZE);
 }
 
 
@@ -1337,7 +1562,6 @@ bool NIC::do_tx(Queue& queue)
         }
         default:
             W_MESSAGE("invalid ext descriptor type", descriptor.specific_0[10] >> 4);
-            debug_unhandled_attention();
         };
     }
 
@@ -1876,6 +2100,10 @@ void NIC::common_reset()
                 NIC_NVM_CTRL_AUTO_READ_DONE |
                 NIC_NVM_CTRL_PRESENT |
                 (NIC_NVM_CTRL_RO << NIC_NVM_CTRL_WRITE_CTRL_SHIFT);
+
+    _out_buf_end = _out_buf + sizeof(_out_buf);
+    _out_buf_pos = _out_buf;
+    _tx_packet_error = false;
 }
 
 
@@ -2284,10 +2512,17 @@ void NIC::phy_reset_interface(const char* interface_name)
         ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
         strncpy(ifr.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ);
 
-        if (ioctl(tun.get(), TUNSETIFF, &ifr) < 0){
+        if (ioctl(tun.get(), TUNSETIFF, &ifr) == -1){
             int err = errno;
             W_MESSAGE("TUNSETIFF failed  %d %s", err, strerror(err));
             return;
+        }
+
+        int no_sum = 1;
+
+        if (ioctl(tun.get(), TUNSETNOCSUM, no_sum) == -1) {
+            int err = errno;
+            W_MESSAGE("TUNSETNOCSUM failed  %d %s", err, strerror(err));
         }
 
         I_MESSAGE("net intrface is %s", ifr.ifr_ifrn.ifrn_name);
