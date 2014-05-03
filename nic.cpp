@@ -1708,6 +1708,12 @@ bool NIC::recive_data()
         return false;
     }
 
+    if (n < NIC_MIN_PACKET_SIZE - ETHER_CRC_SIZE) {
+        uint pad = NIC_MIN_PACKET_SIZE - ETHER_CRC_SIZE - n;
+        memset(_in_buf + n, 0, pad);
+        n += pad;
+    }
+
 #ifdef DO_NIC_LOG
     std::string str;
     ether_to_str(str, _in_buf, n);
