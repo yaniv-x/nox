@@ -138,7 +138,6 @@ private:
 
     friend class EpollEvent;
     friend class IntervalTimer;
-    friend class NIC; // temporarily in order to give NIC::trancive() access to run_timers()
 };
 
 

@@ -617,17 +617,11 @@ enum {
 
 
 enum {
-    TR_INIT,
-    TR_WAITING,
-    TR_RUNNING,
-    TR_TERMINATED,
-};
+    TRANSCEIVING = Worker::FIRST_USER_STATE,
+    TERMINATED,
 
-
-enum {
-    TR_CMD_WAIT,
-    TR_CMD_RUN,
-    TR_CMD_QUIT,
+    TRANSCEIVE = Worker::FIRST_USER_CMD,
+    QUIT,
 };
 
 
@@ -812,18 +806,9 @@ void NIC::Queue::set_addr_high(uint32_t val)
 }
 
 
-NIC::NicTimer::NicTimer(const char* name, Timer* a, Timer* b)
+NIC::NicTimer::NicTimer(const char* name)
     : _name (name)
-    , _timer (a)
-    , _abs_timer (b)
 {
-}
-
-
-NIC::NicTimer::~NicTimer()
-{
-    _timer->destroy();
-    _abs_timer->destroy();
 }
 
 
@@ -835,27 +820,58 @@ void NIC::NicTimer::reset()
 }
 
 
-inline void NIC::NicTimer::disarm()
+inline void NIC::NicTimer::arm()
 {
     NIC_LOG("%s", _name.c_str());
 
-    _timer->disarm();
-    _abs_timer->disarm();
-    _abs_timer_armed = false;
+    nox_time_t now = get_monolitic_time();
+
+    if (_abs_delay_val) {
+
+        if (!_abs_time) {
+            NIC_LOG("%s: abs %u", _name.c_str(), _abs_delay_val);
+            _abs_time = now + _abs_delay_val;
+        }
+
+        _trigger = _abs_time;
+    } else {
+        _trigger = ~nox_time_t(0);
+    }
+
+    if (_delay_val) {
+        NIC_LOG("%s: rel %u", _name.c_str(), _delay_val);
+        _trigger = MIN(_trigger, now + _delay_val);
+    }
 }
 
 
-void NIC::NicTimer::resume()
+bool NIC::NicTimer::expired(nox_time_t& timeout)
 {
-    _timer->resume();
-    _abs_timer->resume();
+    if (_trigger == ~nox_time_t(0)) {
+        timeout = ~nox_time_t(0);
+        return false;
+    }
+
+    nox_time_t now = get_monolitic_time();
+
+    if (now >= _trigger) {
+        _trigger = ~nox_time_t(0);
+        _abs_time = 0;
+        timeout = ~nox_time_t(0);
+        return true;
+    }
+
+    timeout = _trigger - now;
+
+    return false;
 }
 
 
-void NIC::NicTimer::suspend()
+inline void NIC::NicTimer::disarm()
 {
-    _timer->suspend();
-    _abs_timer->suspend();
+    NIC_LOG("%s", _name.c_str());
+    _trigger = ~nox_time_t(0);
+    _abs_time = 0;
 }
 
 
@@ -871,37 +887,15 @@ void NIC::NicTimer::set_abs_val(uint32_t val)
 }
 
 
-inline void NIC::NicTimer::arm()
-{
-    NIC_LOG("%s", _name.c_str());
-
-    if (_delay_val) {
-        NIC_LOG("%s: rel %u", _name.c_str(), _delay_val);
-        _timer->arm(_delay_val, false);
-    }
-
-    if (!_abs_timer_armed && _abs_delay_val) {
-        NIC_LOG("%s: abs %u", _name.c_str(), _abs_delay_val);
-        _abs_timer->arm(_abs_delay_val, false);
-        _abs_timer_armed = true;
-    }
-}
-
-
 NIC::NIC(NoxVM& nox)
     : PCIDevice("nic", *pci_bus, NIC_VENDOR_ID, NIC_DEV_ID, NIC_DEV_REVISION,
                 mk_pci_class_code(PCI_CLASS_NIC, PCI_SUBCLASS_ETHERNET, PCI_PROGIF_ETHERNET),
                 true)
-    , _tr_state (TR_INIT)
-    , _tr_command (TR_CMD_WAIT)
-    , _tx_trigger (_transceiver.create_event((void_callback_t)&NIC::tx_trigger_handler, this))
-    , _rx_trigger (_transceiver.create_event((void_callback_t)&NIC::rx_trigger_handler, this))
-    , _interface_event (NULL)
-    , _tx_timer ("tx",_transceiver.create_timer((void_callback_t)&NIC::tx_timer_handler, this),
-                 _transceiver.create_timer((void_callback_t)&NIC::tx_timer_handler, this))
-    , _rx_timer ("rx",_transceiver.create_timer((void_callback_t)&NIC::rx_timer_handler, this),
-                 _transceiver.create_timer((void_callback_t)&NIC::rx_timer_handler, this))
-    , _thread ((Thread::start_proc_t)&NIC::thread_main, this)
+    , _tx_timer ("tx")
+    , _rx_timer ("rx")
+    , _transmit (false)
+    , _receive (false)
+    , _transceiver_thread ((Thread::start_proc_t)&NIC::transceiver_main, this)
 {
     ASSERT(NUM_STATISTIC_REGS == (NIC_REG_STAT_END - NIC_REG_STAT_START) / 4 + 1);
     add_mmio_region(NIC_CSR_BAR, NIC_CSR_SPACE_SIZE, this,
@@ -915,7 +909,7 @@ NIC::NIC(NoxVM& nox)
     init_statistic_ctrl();
     init_eeprom();
 
-    tr_wait(TR_WAITING);
+   _transceiver.wait_state(Worker::STATE_WAITING);
 
     pci_bus->add_device(*this);
 }
@@ -923,18 +917,8 @@ NIC::NIC(NoxVM& nox)
 
 NIC::~NIC()
 {
-    Lock lock(_tr_cmd_lock);
-    _tr_command = TR_CMD_QUIT;
-    _tr_cmd_condition.signal();
-    lock.unlock();
-    _transceiver.run_break();
-    _thread.join();
-    _tx_trigger->destroy();
-    _rx_trigger->destroy();
-
-    if (_interface_event) {
-        _interface_event->destroy();
-    }
+    _transceiver.command(QUIT);
+    _transceiver_thread.join();
 }
 
 
@@ -964,44 +948,17 @@ void NIC::init_statistic_ctrl()
 }
 
 
-void NIC::tr_cmd(uint cmd)
-{
-    Lock lock(_tr_cmd_lock);
-    _tr_command = cmd;
-    _tr_cmd_condition.signal();
-}
-
-
-void NIC::tr_wait(uint state)
-{
-    Lock lock(_tr_state_lock);
-
-    while (_tr_state != state) {
-        _tr_state_condition.wait(_tr_state_lock);
-    }
-}
-
-
-void NIC::tr_set_state(int state)
-{
-    Lock cmd_lock(_tr_state_lock);
-    _tr_state = state;
-    _tr_state_condition.signal();
-}
-
-
 bool NIC::start()
 {
     if (!PCIDevice::start()) {
         return false;
     }
 
-    tr_cmd(TR_CMD_RUN);
+    //_tx_timer.resume();
+    //_rx_timer.resume();
 
     update_interrupt_level();
-
-    _tx_timer.resume();
-    _rx_timer.resume();
+    transceiver_on();
 
     return true;
 }
@@ -1009,22 +966,10 @@ bool NIC::start()
 
 bool NIC::stop()
 {
-    Lock lock(_tr_cmd_lock);
-    _tr_command = TR_CMD_WAIT;
-    _tr_cmd_condition.signal();
-    lock.unlock();
-    _transceiver.run_break();
+    transceiver_off();
 
-    Lock state_lock(_tr_state_lock);
-
-    while (_tr_state != TR_WAITING) {
-        _tr_state_condition.wait(_tr_state_lock);
-    }
-
-    state_lock.unlock();
-
-    _tx_timer.suspend();
-    _rx_timer.suspend();
+    //_tx_timer.suspend();
+    //_rx_timer.suspend();
 
     return PCIDevice::stop();
 }
@@ -1032,16 +977,13 @@ bool NIC::stop()
 
 void NIC::down()
 {
-    Lock lock(_tr_cmd_lock);
-    _tr_command = TR_CMD_QUIT;
-    _tr_cmd_condition.signal();
-    lock.unlock();
+    _transceiver.command(QUIT);
 
     PCIDevice::down();
 }
 
 
-void NIC::tx_write_back(Queue& queue)
+void NIC::__tx_write_back(Queue& queue)
 {
     if (!queue.get_wb_count()) {
         return;
@@ -1058,25 +1000,25 @@ void NIC::tx_write_back(Queue& queue)
 }
 
 
+inline void NIC::tx_write_back(Queue& queue)
+{
+    Lock lock(_tx_wb_mutex);
+    __tx_write_back(queue);
+}
+
+
 void NIC::tx_write_back()
 {
     NIC_LOG("");
 
+    Lock lock(_tx_wb_mutex);
     _tx_timer.disarm();
-    tx_write_back(_tx_queue[0]);
-    tx_write_back(_tx_queue[1]);
+    __tx_write_back(_tx_queue[0]);
+    __tx_write_back(_tx_queue[1]);
 }
 
 
-void NIC::tx_timer_handler()
-{
-    Lock lock(_mutex);
-    NIC_LOG("");
-    tx_write_back();
-}
-
-
-void NIC::rx_write_back(Queue& queue, uint32_t cause)
+void NIC::__rx_write_back(Queue& queue, uint32_t cause)
 {
     if (!queue.get_wb_count()) {
         return;
@@ -1096,17 +1038,10 @@ void NIC::rx_write_back(uint32_t cause)
 {
     NIC_LOG("");
 
+    Lock lock(_rx_wb_mutex);
     _rx_timer.disarm();
-    rx_write_back(_rx_queue[0], cause);
-    rx_write_back(_rx_queue[1], cause);
-}
-
-
-void NIC::rx_timer_handler()
-{
-    Lock lock(_mutex);
-    NIC_LOG("");
-    rx_write_back(NIC_INT_CAUSE_RX_TIMER);
+    __rx_write_back(_rx_queue[0], cause);
+    __rx_write_back(_rx_queue[1], cause);
 }
 
 
@@ -1509,12 +1444,6 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
 
 bool NIC::do_tx(Queue& queue)
 {
-    Lock lock(_mutex);
-
-    if (!phy_link_is_up() || !(_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
-        return false;
-    }
-
     if (queue.is_empty()) {
         NIC_LOG("q[%u]: empty", &queue - _tx_queue);
         tx_write_back(queue);
@@ -1592,33 +1521,100 @@ bool NIC::do_tx(Queue& queue)
 }
 
 
-void NIC::trancive()
+void NIC::transceive()
 {
-    bool more;
+    D_MESSAGE("");
 
-    do {
-        more = recive_data();
-        _transceiver.run_timers();
-        more = do_tx(_tx_queue[0]) || more;
-        _transceiver.run_timers();
-        more = do_tx(_tx_queue[1]) || more;
-        _transceiver.run_timers();
-        pthread_yield();
-    } while (more);
+    _transceiver.reset();
+    _transceiver.add_fd(_interface.get(), Worker::POLL_READ | Worker::POLL_EDGE);
+
+    if (_transmit) {
+        _tx_queue[0].begin();
+        _tx_queue[1].begin();
+    }
+
+    if (_receive) {
+        _rx_queue[0].begin();
+        _rx_queue[1].begin();
+    }
+
+    try {
+        for (;;) {
+            bool wait = true;
+            nox_time_t time_out = ~nox_time_t(0);
+
+            if (_receive) {
+                wait = !recive_data();
+
+                if (_rx_timer.expired(time_out)) {
+                    rx_write_back(NIC_INT_CAUSE_RX_TIMER);
+                }
+            }
+
+            if (_transmit) {
+                wait = !do_tx(_tx_queue[0]) && wait;
+                wait = !do_tx(_tx_queue[1]) && wait;
+
+                nox_time_t time_out_2;
+
+                if (_tx_timer.expired(time_out_2)) {
+                    tx_write_back();
+                }
+
+                time_out = MIN(time_out, time_out_2);
+            }
+
+            if (wait) {
+                _transceiver.wait_event(time_out);
+            }
+        }
+    } catch (...) {
+        if (_receive) {
+            rx_write_back(0);
+        }
+
+        if (_transmit) {
+            tx_write_back();
+        }
+        throw;
+    }
 }
 
 
-void NIC::tx_trigger_handler()
+void* NIC::transceiver_main()
 {
-    NIC_LOG("");
-    trancive();
-}
+    D_MESSAGE("");
 
+    bool quiting = false;
 
-void NIC::rx_trigger_handler()
-{
-    NIC_LOG("");
-    trancive();
+    try {
+        while (!quiting) {
+            D_MESSAGE("fetch cmd");
+            int cmd = _transceiver.wait_cmd();
+            D_MESSAGE("cmd %d", cmd);
+
+            switch (cmd) {
+            case TRANSCEIVE:
+                _transceiver.set_state(TRANSCEIVING);
+                try {
+                    transceive();
+                } catch (Worker::NewCmdException& e) {
+                }
+                break;
+            case QUIT:
+                quiting = true;
+                break;
+            default:
+                D_MESSAGE("invalid cmd");
+            }
+        }
+    } catch (...) {
+    }
+
+    D_MESSAGE("done");
+    _transceiver.set_state(TERMINATED);
+
+    return NULL;
 }
 
 
@@ -1702,8 +1698,8 @@ bool NIC::ether_filter(uint8_t* address)
     uint64_t* addr_table = (uint64_t*)_receive_addr_table;
 
     for (uint i = 0; i < NUM_RECEIVE_ADDR - 1 /*The software device driver can use only
-                                                 entries 0-14. Entry 15 is reserved for
-                                                 manageability firmware usage.*/; i++) {
+                                                entries 0-14. Entry 15 is reserved for
+                                                manageability firmware usage.*/; i++) {
         if ((addr_table[i] & (NIC_RECEIVE_ADDR_VALID | NIC_RECEIVE_ADDR_SELECT_MASK)) !=
                                           (NIC_RECEIVE_ADDR_VALID | NIC_RECEIVE_ADDR_SELECT_DEST)) {
             continue;
@@ -1716,6 +1712,7 @@ bool NIC::ether_filter(uint8_t* address)
 
     return false;
 }
+
 
 inline void NIC::stat32_inc(uint index)
 {
@@ -1740,14 +1737,8 @@ inline void NIC::stat64_add(uint index, uint64_t val)
 
 void NIC::push(uint8_t* packet, uint length)
 {
-    Lock lock(_mutex);
-
     // todo: handle receive filter control register (RFCTL)
     // todo: handle TCP ACK
-
-    if (!phy_link_is_up() || !(_tx_ctrl & NIC_RX_CTRL_ENABLE)) {
-        return;
-    }
 
     stat32_inc(STAT_OFFSET_RX_TOTAL_PACKETS);
     stat64_add(STAT_OFFSET_RX_TOTAL_OCTETS_LOW, length + ETHER_CRC_SIZE);
@@ -1846,7 +1837,10 @@ void NIC::push(uint8_t* packet, uint length)
         return;
     }
 
-    ASSERT(length <= buff_size);
+    if (length > buff_size) {
+        W_MESSAGE_SOME(100, "unhandled small buff size %u length %u", buff_size, length);
+        return;
+    }
 
     memcpy(direct.get()->get_ptr(), packet, length);
     RxExtWBDescriptor wb_descriptor;
@@ -1867,6 +1861,7 @@ void NIC::push(uint8_t* packet, uint length)
     wb_descriptor.vlan = 0;
 
     memory_bus->write(&wb_descriptor, sizeof(wb_descriptor), descriptor_address);
+
     _rx_queue[0].pop();
 
      NIC_LOG("q[%u] POP head %u private %u tail %u ctrl 0x%x", 0,
@@ -1935,49 +1930,6 @@ bool NIC::recive_data()
     }
 
     return true;
-}
-
-
-void NIC::interface_event_handler()
-{
-    trancive();
-}
-
-
-void* NIC::thread_main()
-{
-    try {
-        Lock cmd_lock(_tr_cmd_lock);
-
-        for (;;) {
-            switch (_tr_command) {
-            case TR_CMD_WAIT:
-                tr_set_state(TR_WAITING);
-               _tr_cmd_condition.wait(_tr_cmd_lock);
-                break;
-            case TR_CMD_RUN:
-                tr_set_state(TR_RUNNING);
-                cmd_lock.unlock();
-                _transceiver.run();
-                cmd_lock.lock();
-                break;
-            case TR_CMD_QUIT:
-                tr_set_state(TR_TERMINATED);
-                cmd_lock.unlock();
-                return NULL;
-            default:
-                THROW("invlaid command");
-            }
-        }
-    } catch (Exception& e) {
-        E_MESSAGE("unhndled exception -> %s", e.what());
-    } catch (std::exception& e) {
-         E_MESSAGE("unhndled exception -> %s", e.what());
-    } catch (...) {
-         E_MESSAGE("unhndled exception");
-    }
-
-    return NULL;
 }
 
 
@@ -2089,6 +2041,9 @@ void NIC::common_reset()
     _out_buf_end = _out_buf + sizeof(_out_buf);
     _out_buf_pos = _out_buf;
     _tx_packet_error = false;
+
+    _transmit = false;
+    _receive = false;
 }
 
 
@@ -2192,7 +2147,6 @@ void NIC::nv_load()
 }
 
 
-
 void NIC::soft_reset()
 {
     /* Software Reset - Software can reset the 82574 by writing the Device Reset bit of
@@ -2204,6 +2158,8 @@ void NIC::soft_reset()
     */
 
     D_MESSAGE("");
+
+    transceiver_off();
 
     init_eeprom();
     common_reset();
@@ -2228,6 +2184,23 @@ void NIC::eeprom_reset()
 }
 
 
+void NIC::transceiver_off()
+{
+    _transceiver.command(Worker::CMD_WAIT);
+    _transceiver.wait_state(Worker::STATE_WAITING);
+}
+
+
+void NIC::transceiver_on()
+{
+    if (!phy_link_is_up() || !(_transmit || _receive)) {
+        return;
+    }
+
+    _transceiver.command(TRANSCEIVE);
+}
+
+
 void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
 {
     if ((src & 0x03) || (length & 0x03)) {
@@ -2244,9 +2217,11 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
         Lock lock(_mutex);
 
         switch (src) {
-        case NIC_REG_INT_CAUSE_READ:
+        case NIC_REG_INT_CAUSE_READ: {
             *dest_32 = _int_cause;
             NIC_LOG("INT_CAUSE_READ 0x%x", _int_cause);
+
+            Lock lock(_int_mutex);
 
             if (_int_mask == 0) {
                 _int_cause = 0;
@@ -2258,8 +2233,8 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             }
 
             update_interrupt_level();
-
             break;
+        }
         case NIC_REG_INT_MASK_SET:
             *dest_32 = _int_mask;
             break;
@@ -2458,6 +2433,7 @@ inline void NIC::update_interrupt_level()
 
 inline void NIC::interrupt(uint32_t cause)
 {
+    Lock lock(_int_mutex);
     _int_cause |= cause;
     update_interrupt_level();
 }
@@ -2470,11 +2446,6 @@ void NIC::phy_reset_interface(const char* interface_name)
     // brctl addif br0 tap0
 
     try {
-        if (_interface_event) {
-            _interface_event->destroy();
-            _interface_event = NULL;
-        }
-
         _interface.reset(-1);
 
         if (!is_phy_power_up()) {
@@ -2510,9 +2481,6 @@ void NIC::phy_reset_interface(const char* interface_name)
 
         I_MESSAGE("net intrface is %s", ifr.ifr_ifrn.ifrn_name);
 
-        _interface_event = _transceiver.create_fd_event(tun.get(),
-                                                     (void_callback_t)&NIC::interface_event_handler,
-                                                     this);
         _interface.reset(tun.release());
     } catch (Exception& e) {
         W_MESSAGE("%s", e.what());
@@ -2554,6 +2522,8 @@ void NIC::phy_reset()
 {
     D_MESSAGE("");
 
+    transceiver_off();
+
     phy_reset_common();
 
     _phy_ctrl = PHY_CTRL_AUTO_NEGOTIATION | PHY_CTRL_DUPLEX_MODE | PHY_CTRL_SPEED_MSB;
@@ -2585,6 +2555,8 @@ void NIC::phy_reset()
     phy_reset_interface("tap0");
     phy_update_link_state();
     auto_negotiation();
+
+    transceiver_on();
 }
 
 
@@ -2613,6 +2585,7 @@ void NIC::phy_soft_reset()
 {
     D_MESSAGE("");
 
+    transceiver_off();
     phy_reset_common();
 
     _phy_ctrl &= PHY_CTRL_SPEED_LSB | PHY_CTRL_AUTO_NEGOTIATION  | PHY_CTRL_POWER_DOWN |
@@ -2631,6 +2604,8 @@ void NIC::phy_soft_reset()
     } else {
         phy_manual_config();
     }
+
+    transceiver_on();
 }
 
 
@@ -2666,7 +2641,7 @@ void NIC::mac_update_link_state()
 
     _status |= ((duplex) ? NIC_STATUS_DUPLEX: 0);
 
-   _status |= (_phy_0_copper_status_1 & PHY_P0_COPPER_STATUS_1_LINK_UP) ? NIC_STATUS_LINK_UP : 0;
+    _status |= (_phy_0_copper_status_1 & PHY_P0_COPPER_STATUS_1_LINK_UP) ? NIC_STATUS_LINK_UP : 0;
 
     /* If flow control is enabled in the 82574, the settings for the desired flow control
        behavior must be set by software in the PHY registers and auto-negotiation restarted.
@@ -2994,18 +2969,6 @@ void NIC::speed_detection()
 }
 
 
-inline void NIC::tx_trigger()
-{
-    _tx_trigger->trigger();
-}
-
-
-inline void NIC::rx_trigger()
-{
-    _rx_trigger->trigger();
-}
-
-
 void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
 {
     if ((dest & 0x03) || (length & 0x03)) {
@@ -3022,16 +2985,20 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
         Lock lock(_mutex);
 
         switch (dest) {
-        case NIC_REG_INT_MASK_CLEAR:
+        case NIC_REG_INT_MASK_CLEAR: {
             NIC_LOG("NIC_REG_INT_MASK_CLEAR 0x%x", *src_32);
+            Lock lock(_int_mutex);
             _int_mask &= ~*src_32;
             update_interrupt_level();
             break;
-        case NIC_REG_INT_MASK_SET:
+        }
+        case NIC_REG_INT_MASK_SET: {
             NIC_LOG("NIC_REG_INT_MASK_SET 0x%x", *src_32);
+            Lock lock(_int_mutex);
             _int_mask = *src_32 & NIC_INT_MASK_SET_MASK;
             update_interrupt_level();
             break;
+        }
         case NIC_REG_SOFT_SEM:
             _soft_sem = *src_32 & NIC_SOFT_SEM_MASK;
             break;
@@ -3101,40 +3068,46 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             }
 
             break;
-        case NIC_REG_RX_CTRL:
-            if ((_rx_ctrl & NIC_RX_CTRL_ENABLE) != (*src_32 & NIC_RX_CTRL_ENABLE)) {
-                if ((*src_32 & NIC_RX_CTRL_ENABLE)) {
-                    NIC_LOG("start RX");
-                    _rx_queue[0].begin();
-                    _rx_queue[1].begin();
-                } else {
-                    NIC_LOG("stop RX");
-                    rx_write_back(0);
-                }
-            }
+        case NIC_REG_RX_CTRL: {
+            uint32_t rx_ctrl = _rx_ctrl;
+
             _rx_ctrl = *src_32 & ~NIC_RX_CTRL_RESERVED;
 
-            if ((_rx_ctrl & NIC_RX_CTRL_ENABLE)) {
-                rx_trigger();
+            if ((_rx_ctrl & NIC_RX_CTRL_ENABLE) != (rx_ctrl & NIC_RX_CTRL_ENABLE)) {
+                transceiver_off();
+
+                if ((_rx_ctrl & NIC_RX_CTRL_ENABLE)) {
+                    NIC_LOG("start RX");
+                    _receive = true;
+                } else {
+                    NIC_LOG("stop RX");
+                    _receive = false;
+                }
+
+                transceiver_on();
             }
             break;
-        case NIC_REG_TX_CTRL:
-            if ((_tx_ctrl & NIC_TX_CTRL_ENABLE) != (*src_32 & NIC_TX_CTRL_ENABLE)) {
-                if ((*src_32 & NIC_TX_CTRL_ENABLE)) {
-                    NIC_LOG("start TX");
-                    _tx_queue[0].begin();
-                    _tx_queue[1].begin();
-                } else {
-                    NIC_LOG("stop TX");
-                    tx_write_back();
-                }
-            }
+        }
+        case NIC_REG_TX_CTRL: {
+            uint32_t tx_ctrl = _tx_ctrl;
+
             _tx_ctrl = *src_32 & ~NIC_TX_CTRL_RESERVED;
 
-            if ((_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
-                tx_trigger();
+            if ((_tx_ctrl & NIC_TX_CTRL_ENABLE) != (tx_ctrl & NIC_TX_CTRL_ENABLE)) {
+                transceiver_off();
+
+                if ((_tx_ctrl & NIC_TX_CTRL_ENABLE)) {
+                    NIC_LOG("start TX");
+                    _transmit = true;
+                } else {
+                    NIC_LOG("stop TX");
+                    _transmit = false;
+                }
+
+                transceiver_on();
             }
             break;
+        }
         case NIC_REG_EEPROM_READ:
             _rom_read = *src_32 & ~(NIC_EEPROM_READ_START | NIC_EEPROM_READ_DONE);
 
@@ -3181,16 +3154,20 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             _packet_buff_alloc = rx_size | (tx_size << NIC_PACKET_BUFF_ALLOC_TX_SHIFT);
             break;
         }
-        case NIC_REG_INT_CAUSE_READ:
+        case NIC_REG_INT_CAUSE_READ: {
+            Lock lock(_int_mutex);
             _int_cause &= ~*src_32;
             NIC_LOG("NIC_REG_INT_CAUSE_READ 0x%x", *src_32);
             update_interrupt_level();
             break;
-        case NIC_REG_INT_CAUSE_SET:
+        }
+        case NIC_REG_INT_CAUSE_SET: {
+            Lock lock(_int_mutex);
             _int_cause |= *src_32 & NIC_INT_CAUSE_SET_MASK;
             NIC_LOG("NIC_REG_INT_CAUSE_SET 0x%x", *src_32);
             update_interrupt_level();
             break;
+        }
         case NIC_REG_INT_AUTO_MASK:
             _auto_mask = *src_32 & NIC_INT_AUTO_MASK_MASK;
             NIC_LOG("NIC_REG_INT_AUTO_MASK 0x%x 0x%x", *src_32, *src_32 & NIC_INT_AUTO_MASK_MASK);
@@ -3246,7 +3223,6 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
                       *src_32 & 0xffff,
                       _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8].num_items());
             _rx_queue[(dest - NIC_REG_RX_DESCRIPTOR_TAIL_0) >> 8].set_tail(*src_32 & 0xffff);
-            rx_trigger();
             break;
         case NIC_REG_RX_INT_DELAY_VAL:
            _rx_timer.set_val(*src_32);
@@ -3307,7 +3283,7 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
                       *src_32 & 0xffff,
                       _rx_queue[(dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8].num_items());
             _tx_queue[(dest - NIC_REG_TX_DESCRIPTOR_TAIL_0) >> 8].set_tail(*src_32 & 0xffff);
-            tx_trigger();
+            /*if (?)*/ _transceiver.wakeup();
             break;
         case NIC_REG_TX_INT_DELAY_VAL:
             _tx_timer.set_val(*src_32);

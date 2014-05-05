@@ -27,8 +27,9 @@
 #ifndef _H_NIC
 #define _H_NIC
 
+#include "worker.h"
 #include "pci_device.h"
-#include "run_loop.h"
+
 
 class NoxVM;
 struct LegacyTxDescriptor;
@@ -123,40 +124,33 @@ private:
 
     class NicTimer {
     public:
-        NicTimer(const char* name, Timer* a, Timer* b);
-        ~NicTimer();
+        NicTimer(const char* name);
 
         void reset();
         void arm();
         void disarm();
-        void resume();
-        void suspend();
+        bool expired(nox_time_t& timeout);
 
         void set_val(uint32_t val);
         void set_abs_val(uint32_t val);
-
         uint32_t private_delay_val() { return _delay_val;}
 
     private:
         std::string _name;
-        Timer* _timer;
-        Timer* _abs_timer;
-        bool _abs_timer_armed;
         uint32_t _delay_val;
         uint32_t _abs_delay_val;
+        nox_time_t _trigger;
+        nox_time_t _abs_time;
+        nox_time_t _suspend_time;
     };
 
 private:
     void init_statistic_ctrl();
-    void tx_timer_handler();
+    void __tx_write_back(Queue& queue);
     void tx_write_back(Queue& queue);
     void tx_write_back();
-    void rx_timer_handler();
-    void rx_write_back(Queue& queue, uint32_t cause);
+    void __rx_write_back(Queue& queue, uint32_t cause);
     void rx_write_back(uint32_t cause);
-    void tr_cmd(uint cmd);
-    void tr_wait(uint cmd);
-    void tr_set_state(int state);
     void set_tx_packet_error(LegacyTxDescriptor& descriptor);
     void set_tx_packet_error(TxDataDescriptor& descriptor);
     void set_tx_packet_error(bool eop);
@@ -168,17 +162,17 @@ private:
     void handle_tx_data(TxDataDescriptor& descriptor);
     void handle_tx_context(TxContextDescriptor& descriptor);
     bool do_tx(Queue& queue);
-    void tx_trigger_handler();
-    void rx_trigger_handler();
-    void interface_event_handler();
-    void* thread_main();
     bool ether_filter(uint8_t* address);
     void push(uint8_t* packet, uint length);
     void drop(uint8_t *buf, ssize_t n);
     bool recive_data();
-    void trancive();
     void stat32_inc(uint index);
     void stat64_add(uint index, uint64_t val);
+
+    void transceive();
+    void* transceiver_main();
+    void transceiver_off();
+    void transceiver_on();
 
     void csr_read(uint64_t src, uint64_t length, uint8_t* dest);
     void csr_write(const uint8_t* src, uint64_t length, uint64_t dest);
@@ -216,35 +210,29 @@ private:
     void phy_manual_config();
     bool phy_link_is_up() { return _interface.is_valid();}
 
-    void tx_trigger();
-    void rx_trigger();
-
 private:
     Mutex _mutex;
+    Mutex _int_mutex;
+    Mutex _rx_wb_mutex;
+    Mutex _tx_wb_mutex;
+
     uint8_t _in_buf[NIC_MAX_LONG_PACKET_SIZE];
     uint8_t _out_buf[NIC_MAX_LONG_PACKET_SIZE];
     uint8_t* _out_buf_end;
     uint8_t* _out_buf_pos;
     bool _tx_packet_error;
-    int _tr_state;
-    int _tr_command;
     uint32_t _io_address;
     AutoFD _interface;
-    RunLoop _transceiver;
-    Event* _tx_trigger;
-    Event* _rx_trigger;
-    FDEvent* _interface_event;
     NicTimer _tx_timer;
     NicTimer _rx_timer;
-    Thread _thread;
-    Mutex _tr_cmd_lock;
-    Condition _tr_cmd_condition;
-    Mutex _tr_state_lock;
-    Condition _tr_state_condition;
     TxContextDescriptor _seg_context;
     TxContextDescriptor _offload_context;
     uint8_t _seg_tcp_save;
     uint _seg_max_mess_length;
+    bool _transmit;
+    bool _receive;
+    Worker _transceiver;
+    Thread _transceiver_thread;
 
     uint32_t _ctrl;
     uint32_t _status;
