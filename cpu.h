@@ -231,6 +231,7 @@ private:
     bool _test_interrupts;
     uint _interrupt_mark_set;
     uint _interrupt_mark_get;
+    volatile bool _sig_usr1_hit;
     Mutex _trap_mutex;
     Condition _trap_condition;
     bool (CPU::*_trap)();

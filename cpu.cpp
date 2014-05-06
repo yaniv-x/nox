@@ -217,6 +217,7 @@ void sig_usr1_handler(int sig_num)
 
     if (cpu) {
         cpu->_kvm_run->request_interrupt_window = 1;
+        cpu->_sig_usr1_hit = true;
     }
 }
 
@@ -1901,8 +1902,6 @@ bool CPU::interrupt_test()
 
         if (is_apic_soft_enabled()) {
 
-            Lock lock(_interrupt_request_mutex);
-
             int irr = find_high_interrupt(_apic_regs + APIC_OFFSET_IRR);
 
             if (irr != -1 && (irr >> 4) > (_apic_regs[APIC_OFFSET_PROCESSOR_PRIORITY] >> 4)) {
@@ -1997,9 +1996,8 @@ void CPU::run_loop()
             break;
         }
 
-        //block SIGUSR1
-
         _kvm_run->request_interrupt_window = 0;
+        _sig_usr1_hit = false;
 
         _executing = true;
 
@@ -2036,6 +2034,11 @@ void CPU::run_loop()
                     _kvm_run->request_interrupt_window = _test_interrupts;
                 }
             }
+        }
+
+        if (_sig_usr1_hit && !_kvm_run->request_interrupt_window  && interrupt_test()) {
+            D_MESSAGE("possible SIGUSR1 race");
+            _kvm_run->request_interrupt_window = 1;
         }
 
         if (ioctl(_vcpu_fd.get(), KVM_RUN, 0) == -1) {
