@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -222,7 +222,11 @@ void KbdController::compile_mouse_packet()
     _mouse_output.buf.insert(_mouse_dx);
     _mouse_output.buf.insert(_mouse_dy);
 
-    _mouse_dx = _mouse_dy = 0;
+    if (_intelli_mouse) {
+        _mouse_output.buf.insert(_mouse_dz);
+    }
+
+    _mouse_dx = _mouse_dy = _mouse_dz = 0;
     _mouse_packet_pending = false;
 }
 
@@ -365,12 +369,15 @@ void KbdController::reset_mouse(bool cold)
     _mouse_packet_pending = false;
     _mouse_dx = 0;
     _mouse_dy = 0;
+    _mouse_dz = 0;
     _mouse_buttons = 0;
     _mouse_write_state = MOUSE_WRITE_STATE_CMD,
     restore_mouse_defaults();
     _mouse_output.buf.reset();
     _mouse_output.reply_count = 0;
     _mouse_output.reply = 0;
+    _intelli_mouse = false;
+    _sens = 0;
 
     if (cold) {
         _mouse_output.irq_wire.reset();
@@ -441,10 +448,20 @@ void KbdController::write_to_mouse(uint8_t val)
 
     bool resend = !_mouse_output.buf.is_empty();
     _mouse_output.buf.reset();
-    _mouse_dx = _mouse_dy = 0;
+    _mouse_dx = _mouse_dy = _mouse_dz = 0;
 
     switch (write_state) {
     case MOUSE_WRITE_STATE_CMD:
+
+        if (val == MOUSE_CMD_SAMPLE_RATE) {
+            mouse_put_reply(KBD_ACK);
+            // temporarily disabel streaming ?
+            _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
+            break;
+        }
+
+        _sens = 0;
+
         switch (val) {
         case MOUSE_CMD_READ_DATA:
             mouse_put_reply(KBD_ACK);
@@ -471,11 +488,6 @@ void KbdController::write_to_mouse(uint8_t val)
             // temporarily disabel streaming ?
             _mouse_write_state = MOUSE_WRITE_STATE_RESOLUTION;
             break;
-        case MOUSE_CMD_SAMPLE_RATE:
-            mouse_put_reply(KBD_ACK);
-            // temporarily disabel streaming ?
-            _mouse_write_state = MOUSE_WRITE_STATE_SAMPLE_RATE;
-            break;
         case MOUSE_CMD_ENABLE_DATA_REPORTING:
             mouse_put_reply(KBD_ACK);
             _mouse_reporting = true;
@@ -497,7 +509,7 @@ void KbdController::write_to_mouse(uint8_t val)
             break;
         case MOUSE_CMD_READ_ID:
             mouse_put_reply(KBD_ACK);
-            mouse_put_reply(0);
+            mouse_put_reply((_intelli_mouse) ? 3 : 0);
             break;
         case MOUSE_CMD_DISABLE_DATA_REPORTING:
             mouse_put_reply(KBD_ACK);
@@ -535,6 +547,10 @@ void KbdController::write_to_mouse(uint8_t val)
     case MOUSE_WRITE_STATE_SAMPLE_RATE:
         uint8_t rates[]= {10, 20, 40, 60, 80, 100, 200};
         std::set<uint8_t> rates_set(rates, rates + sizeof(rates));
+
+        if (!_intelli_mouse && (_sens = ((_sens & 0xffff) << 8) | val) == 0xc86450) {
+            _intelli_mouse = true;
+        }
 
         if (rates_set.find(val) == rates_set.end()) {
             mouse_put_reply(KBD_NAK);
@@ -1108,6 +1124,26 @@ void KbdController::mouse_motion(int dx, int dy)
 
     _mouse_dx += dx;
     _mouse_dy -= dy;
+
+    if (!mouse_stream_test()) {
+        return;
+    }
+
+    push_mouse_packet();
+}
+
+
+void KbdController::mouse_z_motion(int dz)
+{
+    RLock state_lock(get_nox().get_state_lock());
+
+    if (get_state() != VMPart::RUNNING) {
+        return;
+    }
+
+    Lock lock(_mutex);
+
+    _mouse_dz += dz;
 
     if (!mouse_stream_test()) {
         return;

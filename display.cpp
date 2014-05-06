@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -361,6 +361,12 @@ void NoxDisplay::on_button_press(unsigned int x_button)
         break;
     case Button3:
         _kbd.mouse_button_press(KbdController::MOUSE_RIGHT_BUTTON);
+        break;
+    case Button4:
+        _kbd.mouse_z_motion(-1);
+        break;
+    case Button5:
+        _kbd.mouse_z_motion(1);
         break;
     }
 }

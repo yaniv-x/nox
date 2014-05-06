@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -75,6 +75,7 @@ public:
     void key_down(NoxKey code);
     void key_up(NoxKey code);
     void mouse_motion(int dx, int dy);
+    void mouse_z_motion(int dz);
 
     enum MouseButton {
         MOUSE_LEFT_BUTTON,
@@ -148,6 +149,8 @@ private:
     bool _mouse_reporting;
     bool _mouse_reomte_mode;
     bool _mouse_warp_mode;
+    uint _sens;
+    bool _intelli_mouse;
     uint8_t _mouse_resolution;
     uint8_t _mouse_sample_rate;
     uint8_t _mouse_buttons;
@@ -155,6 +158,7 @@ private:
     bool _mouse_packet_pending;
     int32_t _mouse_dx;
     int32_t _mouse_dy;
+    int32_t _mouse_dz;
 
     uint8_t _state;
     uint8_t _command_byte;
