@@ -81,6 +81,7 @@ public:
     void vm_reset();
     void vm_power_off();
     void vm_sleep(CPU& initiator);
+    void vm_wakeup();
     void vm_start(compleation_routin_t cb, void* opaque);
     void vm_freeze(compleation_routin_t cb, void* opaque);
     void vm_restart(compleation_routin_t cb, void* opaque);
@@ -189,6 +190,7 @@ private:
 
     friend class FreezeRequest;
     friend class SleepRequest;
+    friend class WakeupRequest;
     friend class StartRequest;
     friend class ResetRequest;
     friend class DownRequest;

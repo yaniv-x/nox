@@ -1119,9 +1119,9 @@ bool StartRequest::start(NoxVM& vm)
             return true;
         }
     case VMPart::READY:
-    case VMPart::SLEEPING:
         return vm.start();
     case VMPart::RUNNING:
+    case VMPart::SLEEPING:
         return true;
     default:
         PANIC("unexpected state");
@@ -1518,10 +1518,12 @@ SleepRequest::SleepRequest(CPU& initiator)
 {
 }
 
+
 bool SleepRequest::test(NoxVM& vm)
 {
     return vm.get_state() == VMPart::RUNNING &&  _initiator.pending_sleep_request();
 }
+
 
 bool SleepRequest::start(NoxVM& vm)
 {
@@ -1543,11 +1545,63 @@ bool SleepRequest::cont(NoxVM& vm)
     return true;
 }
 
+
 void NoxVM::vm_sleep(CPU& initiator)
 {
     Lock lock(_state_request_mutex);
 
     _stat_change_req_list.push_back(new SleepRequest(initiator));
+
+    if (_stat_change_req_list.size() == 1) {
+        AutoRef<StateChngeTask> task(new StateChngeTask(*this));
+        application->add_task(task.get());
+    }
+}
+
+
+class WakeupRequest: public NoxVM::StateChangeRequest {
+public:
+    WakeupRequest();
+
+    virtual bool test(NoxVM& vm);
+    virtual bool start(NoxVM& vm);
+    virtual bool cont(NoxVM& vm);
+};
+
+
+WakeupRequest::WakeupRequest()
+    : NoxVM::StateChangeRequest(NULL, NULL)
+{
+}
+
+
+bool WakeupRequest::test(NoxVM& vm)
+{
+    return vm.get_state() == VMPart::SLEEPING;
+}
+
+
+bool WakeupRequest::start(NoxVM& vm)
+{
+    if (vm.get_state() != VMPart::SLEEPING) {
+        PANIC("unexpected state");
+    }
+
+    return vm.start();;
+}
+
+
+bool WakeupRequest::cont(NoxVM& vm)
+{
+    return vm.start();
+}
+
+
+void NoxVM::vm_wakeup()
+{
+    Lock lock(_state_request_mutex);
+
+    _stat_change_req_list.push_back(new WakeupRequest());
 
     if (_stat_change_req_list.size() == 1) {
         AutoRef<StateChngeTask> task(new StateChngeTask(*this));
