@@ -161,6 +161,8 @@ enum {
 enum {
     CR0_CD = (1 << 30),
     CR0_NW = (1 << 29),
+
+    MSR_TSC = 0x10,
 };
 
 
@@ -399,6 +401,47 @@ void CPU::setup_cpuid()
 
     if (ioctl(_vcpu_fd.get(), KVM_SET_CPUID2, &cpuid_info) == -1) {
          THROW("set cpuid failed");
+    }
+}
+
+
+uint64_t CPU::get_tsc()
+{
+    uint8_t msrs_storage[sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry)];
+    struct kvm_msrs* msrs_ptr = (struct kvm_msrs*)msrs_storage;
+
+    msrs_ptr->nmsrs = 1;
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Warray-bounds"
+    msrs_ptr->entries[0].index = MSR_TSC;
+
+    int r = ioctl(_vcpu_fd.get(), KVM_GET_MSRS, msrs_ptr);
+
+    if (r < 0) {
+        W_MESSAGE("get TCS MSR failed");
+    }
+
+    return msrs_ptr->entries[0].data;
+    #pragma GCC diagnostic pop
+}
+
+
+void CPU::set_tsc(uint64_t tcs)
+{
+    uint8_t msrs_storage[sizeof(struct kvm_msrs) + sizeof(struct kvm_msr_entry)];
+    struct kvm_msrs* msrs_ptr = (struct kvm_msrs*)msrs_storage;
+
+    msrs_ptr->nmsrs = 1;
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Warray-bounds"
+    msrs_ptr->entries[0].index = MSR_TSC;
+    msrs_ptr->entries[0].data = tcs;
+    #pragma GCC diagnostic pop
+
+    int r = ioctl(_vcpu_fd.get(), KVM_SET_MSRS, msrs_ptr);
+
+    if (r < 0) {
+        W_MESSAGE("set TCS MSR failed");
     }
 }
 
@@ -758,6 +801,7 @@ void CPU::reset()
     _nmi = false;
     _init_trap = false;
     _startup_address = 0;
+    _break_tsc = 0;
 
     __sync_and_and_fetch(&_execution_break,
                          ~((1 << EXECUTION_BREAK_SLEEP_BIT) | (1 << EXECUTION_BREAK_INIT_BIT)));
@@ -1929,6 +1973,10 @@ void CPU::apic_rearm_timer()
 
 void CPU::run_loop()
 {
+    if (_break_tsc) {
+        set_tsc(_break_tsc);
+    }
+
     apic_rearm_timer();
 
     trap_wait();
@@ -1943,6 +1991,9 @@ void CPU::run_loop()
             if (_execution_break & (1 << EXECUTION_BREAK_SLEEP_BIT)) {
                 throw SleepException();
             }
+
+            _break_tsc = get_tsc();
+
             break;
         }
 

@@ -150,6 +150,8 @@ private:
     void handle_io();
     void set_cpu_state(CPUState state);
     void setup_cpuid();
+    uint64_t get_tsc();
+    void set_tsc(uint64_t tcs);
     void save_init_msrs();
     void create();
     void interrupt_kvm();
@@ -254,6 +256,7 @@ private:
     Timer* _interrupt_kvm_timer;
     bool _interrupt_kvm_timer_active;
     bool _amd_processor;
+    uint64_t _break_tsc;
 
     friend void sig_usr1_handler(int sig_num);
 };
