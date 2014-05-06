@@ -78,11 +78,16 @@ enum {
     NIC_REG_INT_THROTTLING = 0xc4,
     NIC_REG_INT_CAUSE_SET = 0xc8,
     NIC_REG_INT_MASK_SET = 0xd0,
+    NIC_REG_INT_AUTO_CLEAR = 0xdc,
     NIC_REG_INT_MASK_CLEAR = 0xd8,
     NIC_REG_INT_AUTO_MASK = 0xe0,
+    NIC_REG_INT_VEC_ALLOC = 0xe4,
+    NIC_REG_INT_EXT_THROTTLING_START = 0xe8,
+    NIC_REG_INT_EXT_THROTTLING_END = NIC_REG_INT_EXT_THROTTLING_START + 12,
     NIC_REG_RX_CTRL = 0x100,
     NIC_REG_FLOW_CTRL_TTV = 0x170,
     NIC_REG_TX_CTRL = 0x400,
+    NIC_REG_TX_TIG = 0x410,
     NIC_REG_ADAPT_IFS_THROT = 0x458,
     NIC_REG_LED_CTRL = 0xe00,
     NIC_REG_EXT_CONF_CTRL = 0xf00,
@@ -133,6 +138,7 @@ enum {
     NIC_REG_VLAN_FILTER_TABLE_ARRAY = 0x5600,
     NIC_REG_WAKEUP_CTRL = 0x5800,
     NIC_REG_WAKEUP_FILTER = 0x5808,
+    NIC_REG_WAKEUP_STATUS = 0x5810,
     NIC_REG_MULTI_RQ_CMD = 0x5818,
     NIC_REG_MNG_CTRL = 0x5820,
     NIC_REG_3GIO_CTRL_1 = 0x05B00,
@@ -246,6 +252,8 @@ enum {
 
     NIC_TX_DESCRIPTOR_ADDRESS_LOW_MASK = ~0x0f,
     NIC_TX_DESCRIPTOR_LENGTH_MASK = 0x0fff80,
+
+    NIC_TX_TIG_RESERVED = 0x03 << 30,
 
     NIC_EEPROM_READ_START = (1 << 0),
     NIC_EEPROM_READ_DONE = (1 << 1),
@@ -772,6 +780,15 @@ static inline uint32_t combine32(uint32_t val, uint32_t mask, uint32_t store)
 }
 
 
+#ifdef NIC_DEBUG
+static void unhandled()
+{
+}
+#else
+#define unhandled()
+#endif
+
+
 void NIC::Queue::reset(uint32_t qx_cause_mask)
 {
     _public_head = 0;
@@ -1094,11 +1111,16 @@ inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
                                TX_DESCRIPTOR_INSERT_CHECKSUM)) != TX_DESCRIPTOR_INSERT_FCS ||
                                             (descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
         D_MESSAGE("unhandled cmd 0x%x status 0x%x", descriptor.command, descriptor.status);
+        unhandled();
         set_tx_packet_error(descriptor);
         return;
     }
 
     uint length = descriptor.length;
+
+    if (length < NIC_MIN_PACKET_SIZE - ETHER_CRC_SIZE && (_tx_ctrl & NIC_TX_CTRL_PAD_SHORT)) {
+        W_MESSAGE_SOME(100, "ignoring pad request");
+    }
 
     std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address,
                                                               length));
@@ -1129,6 +1151,10 @@ inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
         length =  _out_buf_pos - _out_buf;
         _out_buf_pos = _out_buf;
         buf = _out_buf;
+    }
+
+    if (length < NIC_MIN_PACKET_SIZE - ETHER_CRC_SIZE && (_tx_ctrl & NIC_TX_CTRL_PAD_SHORT)) {
+        W_MESSAGE_SOME(100, "ignoring pad request");
     }
 
     if (write(_interface.get(), buf, length) != length) {
@@ -1291,6 +1317,7 @@ inline void NIC::handle_tx_segments(TxDataDescriptor& descriptor, uint8_t* buf, 
 {
     if ((_seg_context.mix_v[3] & TX_DESCRIPTOR_CMD_SNAP)) {
         D_MESSAGE("unhandled SNAP");
+        unhandled();
         set_tx_packet_error(descriptor);
         return;
     }
@@ -1387,6 +1414,7 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
     if ((descriptor.mix_v[3] & (TX_DESCRIPTOR_CMD_VLAN | TX_DESCRIPTOR_INSERT_FCS)) !=
             TX_DESCRIPTOR_INSERT_FCS || (descriptor.status & TX_DESCRIPTOR_STATUS_EXTCMD_TS)) {
         D_MESSAGE("unhandled cmd 0x%x status 0x%x", descriptor.mix_v[3], descriptor.status);
+        unhandled();
         set_tx_packet_error(descriptor);
         return;
     }
@@ -1429,6 +1457,10 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
     uint32_t tufix = (descriptor.packet_opt & TX_DESCRIPTOR_POPTS_TXSM) ?
                                 insert_cheacksum(_offload_context.tucso, _offload_context.tucss,
                                                  _offload_context.tucse, buf, length) : 0;
+
+    if (length < NIC_MIN_PACKET_SIZE - ETHER_CRC_SIZE && (_tx_ctrl & NIC_TX_CTRL_PAD_SHORT)) {
+        W_MESSAGE_SOME(100, "ignoring pad request");
+    }
 
     if (write(_interface.get(), buf, length) != length) {
         int err = errno;
@@ -1744,7 +1776,8 @@ void NIC::push(uint8_t* packet, uint length)
     stat64_add(STAT_OFFSET_RX_TOTAL_OCTETS_LOW, length + ETHER_CRC_SIZE);
 
     if ((_multi_rq_command & NIC_MULTI_RQ_CMD_ENABLE_MASK) == 1) {
-        W_MESSAGE_SOME(100, "unhandled NIC_MULTI_RQ_CMD_ENABLE_MASK");
+        W_MESSAGE_SOME(10, "unhandled NIC_MULTI_RQ_CMD_ENABLE_MASK");
+        unhandled();
         return;
     }
 
@@ -1794,16 +1827,16 @@ void NIC::push(uint8_t* packet, uint length)
     stat32_inc(STAT_OFFSET_RX_GOOD_PACKETS);
     stat64_add(STAT_OFFSET_RX_GOOD_OCTETS_LOW, length + ETHER_CRC_SIZE);
 
-    if ((_rx_ctrl & NIC_RX_CTRL_DTYP_MASK) || !(_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN)) {
-        W_MESSAGE_SOME(100, "unhandled descriptor type");
-        return;
-    }
-
-    //extended Rx descriptor
-
     if ((_rx_ctrl & (NIC_RX_CTRL_VFE | NIC_RX_CTRL_CFIEN | NIC_RX_CTRL_SECRC)) !=
                                                                                 NIC_RX_CTRL_SECRC) {
         W_MESSAGE_SOME(100, "unhandled options 0x%x", _rx_ctrl);
+        unhandled();
+        return;
+    }
+
+    if ((_rx_ctrl & NIC_RX_CTRL_DTYP_MASK)) {
+        W_MESSAGE_SOME(100, "unhandled descriptor type");
+        unhandled();
         return;
     }
 
@@ -1815,7 +1848,7 @@ void NIC::push(uint8_t* packet, uint length)
         buff_size >>= ((_rx_ctrl & NIC_RX_CTRL_BSIZE_MASK) >> NIC_RX_CTRL_BSIZE_SHIFT);
     }
 
-    RxExtReadDescriptor read_descriptor;
+    LegacyRxDescriptor legacy;
     uint64_t descriptor_address = _rx_queue[0].head_address();
 
     NIC_LOG("q[%u] address  0x%lx base 0x%lx size %u", 0,
@@ -1823,44 +1856,55 @@ void NIC::push(uint8_t* packet, uint length)
                   _rx_queue[0].get_base_address(),
                   _rx_queue[0].num_items());
 
-    memory_bus->read(descriptor_address, sizeof(read_descriptor), &read_descriptor);
+    memory_bus->read(descriptor_address, sizeof(legacy), &legacy);
 
-    if (!read_descriptor.address) {
+    if (!legacy.address) {
         D_MESSAGE("null descriptor");
         return;
     }
 
-    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(read_descriptor.address, buff_size));
+    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(legacy.address, buff_size));
 
     if (!direct.get()) {
-        D_MESSAGE("data access failed 0x%lx %u", read_descriptor.address, buff_size);
+        D_MESSAGE("data access failed 0x%lx %u", legacy.address, buff_size);
         return;
     }
 
     if (length > buff_size) {
         W_MESSAGE_SOME(100, "unhandled small buff size %u length %u", buff_size, length);
+        unhandled();
         return;
     }
 
     memcpy(direct.get()->get_ptr(), packet, length);
-    RxExtWBDescriptor wb_descriptor;
-    wb_descriptor.mrq = 0;
 
-    if ((_rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_PACKET_DISABLE)) {
-        wb_descriptor.rss = 0;
-    } else {
-        uint32_t start = _rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_START_MASK;
-        wb_descriptor.no_rss.packet_checksum = checksum16(packet + start,
-                                                          MAX(0, (int)(length - start)));
-        wb_descriptor.no_rss.ip_identification = 0; // software device driver should ignore this
-                                                    // field when status.IPIDV is not set
+    if ((_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN)) { // extended mode
+        RxExtWBDescriptor wb_descriptor;
+        wb_descriptor.mrq = 0;
+
+        if ((_rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_PACKET_DISABLE)) {
+            wb_descriptor.rss = 0;
+        } else {
+            uint32_t start = _rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_START_MASK;
+            wb_descriptor.no_rss.packet_checksum = checksum16(packet + start,
+                                                            MAX(0, (int)(length - start)));
+            wb_descriptor.no_rss.ip_identification = 0; // software device driver should ignore this
+                                                        // field when status.IPIDV is not set
+        }
+
+        wb_descriptor.length = length;
+        wb_descriptor.status = RX_DESCRIPTOR_STATUS_DD | RX_DESCRIPTOR_STATUS_EOP;
+        wb_descriptor.vlan = 0;
+
+        memory_bus->write(&wb_descriptor, sizeof(wb_descriptor), descriptor_address);
+    } else { // Legacy mode
+        legacy.error = 0;
+        legacy.checksum = 0;
+        legacy.length = length;
+        legacy.status = RX_DESCRIPTOR_STATUS_DD | RX_DESCRIPTOR_STATUS_EOP;;
+        legacy.vlan = 0;
+        memory_bus->write(&legacy, sizeof(legacy), descriptor_address);
     }
-
-    wb_descriptor.length = length;
-    wb_descriptor.status = RX_DESCRIPTOR_STATUS_DD | RX_DESCRIPTOR_STATUS_EOP;
-    wb_descriptor.vlan = 0;
-
-    memory_bus->write(&wb_descriptor, sizeof(wb_descriptor), descriptor_address);
 
     _rx_queue[0].pop();
 
@@ -1995,8 +2039,11 @@ void NIC::common_reset()
 
     _int_cause = 0;
     _int_throttling = 0;
+    memset(_int_ext_throttling, 0, sizeof(_int_ext_throttling));
     _int_mask = 0;
     _auto_mask = 0;
+    _int_auto_clear = 0;
+    _int_vec_alloc = 0;
 
     _ctrl = NIC_CTRL_FULL_DUPLEX | (NIC_SPEED_1000 << NIC_CTRL_SPEED_SHIFT) |
             NIC_CTRL_ADVD3WUC | NIC_CTRL_RESREVED_SET;
@@ -2070,6 +2117,7 @@ void NIC::reset()
     _soft_sem = 0;
     _receive_addr_table[(NUM_RECEIVE_ADDR - 1) * 2] = 0;
     _receive_addr_table[(NUM_RECEIVE_ADDR - 1) * 2 + 1] = 0;
+    _tx_tig = 0x08 | (0x08 << 10) | (0x6 << 20);
 
     memset(_statistic, 0, sizeof(_statistic));
 
@@ -2298,6 +2346,9 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
         case NIC_REG_WAKEUP_FILTER:
             *dest_32 = _wakeup_filter;
             break;
+        case NIC_REG_WAKEUP_STATUS:
+            *dest_32 = 0;
+            break;
         case NIC_REG_TX_DESCRIPTOR_CTRL_0:
             *dest_32 = _tx_queue[0].get_descriptor_ctrl();
             break;
@@ -2399,6 +2450,17 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
         case NIC_REG_INT_AUTO_MASK:
             *dest_32 = _auto_mask;
             break;
+        case NIC_REG_RX_DESCRIPTOR_HEAD_0:
+            *dest_32 = _rx_queue[0].get_public_head();
+            break;
+        case NIC_REG_RX_DESCRIPTOR_TAIL_0:
+            *dest_32 = _rx_queue[0].get_tail();
+            break;
+        case 0x5b54:
+            W_MESSAGE("undocumented reg 0x5b54, probably Firmware Semaphore (FWSM) "
+                      "of older chip");
+            *dest_32 = 0;
+            break;
         case NIC_REG_STAT_END + 4 ... 0x4124: /* linux driver read statistic that is not defined
                                                  (acording to spec) for 82574
                                               */
@@ -2406,6 +2468,7 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             break;
         default:
             W_MESSAGE("unhandled 0x%lx", src);
+            unhandled();
             *dest_32 = 0;
         }
     }
@@ -2789,6 +2852,7 @@ void NIC::mdi_write_common(uint reg)
     default:
         _mdi_ctrl |= NIC_MDI_CTRL_ERROR;
         W_MESSAGE("invalid reg %u page %u (0x%x))", reg, _phy_page, _phy_ctrl);
+        unhandled();
     }
 }
 
@@ -2916,6 +2980,7 @@ void NIC::mdi_read_common(uint reg)
     default:
         _mdi_ctrl |= NIC_MDI_CTRL_ERROR;
         W_MESSAGE("invalid reg %u page %u (0x%x))", reg, _phy_page, _phy_ctrl);
+        unhandled();
     }
 }
 
@@ -3172,6 +3237,15 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             _auto_mask = *src_32 & NIC_INT_AUTO_MASK_MASK;
             NIC_LOG("NIC_REG_INT_AUTO_MASK 0x%x 0x%x", *src_32, *src_32 & NIC_INT_AUTO_MASK_MASK);
             break;
+        case NIC_REG_INT_AUTO_CLEAR:
+            _int_auto_clear = *src_32 & (0x1f << 20);
+            break;
+        case NIC_REG_INT_EXT_THROTTLING_START ... NIC_REG_INT_EXT_THROTTLING_END:
+            _int_ext_throttling[(dest - NIC_REG_INT_EXT_THROTTLING_START) >> 2] = *src_32 & 0xffff;
+            break;
+        case NIC_REG_INT_VEC_ALLOC:
+            _int_vec_alloc = *src_32 & ~(0x7ff << 20);
+            break;
         case NIC_REG_EXT_CTRL:
             _ext_ctrl = *src_32 & ~(NIC_EXT_CTRL_RESERVED | NIC_EXT_CTRL_EEPROM_RESET |
                                     NIC_EXT_CTRL_SPEED_DETECTION);
@@ -3390,8 +3464,16 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             }
             break;
         }
+        case NIC_REG_TX_TIG:
+            _tx_tig = *src_32 & ~NIC_TX_TIG_RESERVED;
+            break;
+        case 0x2008:
+            W_MESSAGE("undocumented reg 0x2008, probably Early Receive Threshold (ERT) "
+                      "of older chip");
+            break;
         default:
             W_MESSAGE("unhandled reg 0x%lx val 0x%lx", dest, *src_32);
+            unhandled();
         }
     }
 }

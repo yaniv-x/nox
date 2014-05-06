@@ -239,7 +239,10 @@ private:
     uint32_t _int_mask;
     uint32_t _int_cause;
     uint32_t _auto_mask;
+    uint32_t _int_auto_clear;
     uint32_t _int_throttling;
+    uint32_t _int_ext_throttling[4];
+    uint32_t _int_vec_alloc;
     uint32_t _soft_sem;
     uint32_t _ext_conf_ctrl;
     uint32_t _mdi_ctrl;
@@ -252,6 +255,7 @@ private:
     uint32_t _tx_ctrl;
     uint32_t _tx_arbitration_count_0;
     uint32_t _tx_arbitration_count_1;
+    uint32_t _tx_tig;
     Queue _tx_queue[2];
 
     uint32_t _rom_read;
