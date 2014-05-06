@@ -676,9 +676,6 @@ public:
 
         _identity[ATA_ID_OFFSET_INTEGRITY] = ATA_ID_INTEGRITY_SIGNATURE;
         _identity[ATA_ID_OFFSET_INTEGRITY] |= checksum8(_identity, sizeof(_identity)) << 8;
-
-        uint8_t test = checksum8(_identity, sizeof(_identity));
-        D_MESSAGE("checksum test %u", (uint)test);
     }
 
     virtual uint16_t get_word()
