@@ -34,6 +34,8 @@
 class NoxVM;
 struct LegacyTxDescriptor;
 struct TxDataDescriptor;
+struct IP4Header;
+struct IP6Header;
 
 
 enum {
@@ -163,6 +165,13 @@ private:
     void handle_tx_context(TxContextDescriptor& descriptor);
     bool do_tx(Queue& queue);
     bool ether_filter(uint8_t* address);
+    uint32_t rss_hash(uint8_t* input, int n);
+    int rss_parse_ip4(IP4Header* ip4, uint8_t* limit, uint32_t& rss_val);
+    int rss_parse_ip6(IP6Header* ip6, uint8_t* limit, uint32_t& rss_val);
+    int rss_parse(uint8_t* packet, int length, uint32_t& rss_val);
+    bool multiple_rx_queues();
+    uint pick_queue(uint8_t* packet, uint length, uint& rss_type, uint32_t& rss_val);
+    void rx_pop(uint queue_index);
     void push(uint8_t* packet, uint length);
     void drop(uint8_t *buf, ssize_t n);
     bool recive_data();
@@ -287,8 +296,14 @@ private:
 
     uint32_t _vlan_filter_table[VLAN_FILTER_TABLE_SIZE];
     uint32_t _receive_addr_table[NUM_RECEIVE_ADDR * 2];
-    uint32_t _rx_rss_key[NIC_RSS_KEY_SIZE / 4];
-    uint32_t _redirection_table[NIC_REDIRECTION_TABLE_SIZE / 4];
+    union {
+        uint32_t _rx_rss_regs[NIC_RSS_KEY_SIZE / 4];
+        uint8_t _rss_key[NIC_RSS_KEY_SIZE];
+    };
+    union {
+        uint32_t _redirection_regs[NIC_REDIRECTION_TABLE_SIZE / 4];
+        uint8_t _redirection_table[NIC_REDIRECTION_TABLE_SIZE];
+    };
     uint32_t _multicast_table[MULTICAST_TABLE_SIZE];
     uint32_t _statistic[NUM_STATISTIC_REGS];
     uint8_t _statistic_ctrl[NUM_STATISTIC_REGS];

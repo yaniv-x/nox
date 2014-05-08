@@ -232,9 +232,14 @@ enum {
     NIC_RX_FILTER_CTRL_EXSTEN = (1 << 15),
     NIC_RX_FILTER_CTRL_RESERVED = 0xffff0000,
 
+    NIC_MULTI_RQ_CMD_RSS_MASK = (0x1f << 16),
+    NIC_MULTI_RQ_CMD_IP6 = (1 << 20),
+    NIC_MULTI_RQ_CMD_IP6EXT = (1 << 19),
+    NIC_MULTI_RQ_CMD_IP6TCP = (1 << 18),
+    NIC_MULTI_RQ_CMD_IP4 = (1 << 17),
+    NIC_MULTI_RQ_CMD_IP4TCP = (1 << 16),
     NIC_MULTI_RQ_CMD_ENABLE_MASK = 0x3,
-    NIC_MULTI_RQ_CMD_RSS_MASK = (0xffff << 16),
-    NIC_MULTI_RQ_CMD_RESERVED = ~(NIC_MULTI_RQ_CMD_ENABLE_MASK | NIC_MULTI_RQ_CMD_ENABLE_MASK),
+    NIC_MULTI_RQ_CMD_RESERVED = ~(NIC_MULTI_RQ_CMD_ENABLE_MASK | NIC_MULTI_RQ_CMD_RSS_MASK),
 
     NIC_TX_CTRL_ENABLE = (1 << 1),
     NIC_TX_CTRL_PAD_SHORT = (1 << 3),
@@ -597,6 +602,16 @@ enum {
 };
 
 
+enum RSSType {
+    RSS_TYPE_NONE,
+    RSS_TYPE_IP4TCP,
+    RSS_TYPE_IP4,
+    RSS_TYPE_IP6TCP,
+    RSS_TYPE_IP6EXT,
+    RSS_TYPE_IP6,
+};
+
+
 enum {
     NIC_MIN_PACKET_SIZE = 64,
     NIC_MAX_PACKET_SIZE = 1522,
@@ -605,15 +620,28 @@ enum {
     ETHER_ADDRESS_LENGTH = 6,
     ETHER_CRC_SIZE = 4,
 
+    ETHER_TYPE_IPV4 = 0x0800,
     ETHER_TYPE_ARP = 0x0806,
     ETHER_TYPE_VLAN = 0x8100,
     ETHER_TYPE_IPV6 = 0x86dd,
 
     IP4_LENGTH_OFFSET = 2,
     IP4_ID_OFFSET = 4,
+    IP4_OFFSET_MASK = 0x1ffff,
+    IP4_MF = (1 << 15),
 
     IP6_HEADER_LENGTH = 40,
     IP6_LENGTH_OFFSET = 4,
+
+    IP_PROTOCO_V6_HOP_BY_HOP = 0,
+    IP_PROTOCO_TCP = 6,
+    IP_PROTOCO_V6_ROUTING = 43,
+    IP_PROTOCO_V6_FRAGMENT = 44,
+    IP_PROTOCO_ENCAPS_SEC_PAYLOAD = 50,
+    IP_PROTOCO_AUTHENTICATION = 51,
+    IP_PROTOCO_V6_NO_NXT = 59,
+    IP_PROTOCO_V6_DEST_OPTIONS = 60,
+    IP_PROTOCO_V6_MOBILITY = 135,
 
     UDP_LENGTH_OFFSET = 4,
 
@@ -638,6 +666,37 @@ enum {
     STAT_CTRL_HIGH_PART = (1 << 1),
     STAT_CTRL_WRITABLE = (1 << 2),
 };
+
+
+typedef struct __attribute__ ((__packed__)) EtherHeader {
+    uint8_t dest[6];
+    uint8_t src[6];
+    uint16_t type;
+} EtherHeader;
+
+
+typedef struct __attribute__ ((__packed__)) IP4Header {
+    uint8_t version_n_ihl;
+    uint8_t dscp_n_ecn;
+    uint16_t length;
+    uint16_t id;
+    uint16_t offset_n_flags;
+    uint8_t ttl;
+    uint8_t protocol;
+    uint16_t cheaksum;
+    uint32_t source;
+    uint32_t dest;
+} IP4Header;
+
+
+typedef struct __attribute__ ((__packed__)) IP6Header {
+    uint32_t mix;
+    uint16_t payload_length;
+    uint8_t next_header;
+    uint8_t hop_limit;
+    uint8_t source[16];
+    uint8_t dest[16];
+} IP6Header;
 
 
 typedef struct __attribute__ ((__packed__)) CommonTxDescriptor {
@@ -1767,6 +1826,333 @@ inline void NIC::stat64_add(uint index, uint64_t val)
 }
 
 
+uint32_t NIC::rss_hash(uint8_t* input, int n)
+{
+    uint32_t result = 0;
+    uint32_t k = ((uint32_t)_rss_key[0] << 24) | ((uint32_t)_rss_key[1] << 16) |
+                  ((uint32_t)_rss_key[2] << 8) | _rss_key[3];
+    uint k_byte = 3;
+
+    for (uint i = 0; i < n; i++) {
+        uint mask = 0x80;
+        uint k_shift = 7;
+
+        /*rss key size is 40 and n-max is 36 so applying modulo is unnecessary*/
+        k_byte = (k_byte + 1) /**% sizeof(_rss_key)*/;
+        ASSERT(k_byte < sizeof(_rss_key));
+
+        do {
+            if ((input[i] & mask)) {
+                    result ^= k;
+            }
+
+            k <<= 1;
+            k |= (_rss_key[k_byte] & mask) >>  k_shift--;
+        } while (mask >>= 1);
+    }
+
+    return result;
+}
+
+
+class BadPacketException {};
+
+
+inline void rss_limit_test(const uint8_t* base, uint offset, const uint8_t* limit)
+{
+    if (base + offset > limit || base + offset < base) {
+        throw BadPacketException();
+    }
+}
+
+
+inline void rss_memcpy(uint8_t* dest, const uint8_t* src, uint n, uint8_t* limit)
+{
+    rss_limit_test(src, n, limit);
+    memcpy(dest, src, n);
+}
+
+
+inline int NIC::rss_parse_ip4(IP4Header* ip4, uint8_t* limit, uint32_t& rss_val)
+{
+    if (!(_multi_rq_command & (NIC_MULTI_RQ_CMD_IP4TCP | NIC_MULTI_RQ_CMD_IP4))) {
+        return RSS_TYPE_NONE;
+    }
+
+    uint16_t offset = ntohs(ip4->offset_n_flags);
+
+    if ((offset & 0x1fff) || (offset & IP4_MF)) {
+        D_MESSAGE("IP4 fragment");
+        return RSS_TYPE_NONE;
+    }
+
+    if ((ip4->protocol == IP_PROTOCO_TCP) && ((_multi_rq_command & NIC_MULTI_RQ_CMD_IP4TCP))) {
+        uint32_t rss_input[3];
+        memcpy(rss_input, &ip4->source, 8);
+        uint ip_header_length = MIN(ip4->version_n_ihl & 0x0f, 5) * 4;
+        uint8_t* tcp = (uint8_t*)ip4 + ip_header_length;
+
+        rss_memcpy((uint8_t*)(rss_input + 2), tcp, 4, limit);
+        rss_val = rss_hash((uint8_t*)rss_input, sizeof(rss_input));
+
+        return RSS_TYPE_IP4TCP;
+    }
+
+    if ((_multi_rq_command & NIC_MULTI_RQ_CMD_IP4)) {
+        rss_val = rss_hash((uint8_t*)&ip4->source, 8);
+        return RSS_TYPE_IP4;
+    }
+
+    return RSS_TYPE_NONE;
+}
+
+
+/**********************************************************************************************
+Two configuration bits impact the choice of the hash function as previously described:
+
+* IPv6_ExDIS bit in Receive Filter Control (RFCTL) register: When set, if an IPv6
+  packet includes extension headers, then the TcpIPv6 and IPv6Ex functions are not
+  used.
+
+* NEW_IPV6_EXT_DIS bit in Receive Filter Control (RFCTL) register: When set, if an
+  IPv6 packet includes either a Home-Address-Option or a Routing-Header-Type-2,
+  then the TcpIPv6 and IPv6Ex functions are not used.
+***********************************************************************************************
+
+IPv6_ExDIS and NEW_IPV6_EXT_DIS RFCTL bits are not found in the registers definition
+(documentation), the following functions are reflecting a fixed state (clear) of these
+registers bits. Maybe RFCTL.IPv6_dis need to be considered instead? (i.e. Disable IPv6
+packet filtering actually disables TcpIPv6 and IPv6Ex hash functions)
+
+*/
+
+static inline bool IPv6_ExDIS() { return false;}
+static inline bool NEW_IPV6_EXT_DIS() { return false;}
+
+
+static inline uint8_t* source_address_lookup(uint8_t* dest_options, uint8_t* limit)
+{
+    uint length;
+
+    if (dest_options + 8 > limit || dest_options + (length = (dest_options[1] + 1) * 8) > limit ) {
+        throw BadPacketException();
+    }
+
+    length -= 2;
+    dest_options += 2;
+
+    while (length) {
+        if (dest_options[0] == 0) { // Pad1 option
+            --length;
+            ++dest_options;
+            continue;
+        }
+
+        uint option_length = 2 + dest_options[1];
+
+        if (length < 2 || option_length > length) {
+            throw BadPacketException();
+        }
+
+        if (dest_options[0] == 201) { // IPv6 Mobility: Home Address Option
+            return dest_options + 2;
+        }
+
+        length -= option_length;
+        dest_options += option_length;
+    }
+
+    return NULL;
+}
+
+
+inline int NIC::rss_parse_ip6(IP6Header* ip6, uint8_t* limit, uint32_t& rss_val)
+{
+    if (!(_multi_rq_command & (NIC_MULTI_RQ_CMD_IP6TCP |
+                               NIC_MULTI_RQ_CMD_IP6 |
+                               NIC_MULTI_RQ_CMD_IP6EXT))) {
+        return RSS_TYPE_NONE;
+    }
+
+    uint8_t* next = (uint8_t*)(ip6 + 1);
+    uint protocol = ip6->next_header;
+    bool extentions = protocol != IP_PROTOCO_TCP;
+    uint8_t* source_address = NULL; // Home address from the home address option in the IPv6
+                                    // destination options header.
+
+    uint8_t* dest_address = NULL;   // IPv6 address that is contained in the Routing-Header-Type-2
+                                    // from the associated extension header
+    do {
+        switch (protocol) {
+        case IP_PROTOCO_TCP:
+            if (!(_multi_rq_command & NIC_MULTI_RQ_CMD_IP6TCP) ||
+                (extentions && IPv6_ExDIS()) ||
+                (NEW_IPV6_EXT_DIS() && (source_address || dest_address))) {
+                next = NULL;
+                break;
+            }
+
+            if (!extentions) {
+                rss_val = rss_hash(ip6->source, 32 + 4);
+            } else {
+                uint8_t rss_input[32 + 4];
+                source_address = source_address ? source_address : ip6->source;
+                dest_address = dest_address ? dest_address : ip6->dest;
+
+                rss_memcpy(rss_input, source_address, 16, limit);
+                rss_memcpy(rss_input + 16, dest_address, 16, limit);
+                rss_memcpy(rss_input + 32, next, 4, limit);
+                rss_val = rss_hash(rss_input, sizeof(rss_input));
+            }
+            return RSS_TYPE_IP6TCP;
+        case IP_PROTOCO_V6_ROUTING:
+            rss_limit_test(next, 8, limit);
+
+            if (next[2] == 2 && next[3] == 1) { // routing-type 2 and segments-left 1
+                dest_address = next + 8;
+            }
+
+            protocol = next[0];
+            next += (next[1] + 1) * 8;
+            break;
+       case IP_PROTOCO_V6_DEST_OPTIONS:
+            if (!source_address) {
+                source_address = source_address_lookup(next, limit);
+            }
+            // fall through
+        case IP_PROTOCO_V6_MOBILITY:
+        case IP_PROTOCO_V6_HOP_BY_HOP:
+            rss_limit_test(next, 2, limit);
+            protocol = next[0];
+            next += (next[1] + 1) * 8;
+            break;
+        case IP_PROTOCO_AUTHENTICATION:
+            rss_limit_test(next, 2, limit);
+            protocol = next[0];
+            next += (next[1] + 2) * 4; // ALIGN 8 ?
+            break;
+        case IP_PROTOCO_V6_FRAGMENT:
+            return RSS_TYPE_NONE;
+        case IP_PROTOCO_ENCAPS_SEC_PAYLOAD:
+        default:
+            next = NULL;
+        };
+    } while (next);
+
+    if ((_multi_rq_command & NIC_MULTI_RQ_CMD_IP6EXT) &&  (!IPv6_ExDIS() || !extentions) &&
+            (!NEW_IPV6_EXT_DIS() || (!source_address && !dest_address))) {
+        if (!extentions) {
+            rss_val = rss_hash((uint8_t*)ip6->source, 32);
+        } else {
+            uint8_t rss_input[32];
+            source_address = source_address ? source_address : ip6->source;
+            dest_address = dest_address ? dest_address : ip6->dest;
+
+            rss_memcpy(rss_input, source_address, 16, limit);
+            rss_memcpy(rss_input + 16, dest_address, 16, limit);
+            rss_val = rss_hash(rss_input, sizeof(rss_input));
+        }
+        return RSS_TYPE_IP6EXT;
+    }
+
+    if ((_multi_rq_command & NIC_MULTI_RQ_CMD_IP6)) {
+        rss_val = rss_hash((uint8_t*)ip6->source, 32);
+        return RSS_TYPE_IP6;
+    }
+
+    return RSS_TYPE_NONE;
+}
+
+
+inline int NIC::rss_parse(uint8_t* packet, int length, uint32_t& rss_val)
+{
+    EtherHeader* ether = (EtherHeader*)packet;
+
+    try {
+        switch (ntohs(ether->type)) {
+        case ETHER_TYPE_IPV4:
+            return rss_parse_ip4((IP4Header*)(ether + 1), packet + length, rss_val);
+        case ETHER_TYPE_IPV6:
+            return rss_parse_ip6((IP6Header*)(ether + 1), packet + length, rss_val);
+        default:
+            return RSS_TYPE_NONE;
+        };
+    } catch (BadPacketException& e) {
+        D_MESSAGE("bad packet");
+        return RSS_TYPE_NONE;
+    }
+}
+
+
+inline bool NIC::multiple_rx_queues()
+{
+    return ((_multi_rq_command & NIC_MULTI_RQ_CMD_ENABLE_MASK) == 1 &&
+            (_rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_PACKET_DISABLE) &&
+            (_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN));
+}
+
+
+inline uint NIC::pick_queue(uint8_t* packet, uint length, uint& rss_type, uint32_t& rss_val)
+{
+    /* didn't find a driver that like to use Multiple Receive Queues (maybe because a lack of MSI
+       support) so it wasn't tested and is disabled for now.
+    */
+
+    if (multiple_rx_queues()) {
+        W_MESSAGE_SOME(100, "multiple rx queues");
+    }
+
+    if (true || !multiple_rx_queues()) {
+        rss_val = 0;
+        rss_type = RSS_TYPE_NONE;
+        return 0;
+    }
+
+    rss_type = rss_parse(packet, length, rss_val);
+
+    if (rss_type == RSS_TYPE_NONE) {
+        rss_val = 0;
+        return 0;
+    } else {
+        return  _redirection_table[rss_val & 0x7f] >> 7;
+    }
+}
+
+
+void NIC::rx_pop(uint queue_index)
+{
+    _rx_queue[queue_index].pop();
+
+    NIC_LOG("q[%u] POP head %u private %u tail %u ctrl 0x%x", queue_index,
+            _rx_queue[queue_index].get_public_head(),
+            _rx_queue[queue_index].get_private_head(),
+            _rx_queue[queue_index].get_tail(),
+            _rx_queue[queue_index].get_descriptor_ctrl());
+
+    uint descriptor_threshold = ((_rx_ctrl & NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_MASK) >>
+                                                        NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_SHIFT) + 1;
+    descriptor_threshold = _rx_queue[queue_index].num_items() >> descriptor_threshold;
+
+    /*********************************************************************************************
+      multiple receive queue status is not reported in the receive packet descriptor, and the
+      interrupt mechanism bypasses the interrupt scheme described in section 7.1.11. Instead,
+      a receive packet is issued directly to the interrupt logic.
+    **********************************************************************************************
+    */
+
+    if (_rx_queue[queue_index].get_unused_count() == descriptor_threshold) {
+        NIC_LOG("descriptor threshold hit");
+        rx_write_back(NIC_INT_CAUSE_RX_DESCRIPTOR_THRESHOLD);
+    } else if (!_rx_timer.private_delay_val()){
+        NIC_LOG("q[%u] imidiate wb", 0);
+        rx_write_back(NIC_INT_CAUSE_RX_TIMER);
+    } else {
+        NIC_LOG("q[%u] set timers", 0);
+        _rx_timer.arm();
+    }
+}
+
+
 void NIC::push(uint8_t* packet, uint length)
 {
     // todo: handle receive filter control register (RFCTL)
@@ -1774,25 +2160,6 @@ void NIC::push(uint8_t* packet, uint length)
 
     stat32_inc(STAT_OFFSET_RX_TOTAL_PACKETS);
     stat64_add(STAT_OFFSET_RX_TOTAL_OCTETS_LOW, length + ETHER_CRC_SIZE);
-
-    if ((_multi_rq_command & NIC_MULTI_RQ_CMD_ENABLE_MASK) == 1) {
-        W_MESSAGE_SOME(10, "unhandled NIC_MULTI_RQ_CMD_ENABLE_MASK");
-        unhandled();
-        return;
-    }
-
-    if (_rx_queue[0].is_empty()) {
-        NIC_LOG("empty");
-        stat32_inc(STAT_OFFSET_RX_MISSED_PACKETS);
-        interrupt(NIC_INT_CAUSE_RX_OVERRUN);
-        return;
-    }
-
-    NIC_LOG("q[%u] head %u private %u tail %u ctrl 0x%x", 0,
-            _rx_queue[0].get_public_head(),
-            _rx_queue[0].get_private_head(),
-            _rx_queue[0].get_tail(),
-            _rx_queue[0].get_descriptor_ctrl());
 
     if (length + ETHER_CRC_SIZE < NIC_MIN_PACKET_SIZE) {
         NIC_LOG("bad packet size");
@@ -1848,19 +2215,56 @@ void NIC::push(uint8_t* packet, uint length)
         buff_size >>= ((_rx_ctrl & NIC_RX_CTRL_BSIZE_MASK) >> NIC_RX_CTRL_BSIZE_SHIFT);
     }
 
-    LegacyRxDescriptor legacy;
-    uint64_t descriptor_address = _rx_queue[0].head_address();
-
-    NIC_LOG("q[%u] address  0x%lx base 0x%lx size %u", 0,
-                  descriptor_address,
-                  _rx_queue[0].get_base_address(),
-                  _rx_queue[0].num_items());
-
-    memory_bus->read(descriptor_address, sizeof(legacy), &legacy);
-
-    if (!legacy.address) {
-        D_MESSAGE("null descriptor");
+    if (length > buff_size) {
+        W_MESSAGE_SOME(100, "unhandled small buff size %u length %u", buff_size, length);
+        unhandled();
         return;
+    }
+
+    uint rss_type;
+    uint32_t rss_val;
+
+    uint queue_index = pick_queue(packet, length, rss_type, rss_val);
+
+    if (queue_index) {
+        D_MESSAGE("queue_index is %u", queue_index);
+    }
+
+    LegacyRxDescriptor legacy;
+    uint64_t descriptor_address;
+
+    for (;;) {
+        if (_rx_queue[queue_index].is_empty()) {
+            NIC_LOG("empty");
+            stat32_inc(STAT_OFFSET_RX_MISSED_PACKETS);
+            interrupt(NIC_INT_CAUSE_RX_OVERRUN);
+            return;
+        }
+
+        NIC_LOG("q[%u] head %u private %u tail %u ctrl 0x%x", queue_index,
+                _rx_queue[queue_index].get_public_head(),
+                _rx_queue[queue_index].get_private_head(),
+                _rx_queue[queue_index].get_tail(),
+                _rx_queue[queue_index].get_descriptor_ctrl());
+
+        descriptor_address = _rx_queue[queue_index].head_address();
+
+        NIC_LOG("q[%u] address  0x%lx base 0x%lx size %u", queue_index,
+                    descriptor_address,
+                    _rx_queue[queue_index].get_base_address(),
+                    _rx_queue[queue_index].num_items());
+
+        memory_bus->read(descriptor_address, sizeof(legacy), &legacy);
+
+        if (!legacy.address) {
+            W_MESSAGE("null descriptor");
+            legacy.status |= RX_DESCRIPTOR_STATUS_DD;
+            memory_bus->write(&legacy, sizeof(legacy), descriptor_address);
+            rx_pop(queue_index);
+            continue;
+        }
+
+        break;
     }
 
     std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(legacy.address, buff_size));
@@ -1870,20 +2274,14 @@ void NIC::push(uint8_t* packet, uint length)
         return;
     }
 
-    if (length > buff_size) {
-        W_MESSAGE_SOME(100, "unhandled small buff size %u length %u", buff_size, length);
-        unhandled();
-        return;
-    }
-
     memcpy(direct.get()->get_ptr(), packet, length);
 
     if ((_rx_filter_ctrl & NIC_RX_FILTER_CTRL_EXSTEN)) { // extended mode
         RxExtWBDescriptor wb_descriptor;
-        wb_descriptor.mrq = 0;
+        wb_descriptor.mrq = rss_type | (queue_index << 8);
 
         if ((_rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_PACKET_DISABLE)) {
-            wb_descriptor.rss = 0;
+            wb_descriptor.rss = rss_val;
         } else {
             uint32_t start = _rx_checksum_ctrl & NIC_RX_CHECKSUM_CTRL_START_MASK;
             wb_descriptor.no_rss.packet_checksum = checksum16(packet + start,
@@ -1906,28 +2304,7 @@ void NIC::push(uint8_t* packet, uint length)
         memory_bus->write(&legacy, sizeof(legacy), descriptor_address);
     }
 
-    _rx_queue[0].pop();
-
-     NIC_LOG("q[%u] POP head %u private %u tail %u ctrl 0x%x", 0,
-             _rx_queue[0].get_public_head(),
-             _rx_queue[0].get_private_head(),
-             _rx_queue[0].get_tail(),
-             _rx_queue[0].get_descriptor_ctrl());
-
-    uint descriptor_threshold = ((_rx_ctrl & NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_MASK) >>
-                                                        NIC_RX_CTRL_DESCRIPTOR_THRESHOLD_SHIFT) + 1;
-    descriptor_threshold = _rx_queue[0].num_items() >> descriptor_threshold;
-
-    if (_rx_queue[0].get_unused_count() == descriptor_threshold) {
-        NIC_LOG("descriptor threshold hit");
-        rx_write_back(NIC_INT_CAUSE_RX_DESCRIPTOR_THRESHOLD);
-    } else if (!_rx_timer.private_delay_val()){
-        NIC_LOG("q[%u] imidiate wb", 0);
-        rx_write_back(NIC_INT_CAUSE_RX_TIMER);
-    } else {
-        NIC_LOG("q[%u] set timers", 0);
-        _rx_timer.arm();
-    }
+    rx_pop(queue_index);
 }
 
 
@@ -2053,7 +2430,7 @@ void NIC::common_reset()
 
     _rx_ctrl = 0;
     _rx_checksum_ctrl = NIC_RX_CHECKSUM_CTRL_IP | NIC_RX_CHECKSUM_CTRL_UDP;
-    memset(_rx_rss_key, 0, sizeof(_rx_rss_key));
+    memset(_rx_rss_regs, 0, sizeof(_rx_rss_regs));
     _multi_rq_command = 0;
     _rx_filter_ctrl = 0;
 
@@ -2455,6 +2832,9 @@ void NIC::csr_read(uint64_t src, uint64_t length, uint8_t* dest)
             break;
         case NIC_REG_RX_DESCRIPTOR_TAIL_0:
             *dest_32 = _rx_queue[0].get_tail();
+            break;
+        case NIC_REG_MULTI_RQ_CMD:
+            *dest_32 = _multi_rq_command;
             break;
         case 0x5b54:
             W_MESSAGE("undocumented reg 0x5b54, probably Firmware Semaphore (FWSM) "
@@ -3377,7 +3757,7 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
             _rx_checksum_ctrl = *src_32 & ~NIC_RX_CHECKSUM_RESERVED;
             break;
         case NIC_REG_MULTI_RQ_CMD:
-           _multi_rq_command = combine32(_multi_rq_command, ~NIC_MULTI_RQ_CMD_RESERVED, *src_32);
+           _multi_rq_command = *src_32 & ~NIC_MULTI_RQ_CMD_RESERVED;
             break;
         case NIC_REG_3GIO_CTRL_1:
             _3gio_ctrl_1 = *src_32 & ~NIC_3GIO_CTRL_1_RESERVED;
@@ -3406,7 +3786,7 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
         case NIC_REG_FLOW_CTRL_RT_HIGH:
             break;
         case NIC_REG_RX_RSS_KEY_START ... NIC_REG_RX_RSS_KEY_END:
-            _rx_rss_key[(dest - NIC_REG_RX_RSS_KEY_START) >> 2] = *src_32;
+            _rx_rss_regs[(dest - NIC_REG_RX_RSS_KEY_START) >> 2] = *src_32;
             break;
         case NIC_REG_RX_FILTER_CTRL:
             _rx_filter_ctrl = *src_32 & ~NIC_RX_FILTER_CTRL_RESERVED;
@@ -3415,7 +3795,10 @@ void NIC::csr_write(const uint8_t* src, uint64_t length, uint64_t dest)
         case NIC_REG_RX_DESCRIPTOR_CTRL_1:
             break;
         case NIC_REG_REDIRECTION_START ... NIC_REG_REDIRECTION_END:
-            _redirection_table[(dest - NIC_REG_REDIRECTION_START) >> 2] = *src_32 & 0x3f3f3f3f;
+            if (*src_32) {
+                D_MESSAGE("NIC_REG_REDIRECTION %u 0x%x", dest - NIC_REG_REDIRECTION_START, *src_32);
+            }
+            _redirection_regs[(dest - NIC_REG_REDIRECTION_START) >> 2] = *src_32 & 0x3f3f3f3f;
             break;
         case NIC_REG_VLAN_ETHER_TYPE:
             _vlan_ether_type = *src_32 & 0xffff;
