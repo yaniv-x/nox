@@ -44,6 +44,7 @@ NoxDisplay::NoxDisplay(const char* vm_name, VGA& vga, KbdController& kbd)
     , _kbd (kbd)
     , _evdev (false)
     , _tracking (false)
+    , _focus (false)
     , _width (640)
     , _height (480)
     , _valid_x_image (false)
@@ -96,6 +97,13 @@ void NoxDisplay::x11_handler()
             break;
         case KeyRelease:
             on_key_release(event.xkey.keycode);
+            break;
+        case FocusIn:
+            _focus = true;
+            break;
+        case FocusOut:
+            _focus = false;
+            cancel_tracking();
             break;
         case ClientMessage: {
             Atom wm_protocol_atom = XInternAtom(_display, "WM_PROTOCOLS", False);
@@ -200,7 +208,7 @@ void NoxDisplay::create_window()
     win_attributes.border_pixel = 1;
     win_attributes.event_mask = ExposureMask | StructureNotifyMask | KeyPressMask |
                                 KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
-                                PointerMotionMask;
+                                PointerMotionMask | FocusChangeMask;
 
     _window = XCreateWindow(_display, DefaultRootWindow(_display), 100, 100,
                             _width, _height, 0, CopyFromParent, InputOutput,
@@ -386,7 +394,7 @@ void NoxDisplay::cancel_tracking()
 
 void NoxDisplay::on_button_release(unsigned int x_button)
 {
-    if (!_tracking) {
+    if (!_tracking && _focus) {
         if (x_button == Button1) {
             _tracking = XGrabPointer(_display, _window, True, 0, GrabModeAsync, GrabModeAsync,
                                      None, None, CurrentTime) == GrabSuccess;
