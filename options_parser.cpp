@@ -26,6 +26,8 @@
 
 #include "options_parser.h"
 
+#include <sstream>
+
 
 enum OptionType {
     NO_VALUE = 1,
@@ -36,16 +38,16 @@ enum OptionType {
 
 class OptionsParser::Option: public NonCopyable {
 public:
-    Option(uint id, const char* name, OptionType type, const char* description, uint flags,
-           const char* _arg_name)
+    Option(uint id, const char* name, const char* description, uint flags,
+           const char* val_descriptor = "", bool opt_val = false)
         : _id (id)
         , _name (name)
-        , _type (type)
         , _description (description)
         , _flags (flags)
         , _short_name (0)
-        , _arg_name (_arg_name)
+        , _val_descriptor (val_descriptor)
         , _hits (0)
+        , _type (_val_descriptor.empty() ? NO_VALUE : (opt_val ? OPTIONAL_VALUE : MANDATORY_VALUE))
     {
     }
 
@@ -53,7 +55,7 @@ public:
     const std::string&  get_name() { return _name;}
     char get_short_name() { return _short_name;}
     const std::string&  get_description() { return _description;}
-    const std::string&  get_arg_name() { return _arg_name;}
+    const std::string&  get_val_descriptor() { return _val_descriptor;}
     uint  get_id() { return _id;}
     void hit() { _hits++;}
     bool was_hit() { return _hits != 0;}
@@ -67,12 +69,12 @@ public:
 private:
     uint _id;
     std::string _name;
-    OptionType _type;
     std::string _description;
     uint _flags;
     char _short_name;
-    std::string _arg_name;
+    std::string _val_descriptor;
     uint _hits;
+    OptionType _type;
 };
 
 
@@ -290,8 +292,7 @@ bool OptionsParser::parse(int argc, const char** argv)
         _argv.push_back(copy_cstr(*argv));
     }
 
-    _options.push_back(new Option(OPT_ID_HELP, "help", NO_VALUE,
-                                  "show command help", EXCLUSIVE_ARG, ""));
+    _options.push_back(new Option(OPT_ID_HELP, "help", "show command help", EXCLUSIVE_ARG));
 
     _state = PARSE_FRONT_POSITIONAL;
     ArgsList::iterator iter = _argv.begin();
@@ -417,13 +418,12 @@ void OptionsParser::add_option(int id, const char* name, const char* description
     ASSERT(!find(name));
     ASSERT(_state == INIT);
 
-    _options.push_back(new Option(id, name, NO_VALUE, description, flags, ""));
+    _options.push_back(new Option(id, name, description, flags));
 }
 
 
-void OptionsParser::add_option_with_arg(int id, const char* name, ArgType type,
-                                        const char* arg_name, const char* description,
-                                        uint flags)
+void OptionsParser::add_option(int id, const char* name, const char* arg_name, bool optional_val,
+                               const char* description, uint flags)
 {
     ASSERT(id >= 0);
     ASSERT(!find(id));
@@ -433,20 +433,9 @@ void OptionsParser::add_option_with_arg(int id, const char* name, ArgType type,
     ASSERT(!find(name));
     ASSERT(_state == INIT);
 
-    OptionType opt_type = (type == ONE_ARGUMENT) ? MANDATORY_VALUE : OPTIONAL_VALUE;
-
-    _options.push_back(new Option(id, name, opt_type, description, flags, arg_name));
+    _options.push_back(new Option(id, name, description, flags, arg_name, optional_val));
 }
 
-
-const char* OptionsParser::get_option_name(int id)
-{
-    Option* opt = find(id);
-
-    ASSERT(opt);
-
-    return opt->get_arg_name().c_str();
-}
 
 
 void OptionsParser::set_short_name(int id, char name)
@@ -586,14 +575,327 @@ void OptionsParser::help()
         printf("--%s", option->get_name().c_str());
 
         if (option->is_mandatory_val()) {
-            printf(" <%s>", option->get_arg_name().c_str());
+            printf(" %s", option->get_val_descriptor().c_str());
         } else if (option->is_optional_val()) {
-            printf("[=%s]", option->get_arg_name().c_str());
+            printf("[=%s]", option->get_val_descriptor().c_str());
         }
 
         printf("\n");
         print_help_description(option->get_description().c_str(), 12, 68);
         printf("\n");
     }
+}
+
+
+class InnerImp: public OptionsParser::Inner {
+public:
+    InnerImp(const std::string& descriptor);
+    bool parse(const std::string& val, uint min_positional, uint max_positional,
+               const std::string& option_name, const std::string& program_name);
+    virtual const char* get_positional(uint pos);
+    virtual const char* get_option(const std::string& name);
+    virtual bool switch_test(const std::string& name);
+    void add_positional(std::string& split);
+    void add_pair(std::string& name, std::string& val);
+    void add_switch(std::string& name);
+    void add_segment(std::string& str, bool optional);
+
+    struct PairsVal {
+        PairsVal(const std::string& in_val, bool in_switches)
+            : val (in_val)
+            , switches (in_switches)
+        {
+        }
+
+        std::string val;
+        bool switches;
+    };
+
+    typedef std::map<std::string, PairsVal> PairsMap;
+    PairsMap pair_descriptors;
+    std::list<std::string> positional_descriptors;
+    std::set<std::string> switch_descriptors;
+
+    std::vector<std::string> positionals;
+    std::set<std::string> switches;
+    PairsMap pairs;
+};
+
+
+InnerImp::InnerImp(const std::string& in_descriptor)
+{
+    std::string descriptor(in_descriptor);
+
+    bool first = true;
+
+    for (;;) {
+        size_t opt_start = descriptor.find('[');
+
+        if (opt_start == std::string::npos) {
+            add_segment(descriptor, false);
+            break;
+        }
+
+        if (opt_start > 0) {
+            std::string split = descriptor.substr(0, opt_start);
+            add_segment(split, false);
+            first = false;
+
+        }
+
+        size_t opt_end = descriptor.find(']');
+        ASSERT(opt_end != std::string::npos);
+        ASSERT(first || descriptor[opt_start + 1] == ',');
+
+        if (!first) {
+            opt_start += 2;
+        } else {
+            opt_start += 1;
+        }
+
+        ASSERT(opt_end  > opt_start);
+        std::string split = descriptor.substr(opt_start, opt_end - opt_start);
+        ASSERT(split.find('[') == std::string::npos);
+
+        add_segment(split, true);
+
+        if (descriptor[opt_end + 1] == 0) {
+            break;
+        }
+
+        ASSERT(descriptor[opt_end + 1] == ',' || descriptor[opt_end + 1] == '[');
+
+        if (descriptor[opt_end + 1] == ',') {
+            opt_end += 1;
+        }
+
+        descriptor = descriptor.substr(opt_end + 1);
+        ASSERT(descriptor.length());
+
+        first = false;
+    }
+}
+
+
+void InnerImp::add_positional(std::string& val)
+{
+    ASSERT(val.length());
+    ASSERT(val.find_first_of("<>[],|") == std::string::npos);
+    positional_descriptors.push_back(val);
+}
+
+
+void InnerImp::add_pair(std::string& name, std::string& val)
+{
+    ASSERT(name.length() && val.length());
+    ASSERT(name.find_first_of("<>[],|") == std::string::npos);
+    ASSERT(pair_descriptors.find(name) == pair_descriptors.end());
+
+    size_t variable_start = val.find('<');
+
+    if (variable_start != std::string::npos) {
+        size_t end = val.find('>');
+        ASSERT(variable_start == 0 && end == val.size() - 1 && val.length() > 2);
+        variable_start += 1;
+        std::string split = val.substr(variable_start, end - variable_start);
+        PairsMap::value_type pair(name, PairsVal(val, false));
+        pair_descriptors.insert(pair);
+        return;
+    }
+
+    PairsMap::value_type pair(name, PairsVal(val, true));
+    pair_descriptors.insert(pair);
+
+}
+
+
+void InnerImp::add_switch(std::string& name)
+{
+    ASSERT(name.length());
+    ASSERT(name.find_first_of("<>[],|") == std::string::npos);
+    ASSERT(switch_descriptors.find(name) == switch_descriptors.end());
+    switch_descriptors.insert(name);
+}
+
+
+void InnerImp::add_segment(std::string& str, bool optional)
+{
+    std::istringstream is(str);
+    std::string line;
+
+    while (std::getline(is, line, ',')) {
+        size_t pair_split = line.find('=');
+
+        if (pair_split != std::string::npos) {
+            std::string name = line.substr(0, pair_split);
+            std::string val = line.substr(pair_split + 1);
+            add_pair(name, val);
+            continue;
+        }
+
+        size_t positional_start = line.find('<');
+
+        if (positional_start != std::string::npos) {
+            size_t end = line.find('>');
+
+            ASSERT(positional_start == 0 && end == line.size() - 1);
+            positional_start +=1;
+            std::string split = line.substr(positional_start, end - positional_start);
+
+            ASSERT(split.length() && split.find('<') == std::string::npos);
+
+            add_positional(split);
+
+            continue;
+        }
+
+        std::istringstream is(line);
+        std::string name;
+
+        while (std::getline(is, name, '|')) {
+            add_switch(name);
+        }
+    }
+}
+
+
+const char* InnerImp::get_positional(uint pos)
+{
+    if (pos >= positionals.size()) {
+        return NULL;
+    }
+
+    return positionals[pos].c_str();
+}
+
+
+const char* InnerImp::get_option(const std::string& name)
+{
+    PairsMap::iterator iter = pairs.find(name);
+    return (iter == pairs.end()) ? NULL : (*iter).second.val.c_str();
+}
+
+
+bool InnerImp::switch_test(const std::string& name)
+{
+    return switches.find(name) != switches.end();
+}
+
+
+static bool is_valid_val(const std::string& val, const std::string& options)
+{
+    std::istringstream is(options);
+    std::string split;
+
+    while (std::getline(is, split, '|')) {
+       if (split == val) {
+           return true;
+       }
+    }
+
+    return false;
+}
+
+
+bool InnerImp::parse(const std::string& arg, uint min_positional, uint max_positional,
+                     const std::string& option_name, const std::string& prog_name)
+{
+    std::istringstream is(arg);
+    std::string line;
+    bool front = true;
+
+    while (std::getline(is, line, ',')) {
+
+        if (!line.length()) {
+            printf("%s: in \"--%s\": invalid args \"%s\"\n", prog_name.c_str(),
+                   option_name.c_str(), arg.c_str());
+            return false;
+        }
+
+        size_t pair_split = line.find('=');
+
+        if (pair_split != std::string::npos) {
+            std::string name = line.substr(0, pair_split);
+            std::string val = line.substr(pair_split + 1);
+
+            if (val.length() == 0) {
+                printf("%s: in \"--%s\": invalid empty val of \"%s\"\n", prog_name.c_str(),
+                       option_name.c_str(), name.c_str());
+                return false;
+            }
+
+            PairsMap::iterator item = pair_descriptors.find(name);
+
+            if (item == pair_descriptors.end()) {
+                printf("%s: in \"--%s\": invalid arg name \"%s\"\n", prog_name.c_str(),
+                       option_name.c_str(), name.c_str());
+                return false;
+            }
+
+            if ((*item).second.switches && !is_valid_val(val, (*item).second.val)) {
+                printf("%s: in \"--%s\": \"%s\" is not a valid val of \"%s\"\n", prog_name.c_str(),
+                       option_name.c_str(), val.c_str(), name.c_str());
+                return false;
+            }
+
+            if (pairs.find(name) != pairs.end()) {
+                pairs.erase(name);
+            }
+
+            PairsMap::value_type pair(name, PairsVal(val, (*item).second.switches));
+            pairs.insert(pair);
+
+            front = false;
+            continue;
+        }
+
+        if (switch_descriptors.find(line) != switch_descriptors.end()) {
+            if (switches.find(line) == switches.end()) {
+                switches.insert(line);
+                front = false;
+            }
+            continue;
+        }
+
+        if (front && !positional_descriptors.empty()) {
+            positionals.push_back(line);
+            continue;
+        }
+
+        printf("%s: in \"--%s\": invalid switch \"%s\"\n", prog_name.c_str(), option_name.c_str(),
+               line.c_str());
+
+        return false;
+    }
+
+    if (positionals.size() < min_positional) {
+        printf("%s: in \"--%s\": missing front positional arguments\n", prog_name.c_str(),
+               option_name.c_str());
+        return false;
+    }
+
+    if (positionals.size() > max_positional) {
+        printf("%s: in \"--%s\": too many positional arguments\n", prog_name.c_str(),
+               option_name.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+
+OptionsParser::Inner* OptionsParser::parse_val(int option_id, const char* val,
+                                               uint min_positional,
+                                               uint max_positional)
+{
+    Option* option = find(option_id);
+
+    ASSERT(option);
+
+    std::auto_ptr<InnerImp> iner(new InnerImp(option->get_val_descriptor()));
+
+    return (iner->parse(val, min_positional, max_positional, option->get_name(),
+                        _prog_name)) ? iner.release() : NULL;
+
 }
 

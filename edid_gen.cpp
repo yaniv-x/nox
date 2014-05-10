@@ -635,16 +635,12 @@ int main(int argc, const char** argv)
             OPT_SHOW_STD_RES,
         };
 
-        parser.add_option_with_arg(OPT_DISPLAY_SIZE, "size", OptionsParser::ONE_ARGUMENT,
-                                   "width'x'height", "display size in mm");
-        parser.add_option_with_arg(OPT_RES_LIST, "res-list", OptionsParser::ONE_ARGUMENT,
-                                   "x-res'x'y-res,x-res'x'y-res...",
-                                   "suported standard resolutions list");
-        parser.add_option_with_arg(OPT_BIN_DUMP, "bin-dump", OptionsParser::ONE_ARGUMENT,
-                                   "file-name",
-                                   "dump EDID block into a file");
-        parser.add_option(OPT_SHOW_STD_RES, "show-std-res",
-                          "show available standard resolutions",
+        parser.add_option(OPT_DISPLAY_SIZE, "size", "width'x'height", false, "display size in mm");
+        parser.add_option(OPT_RES_LIST, "res-list", "x-res'x'y-res,x-res'x'y-res...", false,
+                          "suported standard resolutions list");
+        parser.add_option(OPT_BIN_DUMP, "bin-dump", "file-name", false,
+                          "dump EDID block into a file");
+        parser.add_option(OPT_SHOW_STD_RES, "show-std-res", "show available standard resolutions",
                           OptionsParser::EXCLUSIVE_ARG);
 
         if (!parser.parse(argc, argv)) {

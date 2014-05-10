@@ -25,7 +25,6 @@
 */
 
 #include <sys/stat.h>
-#include <sstream>
 #include <fcntl.h>
 #include <sys/file.h>
 
@@ -245,51 +244,6 @@ bool Application::ecquire_exclusive_rights(const char* vm_name)
 }
 
 
-class InnerArg {
-public:
-    InnerArg(const std::string& name, const std::string& val)
-        : _name (name)
-        , _val (val)
-        , _null_val (false)
-    {
-    }
-
-    InnerArg(const std::string& name)
-        : _name (name)
-        , _null_val (true)
-    {
-    }
-
-    const std::string& name() { return _name;}
-    const char* val() { return _null_val ? NULL : _val.c_str();}
-
-private:
-    std::string _name;
-    std::string _val;
-    bool _null_val;
-};
-
-
-typedef std::list<InnerArg> InnerArgs;
-
-
-void split_option_arg(const std::string& str, InnerArgs& args)
-{
-    std::istringstream is(str);
-    std::string line;
-
-    while (std::getline(is, line, ',')) {
-        size_t pos = line.find('=');
-
-        if (pos == std::string::npos) {
-            args.push_back(InnerArg(line));
-        } else {
-            args.push_back(InnerArg(line.substr(0, pos), line.substr(pos + 1)));
-        }
-    }
-}
-
-
 bool Application::init(int argc, const char** argv)
 {
     OptionsParser parser;
@@ -304,21 +258,18 @@ bool Application::init(int argc, const char** argv)
         OPT_CPU_COUNT,
     };
 
-    parser.add_option_with_arg(OPT_RAM_SIZE, "ram-size", OptionsParser::ONE_ARGUMENT,
-                               "ram_size<unit>", "specifay ram size. unit can be M/m or G/g",
-                               OptionsParser::MANDATORY);
-    parser.add_option_with_arg(OPT_HARD_DISK, "hard-disk", OptionsParser::ONE_ARGUMENT,
-                               "file_name", "specifay hard-disk image file",
-                               OptionsParser::MANDATORY);
-    parser.add_option_with_arg(OPT_CDROM, "dvd-rom", OptionsParser::OPTIONAL_ARGUMENT, "file_name",
-                               "specifay dvd/cd iso file");
+    parser.add_option(OPT_RAM_SIZE, "ram-size", "<ram_size>unit", false,
+                      "specifay ram size. unit can be M/m or G/g",
+                       OptionsParser::MANDATORY);
+    parser.add_option(OPT_HARD_DISK, "hard-disk", "<file_name>[,ro]", false,
+                      "specifay hard-disk image file",
+                      OptionsParser::MANDATORY);
+    parser.add_option(OPT_CDROM, "dvd-rom", "<file_name>", true, "specifay dvd/cd iso file");
 #if 0
     parser.add_option_with_arg(OPT_BOOT_DEVICE, "boot-device", OptionsParser::ONE_ARGUMENT,
                                "device", "specifay boot device \"hd\" or \"cd\"");
 #endif
-    parser.add_option_with_arg(OPT_CPU_COUNT, "cpu-count", OptionsParser::ONE_ARGUMENT,
-                               "cpu_count", "number of cpus");
-
+    parser.add_option(OPT_CPU_COUNT, "cpu-count", "<cpu_count>", false, "number of cpus");
     parser.set_short_name(OPT_RAM_SIZE, 'm');
     parser.set_short_name(OPT_HARD_DISK, 'h');
 
@@ -366,39 +317,24 @@ bool Application::init(int argc, const char** argv)
             break;
         }
         case OPT_HARD_DISK: {
-            InnerArgs disk_args;
+            std::auto_ptr<OptionsParser::Inner> iner(parser.parse_val(OPT_HARD_DISK, arg, 1, 1));
 
-            split_option_arg(arg, disk_args);
-
-            if (disk_args.empty()) {
+            if (!iner.get()) {
                 return false;
             }
 
-            if (disk_args.front().name().c_str()[0] != '/') {
-                printf("invalid disk file name \"%s\"\n", disk_args.front().name().c_str());
+            const char* file = iner->get_positional(0);
+
+            ASSERT(file);
+
+            if (file[0] != '/') {
+                printf("invalid disk file name \"%s\"\n", file);
                 return false;
             }
 
-            if (disk_args.front().val()) {
-                printf("unexpected disk file name val\n");
-                return false;
-            }
+            hard_disk_file = file;
+            ro_hard_disk_file = iner->switch_test("ro");
 
-            hard_disk_file = disk_args.front().name();
-            ro_hard_disk_file = false;
-
-            disk_args.pop_front();
-
-            if (!disk_args.empty()) {
-
-                if (disk_args.size() != 1 || disk_args.front().name() != "ro" ||
-                    disk_args.front().val()) {
-                    printf("invalid disk arguments\n");
-                    return false;
-                }
-
-                ro_hard_disk_file = true;
-            }
             break;
         }
         case OPT_CDROM:

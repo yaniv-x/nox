@@ -35,12 +35,6 @@ public:
     OptionsParser();
     ~OptionsParser();
 
-    enum ArgType {
-        OPTIONAL_ARGUMENT,
-        ONE_ARGUMENT,
-        //MULTIPLE_ARGUMENTS
-    };
-
     enum OptionFlags {
         MANDATORY = 1 << 0,
         EXCLUSIVE_ARG = 1 << 1,
@@ -54,17 +48,25 @@ public:
         OPT_ID_HELP = -4,
     };
 
+    class Inner: public NonCopyable {
+    public:
+        virtual const char* get_positional(uint pos) = 0;
+        virtual const char* get_option(const std::string& name) = 0;
+        virtual bool switch_test(const std::string& name) = 0;
+    };
+
     bool parse(int argc, const char** argv);
+    Inner* parse_val(int option_id, const char* val, uint min_positional = 0,
+                     uint max_positional = 0);
 
     void add_option(int id, const char* name, const char* description, uint flags = 0);
-    void add_option_with_arg(int id, const char* name, ArgType type, const char* arg_name,
-                             const char* description, uint flags = 0);
+    void add_option(int id, const char* name, const char* val_descriptor, bool optional_val,
+                    const char* description, uint flags = 0);
     void set_short_name(int id, char name);
     void set_front_positional_minmax(uint min, uint max);
     void set_back_positional_minmax(uint min, uint max);
 
     int next(const char** arg);
-    const char* get_option_name(int id);
     void help();
     const char* get_prog_name() { return _prog_name.c_str();}
 
@@ -73,6 +75,7 @@ private:
 
     Option* get_option(char* str);
     bool verify_positional(uint min, uint max, uint count, const char* word);
+    bool verify_arg(Option& option, const char* val);
     bool verify();
     void print_help_description(const char* in_str, uint skip, uint width);
 
@@ -91,7 +94,6 @@ private:
     typedef std::list<char*> ArgsList;
     ArgsList _argv;
 
-    class Option;
     typedef std::list<Option*> OptionList;
     OptionList _options;
 
