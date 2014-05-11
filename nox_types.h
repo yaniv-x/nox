@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2014 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -30,6 +30,7 @@
 typedef unsigned int uint;
 typedef uint64_t address_t;
 typedef uint64_t page_address_t;
+typedef uint8_t mac_addr_t[6];
 
 typedef void (*read_mem_proc_t)(void* opaque, uint64_t src, uint64_t length, uint8_t* dest);
 typedef void (*write_mem_proc_t)(void* opaque, const uint8_t* src, uint64_t length, uint64_t dest);

@@ -798,8 +798,7 @@ enum {
 };
 
 
-static const uint8_t ether_broadcast_addr[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-static const uint8_t mac_address[] = { 0x02, 0xf1, 0xf2, 0xf3, 0xf4, 0xff};
+static const mac_addr_t ether_broadcast_addr = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 
 static uint16_t checksum16(void* start, uint size)
@@ -963,10 +962,11 @@ void NIC::NicTimer::set_abs_val(uint32_t val)
 }
 
 
-NIC::NIC(NoxVM& nox)
+NIC::NIC(NoxVM& nox, const mac_addr_t address, const std::string& interface)
     : PCIDevice("nic", *pci_bus, NIC_VENDOR_ID, NIC_DEV_ID, NIC_DEV_REVISION,
                 mk_pci_class_code(PCI_CLASS_NIC, PCI_SUBCLASS_ETHERNET, PCI_PROGIF_ETHERNET),
                 true)
+    , _interface_name (interface)
     , _tx_timer ("tx")
     , _rx_timer ("rx")
     , _transmit (false)
@@ -982,6 +982,7 @@ NIC::NIC(NoxVM& nox)
                   (io_read_dword_proc_t)&NIC::io_read_dword,
                   (io_write_dword_proc_t)&NIC::io_write_dword);
 
+    memcpy(_mac_address, address, sizeof(_mac_address));
     init_statistic_ctrl();
     init_eeprom();
 
@@ -2358,9 +2359,9 @@ void NIC::init_eeprom()
 {
     memset(_rom, 0, sizeof(_rom));
 
-    _rom[NV_WORD_ADDRESS_0] = mac_address[0] | (uint16_t(mac_address[1]) << 8);
-    _rom[NV_WORD_ADDRESS_1] = mac_address[2] | (uint16_t(mac_address[3]) << 8);
-    _rom[NV_WORD_ADDRESS_2] = mac_address[4] | (uint16_t(mac_address[5]) << 8);
+    _rom[NV_WORD_ADDRESS_0] = _mac_address[0] | (uint16_t(_mac_address[1]) << 8);
+    _rom[NV_WORD_ADDRESS_1] = _mac_address[2] | (uint16_t(_mac_address[3]) << 8);
+    _rom[NV_WORD_ADDRESS_2] = _mac_address[4] | (uint16_t(_mac_address[5]) << 8);
 
     _rom[NV_WORD_INIT_CTRL_1] = NV_INIT_CTRL_1_LOAD_SUB_ID | NV_INIT_CTRL_1_LOAD_SUB_ID |
                                 NV_INIT_CTRL_1_SET | NV_INIT_CTRL_1_LOAD_SUB_ID |
@@ -2589,9 +2590,9 @@ void NIC::soft_reset()
     init_eeprom();
     common_reset();
 
-    _receive_addr_table[0] = mac_address[0] | (uint32_t(mac_address[1]) << 8) |
-                             (uint32_t(mac_address[2]) << 16) | (uint32_t(mac_address[3]) << 24);
-    _receive_addr_table[1] = mac_address[4] | (uint32_t(mac_address[5]) << 8) |
+    _receive_addr_table[0] = _mac_address[0] | (uint32_t(_mac_address[1]) << 8) |
+                             (uint32_t(_mac_address[2]) << 16) | (uint32_t(_mac_address[3]) << 24);
+    _receive_addr_table[1] = _mac_address[4] | (uint32_t(_mac_address[5]) << 8) |
                              NIC_RECEIVE_ADDR_HIGH_VALID;
 }
 
@@ -2882,7 +2883,7 @@ inline void NIC::interrupt(uint32_t cause)
 }
 
 
-void NIC::phy_reset_interface(const char* interface_name)
+void NIC::phy_reset_interface()
 {
     // tunctl -p -u <user> -g <group> -t tap0
     // ifconfig tap0 up
@@ -2891,7 +2892,7 @@ void NIC::phy_reset_interface(const char* interface_name)
     try {
         _interface.reset(-1);
 
-        if (!is_phy_power_up()) {
+        if (!is_phy_power_up() || _interface_name.empty()) {
             return;
         }
 
@@ -2907,7 +2908,7 @@ void NIC::phy_reset_interface(const char* interface_name)
 
         memset(&ifr, 0, sizeof(ifr));
         ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-        strncpy(ifr.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ);
+        strncpy(ifr.ifr_ifrn.ifrn_name, _interface_name.c_str(), IFNAMSIZ);
 
         if (ioctl(tun.get(), TUNSETIFF, &ifr) == -1){
             int err = errno;
@@ -2995,7 +2996,7 @@ void NIC::phy_reset()
 
     _status |= NIC_STATUS_PHYRA;
 
-    phy_reset_interface("tap0");
+    phy_reset_interface();
     phy_update_link_state();
     auto_negotiation();
 
@@ -3039,7 +3040,7 @@ void NIC::phy_soft_reset()
     _phy_0_copper_status_1 &= PHY_P0_COPPER_STATUS_1_MSI_CROSSOVER;
     _phy_0_oem_bits &= (PHY_P0_OEM_BITS_GBE_DISABLE | PHY_P0_OEM_BITS_LPLU);
 
-    phy_reset_interface("tap0");
+    phy_reset_interface();
     phy_update_link_state();
 
     if (is_auto_negotiation()) {

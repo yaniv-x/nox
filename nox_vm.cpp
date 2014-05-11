@@ -61,7 +61,7 @@ enum {
 
     LOW_RAM_SIZE = 640 * KB,
     MID_RAM_START = 768 * KB,
-    MID_RAM_MAX_ADDRESS = 0xc0000000, // is dynamic in newb bios
+    MID_RAM_MAX_ADDRESS = 0xc0000000, // is dynamic in Ignition bios
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
     HIGH_BIOS_SIZE = MB,
     BIOS_FOOTER_SIZE = 16,
@@ -359,7 +359,6 @@ NoxVM::NoxVM(const char* name)
     , _kbd (new KbdController(*this))
     , _ata_host (new ATAHost())
     , _vga (new VGA(*this))
-    , _nic (new NIC(*this))
     , _speaker (new Speaker(*this))
     , _bios_file (new FirmwareFile())
     , _display (NULL)
@@ -896,6 +895,13 @@ void NoxVM::init_cpus()
     for (int i = 0; i < _num_cpus; i++) {
         _dynamic_parts.push_back(new CPU(*this));
     }
+}
+
+
+void NoxVM::add_nic(const NICInitInfo& info)
+{
+    ASSERT(_state == INIT);
+    _dynamic_parts.push_back(new NIC(*this, info.address, info.interface));
 }
 
 

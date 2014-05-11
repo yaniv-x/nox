@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sstream>
 
 #include "application.h"
 #include "nox_vm.h"
@@ -244,6 +245,26 @@ bool Application::ecquire_exclusive_rights(const char* vm_name)
 }
 
 
+bool conv_mac_address(std::string& str, mac_addr_t address)
+{
+    std::istringstream is(str);
+    std::string line;
+    uint index = 0;
+
+    while (std::getline(is, line, ':')) {
+        uint num;
+
+        if (index == 6 || !str_to_uint(line.c_str(), num, 16) || num > 0xff) {
+            return false;
+        }
+
+        address[index++] = num;
+    }
+
+    return (index == 6);
+}
+
+
 bool Application::init(int argc, const char** argv)
 {
     OptionsParser parser;
@@ -256,6 +277,7 @@ bool Application::init(int argc, const char** argv)
         OPT_CDROM,
         OPT_BOOT_DEVICE,
         OPT_CPU_COUNT,
+        OPT_NIC,
     };
 
     parser.add_option(OPT_RAM_SIZE, "ram-size", "<ram_size>unit", false,
@@ -270,6 +292,8 @@ bool Application::init(int argc, const char** argv)
                                "device", "specifay boot device \"hd\" or \"cd\"");
 #endif
     parser.add_option(OPT_CPU_COUNT, "cpu-count", "<cpu_count>", false, "number of cpus");
+    parser.add_option(OPT_NIC, "nic", "<mac-address>[,interface=<ifname>]", false,
+                      "add network interface controller");
     parser.set_short_name(OPT_RAM_SIZE, 'm');
     parser.set_short_name(OPT_HARD_DISK, 'h');
 
@@ -286,6 +310,7 @@ bool Application::init(int argc, const char** argv)
     const char* cdrom_media = NULL;
     bool boot_from_cd = false;
     ulong num_cpus = 1;
+    std::list<NICInitInfo> nics;
 
     int option;
     const char* arg;
@@ -360,6 +385,37 @@ bool Application::init(int argc, const char** argv)
                 return false;
             }
             break;
+        case OPT_NIC: {
+            std::auto_ptr<OptionsParser::Inner> iner(parser.parse_val(OPT_NIC, arg, 1, 1));
+
+            if (!iner.get()) {
+                return false;
+            }
+
+            std::string address(iner->get_positional(0));
+            NICInitInfo info;
+
+            if (!conv_mac_address(address, info.address)) {
+                printf("%s: invalid mac address \"%s\"\n", parser.get_prog_name(), address.c_str());
+                return false;
+            }
+
+            if (info.address[0] & 1) {
+                printf("%s: mac address \"%s\" is multicast\n", parser.get_prog_name(),
+                       address.c_str());
+                return false;
+            }
+
+            const char* interface = iner->get_option("interface");
+
+            if (interface) {
+                info.interface = interface;
+            }
+
+            nics.push_back(info);
+
+            break;
+        }
         case OptionsParser::OPT_ID_HELP:
             parser.help();
             set_exit_code(ERROR_OK);
@@ -392,6 +448,11 @@ bool Application::init(int argc, const char** argv)
         }
 
         _vm->set_boot_device(boot_from_cd);
+
+        while (!nics.empty()) {
+            _vm->add_nic(nics.front());
+            nics.pop_front();
+        }
 
         _vm->init();
     } catch (std::exception& e) {

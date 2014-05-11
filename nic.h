@@ -67,7 +67,7 @@ typedef struct __attribute__ ((__packed__)) TxContextDescriptor {
 
 class NIC: public PCIDevice {
 public:
-    NIC(NoxVM& nox);
+    NIC(NoxVM& nox, const mac_addr_t address, const std::string& interface);
     virtual ~NIC();
 
 protected:
@@ -200,7 +200,7 @@ private:
     void common_reset();
     void init_eeprom();
     void nv_load();
-    void phy_reset_interface(const char* interface_name);
+    void phy_reset_interface();
     void phy_reset_common();
     void phy_reset();
     void phy_soft_reset();
@@ -224,6 +224,8 @@ private:
     Mutex _int_mutex;
     Mutex _rx_wb_mutex;
     Mutex _tx_wb_mutex;
+    mac_addr_t _mac_address;
+    std::string _interface_name;
 
     uint8_t _in_buf[NIC_MAX_LONG_PACKET_SIZE];
     uint8_t _out_buf[NIC_MAX_LONG_PACKET_SIZE];

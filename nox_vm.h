@@ -52,7 +52,12 @@ class FirmwareFile;
 class CPU;
 class PMController;
 class NoxDisplay;
-class NIC;
+
+
+struct NICInitInfo {
+    mac_addr_t address;
+    std::string interface;
+};
 
 
 class NoxVM: public VMPart {
@@ -76,6 +81,7 @@ public:
     void set_hard_disk(const char* file_name, bool read_only);
     void set_cdrom(const char* file_name);
     void set_boot_device(bool from_cdrom);
+    void add_nic(const NICInitInfo& info);
 
     typedef void (*compleation_routin_t)(void *, bool ok);
     void vm_reset();
@@ -158,7 +164,6 @@ private:
     std::auto_ptr<KbdController> _kbd;
     std::auto_ptr<ATAHost> _ata_host;
     std::auto_ptr<VGA> _vga;
-    std::auto_ptr<NIC> _nic;
     std::auto_ptr<Speaker> _speaker;
     std::auto_ptr<FirmwareFile> _bios_file;
     NoxDisplay* _display;
