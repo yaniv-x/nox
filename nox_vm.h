@@ -80,7 +80,6 @@ public:
     void set_num_cpus(uint num_cpus);
     void set_hard_disk(const char* file_name, bool read_only);
     void set_cdrom(const char* file_name);
-    void set_boot_device(bool from_cdrom);
     void add_nic(const NICInitInfo& info);
 
     typedef void (*compleation_routin_t)(void *, bool ok);
@@ -181,7 +180,6 @@ private:
     bool _ro_hard_disk_file;
     bool _cdrom;
     std::string _cdrom_file_name;
-    bool _boot_from_cdrom;
     bool _sleep_on_start;
 
     bool _nmi_mask;

@@ -275,7 +275,6 @@ bool Application::init(int argc, const char** argv)
         OPT_RAM_SIZE,
         OPT_HARD_DISK,
         OPT_CDROM,
-        OPT_BOOT_DEVICE,
         OPT_CPU_COUNT,
         OPT_NIC,
     };
@@ -287,10 +286,6 @@ bool Application::init(int argc, const char** argv)
                       "specifay hard-disk image file",
                       OptionsParser::MANDATORY);
     parser.add_option(OPT_CDROM, "dvd-rom", "<file_name>", true, "specifay dvd/cd iso file");
-#if 0
-    parser.add_option_with_arg(OPT_BOOT_DEVICE, "boot-device", OptionsParser::ONE_ARGUMENT,
-                               "device", "specifay boot device \"hd\" or \"cd\"");
-#endif
     parser.add_option(OPT_CPU_COUNT, "cpu-count", "<cpu_count>", false, "number of cpus");
     parser.add_option(OPT_NIC, "nic", "<mac-address>[,interface=<ifname>]", false,
                       "add network interface controller");
@@ -308,7 +303,6 @@ bool Application::init(int argc, const char** argv)
     bool ro_hard_disk_file = true;
     bool cdrom = false;
     const char* cdrom_media = NULL;
-    bool boot_from_cd = false;
     ulong num_cpus = 1;
     std::list<NICInitInfo> nics;
 
@@ -365,17 +359,6 @@ bool Application::init(int argc, const char** argv)
         case OPT_CDROM:
             cdrom = true;
             cdrom_media = arg;
-            break;
-        case OPT_BOOT_DEVICE:
-            if (strcmp(arg, "hd") == 0) {
-                boot_from_cd = false;
-            } else if (strcmp(arg, "cd") == 0) {
-                boot_from_cd = true;
-            } else {
-                printf("invalid boot-device argumant %s. use \"hd\" or \"cd\"\n", arg);
-                set_exit_code(ERROR_INVALID_COMMAND_LINE);
-                return false;
-            }
             break;
         case OPT_CPU_COUNT:
             if (!str_to_ulong(arg, num_cpus) || !num_cpus || num_cpus > MAX_CPUS) {
@@ -446,8 +429,6 @@ bool Application::init(int argc, const char** argv)
         if (cdrom) {
             _vm->set_cdrom(cdrom_media);
         }
-
-        _vm->set_boot_device(boot_from_cd);
 
         while (!nics.empty()) {
             _vm->add_nic(nics.front());

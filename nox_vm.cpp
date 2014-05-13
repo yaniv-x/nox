@@ -371,7 +371,6 @@ NoxVM::NoxVM(const char* name)
     , _num_cpus (1)
     , _ro_hard_disk_file (false)
     , _cdrom (false)
-    , _boot_from_cdrom (false)
     , _sleep_on_start (false)
 {
     add_io_region(_io_bus->register_region(*this, IO_PORT_A20, 1, this,
@@ -985,13 +984,6 @@ void NoxVM::init_cdrom()
 
     ATAPICdromFactory factory(_cdrom_file_name.c_str());
     _ata_host->set_device_1(factory);
-}
-
-
-void NoxVM::set_boot_device(bool from_cdrom)
-{
-    ASSERT(_state == INIT);
-    _boot_from_cdrom = from_cdrom;
 }
 
 
