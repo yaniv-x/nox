@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -337,7 +337,7 @@ private:
                 return;
             }
 
-            if (_recive_start += n) {
+            if ((_recive_start += n) == _recive_end) {
                 (this->*_recive_done)();
             }
         }
@@ -377,9 +377,9 @@ private:
                 if (!_transmit_list.empty()) {
                     _transmit_start = _transmit_list.front()->data();
                     _transmit_end = _transmit_start + _transmit_list.front()->size();
+                } else {
+                    (this->*_transmit_done)();
                 }
-
-                (this->*_transmit_done)();
             }
         }
     }
@@ -465,7 +465,7 @@ void AdminServer::enum_commands(AdminReplyContext* context, uint32_t index)
 
     if (index >= _handlers.size()) {
         std::vector<uint32_t> empty_vec(0);
-        context->command_reply(0, "", "", "", &empty_vec, &empty_vec);
+        context->command_reply(0, "", "", "", &empty_vec, &empty_vec, &empty_vec, &empty_vec);
         return;
     }
 
