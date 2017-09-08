@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -553,7 +553,7 @@ void AdminLocalCommand::replyv(uint32_t serial, AdminTransmitContext* context, v
 {
     uint fixed_output_size = get_fixed_output_size();
     uint buf_size = sizeof(VAMessageHeader) + sizeof(VACommandReply) + fixed_output_size;
-    std::auto_ptr<AdminBuf> buf(new AdminBuf(buf_size));
+    std::unique_ptr<AdminBuf> buf(new AdminBuf(buf_size));
 
     VAMessageHeader* header = (VAMessageHeader*)buf->data();
     header->type = VA_MESSAGE_TYPE_REPLY;
@@ -568,7 +568,7 @@ void AdminLocalCommand::replyv(uint32_t serial, AdminTransmitContext* context, v
           buf->size() - sizeof(VAMessageHeader) - sizeof(VACommandReply), &var_buf);
 
     if (var_buf) {
-        std::auto_ptr<AdminBuf> tmp(var_buf);
+        std::unique_ptr<AdminBuf> tmp(var_buf);
 
         header->size += var_buf->size();
         context->transmit(buf.release());
@@ -595,7 +595,7 @@ void AdminRemoteCommand::call_common(uint32_t serial, AdminTransmitContext* cont
 {
     uint fixed_input_size = get_fixed_input_size();
     uint buf_size = sizeof(VAMessageHeader) + sizeof(VACommand) + fixed_input_size;
-    std::auto_ptr<AdminBuf> buf(new AdminBuf(buf_size));
+    std::unique_ptr<AdminBuf> buf(new AdminBuf(buf_size));
 
     VAMessageHeader* header = (VAMessageHeader*)buf->data();
     header->type = VA_MESSAGE_TYPE_COMMAND;
@@ -610,7 +610,7 @@ void AdminRemoteCommand::call_common(uint32_t serial, AdminTransmitContext* cont
           buf->size() - sizeof(VAMessageHeader) - sizeof(VACommand), &var_buf);
 
     if (var_buf) {
-        std::auto_ptr<AdminBuf> tmp(var_buf);
+        std::unique_ptr<AdminBuf> tmp(var_buf);
 
         header->size += var_buf->size();
         context->transmit(buf.release());
@@ -728,7 +728,7 @@ static const char* skip_blank(const char* str)
 
 static void conv_uint32v(const char* str, uint64_t &bin_val)
 {
-    std::auto_ptr<std::vector<uint32_t> > array( new std::vector<uint32_t>());
+    std::unique_ptr<std::vector<uint32_t> > array( new std::vector<uint32_t>());
 
     str = skip_blank(str);
 
@@ -856,7 +856,7 @@ static int utf8v_stop_test(char ch)
 
 static void conv_utf8v(const char* str, uint64_t &bin_val)
 {
-    std::auto_ptr<std::vector<const char*> > array( new std::vector<const char*>());
+    std::unique_ptr<std::vector<const char*> > array( new std::vector<const char*>());
 
     str = skip_blank(str);
 

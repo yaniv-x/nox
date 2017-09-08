@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -41,7 +41,7 @@
 #endif
 
 #define PANIC(str, ...)  {                                          \
-    printf("PANIC: %s: "str"\n", FUNC_NAME, ## __VA_ARGS__);        \
+    printf("PANIC: %s: " str "\n", FUNC_NAME, ## __VA_ARGS__);      \
     ::abort();                                                      \
 }
 

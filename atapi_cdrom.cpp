@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -483,9 +483,9 @@ private:
     ATAPICdrom& _cd;
     uint64_t _start;
     uint64_t _end;
-    std::auto_ptr<IndirectVector> _indirect_vector;
+    std::unique_ptr<IndirectVector> _indirect_vector;
     struct iovec _io_vec;
-    std::auto_ptr<DirectVector> _direct_vector;
+    std::unique_ptr<DirectVector> _direct_vector;
     IOVec _iov;
     bool _dma_started;
     DMAState* _dma_state;
@@ -585,7 +585,7 @@ public:
 
     virtual bool dma_write_start(DMAState& dma)
     {
-        std::auto_ptr<IndirectVector> vec(dma.get_indirect_vector(_size));
+        std::unique_ptr<IndirectVector> vec(dma.get_indirect_vector(_size));
 
         if (!vec.get()) {
             D_MESSAGE("unable to obtaine transfer vector");

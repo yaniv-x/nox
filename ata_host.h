@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -69,10 +69,10 @@ private:
     void set_bm_status(uint8_t val, uint8_t* reg);
 
 private:
-    std::auto_ptr<Wire> _channel_0_wire;
-    std::auto_ptr<Wire> _channel_1_wire;
-    std::auto_ptr<ATADevice> _channel_0;
-    std::auto_ptr<ATADevice> _channel_1;
+    std::unique_ptr<Wire> _channel_0_wire;
+    std::unique_ptr<Wire> _channel_1_wire;
+    std::unique_ptr<ATADevice> _channel_0;
+    std::unique_ptr<ATADevice> _channel_1;
 
     Mutex _bm_mutex;
     uint16_t _bus_master_io_base;

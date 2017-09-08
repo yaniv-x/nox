@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -82,7 +82,7 @@ private:
     void do_check_power_mode();
 
 private:
-    std::auto_ptr<BlockDevice> _block_dev;
+    std::unique_ptr<BlockDevice> _block_dev;
 
     bool _sync_mode;
     uint _heads_per_cylinder;

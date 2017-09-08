@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -379,7 +379,7 @@ void AdminClient::wait_reply()
 {
     for (;;) {
         while (!_transmit_list.empty()) {
-            std::auto_ptr<AdminBuf> buf(_transmit_list.front());
+            std::unique_ptr<AdminBuf> buf(_transmit_list.front());
             _transmit_list.pop_front();
             write(buf->data(), buf->size());
         }

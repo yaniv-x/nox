@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2014 Yaniv Kamay,
+    Copyright (c) 2014-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -1182,7 +1182,7 @@ inline void NIC::handle_legacy_tx(LegacyTxDescriptor& descriptor)
         W_MESSAGE_SOME(100, "ignoring pad request");
     }
 
-    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address,
+    std::unique_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address,
                                                               length));
 
     if (!direct.get()) {
@@ -1234,7 +1234,7 @@ inline void NIC::handle_tx_context(TxContextDescriptor& descriptor)
         _offload_context = descriptor;
     }
 
-    if (_out_buf_pos != _out_buf_pos) {
+    if (_out_buf_pos != _out_buf) {
         D_MESSAGE("new context while expecting data");
         set_tx_packet_error(false);
     }
@@ -1479,7 +1479,7 @@ inline void NIC::handle_tx_data(TxDataDescriptor& descriptor)
         return;
     }
 
-    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address, length));
+    std::unique_ptr<DirectAccess> direct(memory_bus->get_direct(descriptor.address, length));
 
     if (!direct.get()) {
         D_MESSAGE("data access failed 0x%lx %u", descriptor.address, length);
@@ -2268,7 +2268,7 @@ void NIC::push(uint8_t* packet, uint length)
         break;
     }
 
-    std::auto_ptr<DirectAccess> direct(memory_bus->get_direct(legacy.address, buff_size));
+    std::unique_ptr<DirectAccess> direct(memory_bus->get_direct(legacy.address, buff_size));
 
     if (!direct.get()) {
         D_MESSAGE("data access failed 0x%lx %u", legacy.address, buff_size);

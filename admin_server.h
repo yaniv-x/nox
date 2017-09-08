@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -62,7 +62,7 @@ private:
     void enum_commands(AdminReplyContext* context, uint32_t index);
 
 private:
-    std::auto_ptr<UDSListener> _listener;
+    std::unique_ptr<UDSListener> _listener;
     uint _next_command_code;
 
     typedef std::list<Connection*> ConectionsList;

@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -870,8 +870,8 @@ void KbdController::io_write_command(uint16_t port, uint8_t val)
         memory_bus->enable_address_line_20();
         break;
     case CTRL_CMD_READ_TEST_INPUTS:
-        put_controller_data(!!(_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK) |
-                            (!!(_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK) << 1));
+        put_controller_data((!!(_command_byte & COMMAND_BYTE_DISABLE_KYBD_MASK)) |
+                            ((!!(_command_byte & COMMAND_BYTE_DISABLE_MOUSE_MASK)) << 1));
         break;
     default:
         if (val < CTRL_CMD_PULSE_0UTPUT_FIRST) {

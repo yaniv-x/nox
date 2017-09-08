@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -147,24 +147,24 @@ private:
 private:
     RWLock _state_lock;
     Mutex _state_request_mutex;
-    std::auto_ptr<KVM> _kvm;
-    std::auto_ptr<IOBus> _io_bus;
-    std::auto_ptr<MemoryBus> _mem_bus;
-    std::auto_ptr<PlaceHolder> _holder;
-    std::auto_ptr<PIC> _pic;
-    std::auto_ptr<IOApic> _io_apic;
-    std::auto_ptr<PCIBus> _pci;
-    std::auto_ptr<PCIHost> _pci_host;
-    std::auto_ptr<ISABridge> _eisa_bridge;
-    std::auto_ptr<PMController> _pm_controller;
-    std::auto_ptr<RTC> _rtc;
-    std::auto_ptr<DMA> _dma;
-    std::auto_ptr<PIT> _pit;
-    std::auto_ptr<KbdController> _kbd;
-    std::auto_ptr<ATAHost> _ata_host;
-    std::auto_ptr<VGA> _vga;
-    std::auto_ptr<Speaker> _speaker;
-    std::auto_ptr<FirmwareFile> _bios_file;
+    std::unique_ptr<KVM> _kvm;
+    std::unique_ptr<IOBus> _io_bus;
+    std::unique_ptr<MemoryBus> _mem_bus;
+    std::unique_ptr<PlaceHolder> _holder;
+    std::unique_ptr<PIC> _pic;
+    std::unique_ptr<IOApic> _io_apic;
+    std::unique_ptr<PCIBus> _pci;
+    std::unique_ptr<PCIHost> _pci_host;
+    std::unique_ptr<ISABridge> _eisa_bridge;
+    std::unique_ptr<PMController> _pm_controller;
+    std::unique_ptr<RTC> _rtc;
+    std::unique_ptr<DMA> _dma;
+    std::unique_ptr<PIT> _pit;
+    std::unique_ptr<KbdController> _kbd;
+    std::unique_ptr<ATAHost> _ata_host;
+    std::unique_ptr<VGA> _vga;
+    std::unique_ptr<Speaker> _speaker;
+    std::unique_ptr<FirmwareFile> _bios_file;
     NoxDisplay* _display;
     VMParts _dynamic_parts;
     PhysicalRam* _low_ram;

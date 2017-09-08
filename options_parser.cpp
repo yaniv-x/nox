@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -400,7 +400,7 @@ static bool is_valid_name(const char* name)
     const char* end = name + len;
 
     for (; name < end; name++) {
-        if (!isalnum(*name) && !*name == '-') {
+        if (!isalnum(*name) && *name != '-') {
             return false;
         }
     }
@@ -892,7 +892,7 @@ OptionsParser::Inner* OptionsParser::parse_val(int option_id, const char* val,
 
     ASSERT(option);
 
-    std::auto_ptr<InnerImp> iner(new InnerImp(option->get_val_descriptor()));
+    std::unique_ptr<InnerImp> iner(new InnerImp(option->get_val_descriptor()));
 
     return (iner->parse(val, min_positional, max_positional, option->get_name(),
                         _prog_name)) ? iner.release() : NULL;

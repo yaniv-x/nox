@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -88,7 +88,7 @@ Application* application = NULL;
 
 
 Application::Application()
-    : _vm (NULL)
+    : _vm ()
     , _quit_event (create_event((void_callback_t)&Application::quit_handler, this))
     , _quitting (false)
 {
@@ -336,7 +336,7 @@ bool Application::init(int argc, const char** argv)
             break;
         }
         case OPT_HARD_DISK: {
-            std::auto_ptr<OptionsParser::Inner> iner(parser.parse_val(OPT_HARD_DISK, arg, 1, 1));
+            std::unique_ptr<OptionsParser::Inner> iner(parser.parse_val(OPT_HARD_DISK, arg, 1, 1));
 
             if (!iner.get()) {
                 return false;
@@ -369,7 +369,7 @@ bool Application::init(int argc, const char** argv)
             }
             break;
         case OPT_NIC: {
-            std::auto_ptr<OptionsParser::Inner> iner(parser.parse_val(OPT_NIC, arg, 1, 1));
+            std::unique_ptr<OptionsParser::Inner> iner(parser.parse_val(OPT_NIC, arg, 1, 1));
 
             if (!iner.get()) {
                 return false;
@@ -523,7 +523,7 @@ ErrorCode Application::main(int argc, const char** argv)
 
     init_nox_dir();
 
-    std::auto_ptr<Application> app(new Application());
+    std::unique_ptr<Application> app(new Application());
 
     if (app->init(argc, argv)) {
         app->run();

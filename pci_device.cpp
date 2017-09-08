@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -649,7 +649,7 @@ void PCIDevice::load_firmware(uint16_t vendor, uint16_t device, uint8_t revision
         return;
     }
 
-    std::auto_ptr<FirmwareFile> file(new FirmwareFile());
+    std::unique_ptr<FirmwareFile> file(new FirmwareFile());
 
     file->open(file_name.c_str());
 

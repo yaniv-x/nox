@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -115,7 +115,7 @@ private:
 
 DirectVector* ATAHostDMA::get_direct_vector(uint size)
 {
-    std::auto_ptr<DirectVector> vec(new DirectVector());
+    std::unique_ptr<DirectVector> vec(new DirectVector());
     uint32_t dma_PRD = _address;
 
     for (;; dma_PRD += 8) {
@@ -156,7 +156,7 @@ DirectVector* ATAHostDMA::get_direct_vector(uint size)
 
 IndirectVector* ATAHostDMA::get_indirect_vector(uint size)
 {
-    std::auto_ptr<IndirectVector> vec(new IndirectVector());
+    std::unique_ptr<IndirectVector> vec(new IndirectVector());
     uint32_t dma_PRD = _address;
 
     for (;; dma_PRD += 8) {

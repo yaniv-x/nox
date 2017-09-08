@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -66,7 +66,7 @@ private:
     std::string _vm_name;
     VGA& _vga;
     VGABackEnd* _back_end;
-    std::auto_ptr<Thread> _thread;
+    std::unique_ptr<Thread> _thread;
     Display* _display;
     Window _window;
     Cursor _invisible_cursor;

@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -97,7 +97,7 @@ private:
     uint get_mmc_power_mode();
 
 private:
-    std::auto_ptr<BlockDevice> _media;
+    std::unique_ptr<BlockDevice> _media;
     BlockDevice* _mounted_media;
     uint16_t _profile;
     Mutex _media_lock;

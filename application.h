@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -61,13 +61,13 @@ private:
     static void sig_term_handler(int sig);
 
 private:
-    std::auto_ptr<AdminServer> _admin_server;
-    std::auto_ptr<NoxVM> _vm;
+    std::unique_ptr<AdminServer> _admin_server;
+    std::unique_ptr<NoxVM> _vm;
     Event* _quit_event;
     bool _quitting;
     struct sigaction _prev_term_act;
     struct sigaction _prev_int_act;
-    std::auto_ptr<GDBTarget> _gdb_target;
+    std::unique_ptr<GDBTarget> _gdb_target;
 };
 
 extern Application* application;

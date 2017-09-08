@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -60,7 +60,7 @@ public:
     ~Mutex()
     {
         if (pthread_mutex_destroy(&_mutex)) {
-            THROW("failed");
+            PANIC("failed");
         }
     }
 
@@ -144,7 +144,7 @@ public:
     ~Condition()
     {
         if (pthread_cond_destroy(&_condition)) {
-            THROW("failed");
+            PANIC("failed");
         }
     }
 
@@ -201,7 +201,7 @@ public:
     ~RLock()
     {
         if (pthread_rwlock_unlock(_rwlock)) {
-            THROW("failed");
+            PANIC("failed");
         }
     }
 
@@ -223,7 +223,7 @@ public:
     ~WLock()
     {
         if (pthread_rwlock_unlock(_rwlock)) {
-            THROW("failed");
+            PANIC("failed");
         }
     }
 

@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -33,7 +33,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <limits.h>
-#include <auto_ptr.h>
+#include <bits/unique_ptr.h>
 #include <string.h>
 #include <unistd.h>
 #include <string>
