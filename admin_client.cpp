@@ -499,7 +499,7 @@ void AdminClient::refresh_commands_list()
     _enum_done = false;
 
     do {
-        _active_call->call(alloc_call_serial(command.get()), this, index++);
+        command->call(alloc_call_serial(command.get()), this, index++);
         wait_reply();
     } while (!_enum_done);
 }
