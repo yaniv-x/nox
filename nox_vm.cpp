@@ -65,6 +65,7 @@ enum {
     MID_RAM_MAX = MID_RAM_MAX_ADDRESS - MID_RAM_START,
     HIGH_BIOS_SIZE = MB,
     BIOS_FOOTER_SIZE = 16,
+    BIOS_PAGES = ((128 * KB) >> GUEST_PAGE_SHIFT),
 };
 
 
@@ -875,7 +876,14 @@ void NoxVM::load_bios()
     uint8_t* ptr = _mem_bus->get_physical_ram_ptr(_mid_ram);
     ptr += MB - MID_RAM_START;
 
-    uint size = (_bios_file->num_pages() << GUEST_PAGE_SHIFT);
+    uint size = _bios_file->num_pages();
+
+    if (size != BIOS_PAGES) {
+        THROW("invalid bios image size %u", size);
+    }
+
+    size <<= GUEST_PAGE_SHIFT;
+
     ptr -= size;
     _bios_file->read_all(ptr);
 
