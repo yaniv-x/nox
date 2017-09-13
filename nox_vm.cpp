@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -769,18 +769,18 @@ uint32_t NoxVM::platform_port_read_dword(uint16_t port)
     switch (port) {
     case PLATFORM_IO_REGISTER:
         switch (_platform_reg_index) {
-        case PLATFORM_REG_BELOW_1M_USED_PAGES:
-            return _bios_pages;
         case PLATFORM_REG_ABOVE_1M_PAGES: {
             uint64_t uma_ram = (MB - MID_RAM_START);
             return (_mem_bus->get_physical_ram_size(_mid_ram) - uma_ram) >> GUEST_PAGE_SHIFT;
         }
-        case PLATFORM_REG_BELOW_4G_PAGES:
+        case PLATFORM_REG_HIGH_BIOS_PAGES:
             return _mem_bus->get_physical_ram_size(_high_bios) >> GUEST_PAGE_SHIFT;
-        case PLATFORM_REG_BELOW_4G_USED_PAGES: {
+        case PLATFORM_REG_HIGH_BIOS_USED_PAGES: {
             uint32_t pages = _mem_bus->get_physical_ram_size(_high_bios) >> GUEST_PAGE_SHIFT;
             return pages - _free_high_bios_pages;
         }
+        case PLATFORM_REG_BELOW_HIGH_BIOS_PAGES:
+            return _blow_high_bios_pages;
         case PLATFORM_REG_ABOVE_4G_PAGES:
             return _high_ram ? _mem_bus->get_physical_ram_size(_high_ram) >> GUEST_PAGE_SHIFT : 0;
         case PLATFORM_REG_NUM_CPUS:
@@ -857,14 +857,16 @@ void NoxVM::init_ram()
                                                  "high ram");
     }
 
-    _high_bios = _mem_bus->alloc_physical_ram(*this,
-                                              HIGH_BIOS_SIZE >> GUEST_PAGE_SHIFT,
+    _high_bios = _mem_bus->alloc_physical_ram(*this, HIGH_BIOS_SIZE >> GUEST_PAGE_SHIFT,
                                               "high bios");
     _free_high_bios_pages = HIGH_BIOS_SIZE >> GUEST_PAGE_SHIFT;
 
-    ASSERT(4ULL * GB - HIGH_BIOS_SIZE  > LOCAL_APIC_ADDRESS);
+    ASSERT(4ULL * GB - HIGH_BIOS_SIZE - MB > LOCAL_APIC_ADDRESS + GUEST_PAGE_SIZE); // arbitrary MB
+                                                                                    // of free space
 
     alloc_high_bios_pages(1);
+
+    _blow_high_bios_pages = 0;
 }
 
 

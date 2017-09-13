@@ -142,7 +142,7 @@ private:
     void dump_ram(AdminReplyContext* context, const char* file_name);
 #endif
 
-    void alloc_high_bios_pages(uint num_pages/*, uint8_t** ptr, page_address_t* address*/);
+    void alloc_high_bios_pages(uint num_pages);
 
 private:
     RWLock _state_lock;
@@ -174,7 +174,7 @@ private:
     uint8_t _a20_port_val;
     uint64_t _ram_size;
     uint32_t _free_high_bios_pages;
-    uint32_t _bios_pages;
+    uint32_t _blow_high_bios_pages;
     uint _num_cpus;
     std::string _hard_disk_file_name;
     bool _ro_hard_disk_file;

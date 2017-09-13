@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -111,10 +111,10 @@ enum {
 };
 
 enum {
-    PLATFORM_REG_BELOW_1M_USED_PAGES,
     PLATFORM_REG_ABOVE_1M_PAGES,
-    PLATFORM_REG_BELOW_4G_PAGES,
-    PLATFORM_REG_BELOW_4G_USED_PAGES,
+    PLATFORM_REG_HIGH_BIOS_PAGES,
+    PLATFORM_REG_HIGH_BIOS_USED_PAGES,
+    PLATFORM_REG_BELOW_HIGH_BIOS_PAGES,
     PLATFORM_REG_ABOVE_4G_PAGES,
     PLATFORM_REG_WRITE_POS,
     PLATFORM_REG_READ_POS,
