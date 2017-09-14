@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -259,6 +259,7 @@ enum {
 enum {
     ATA_FEATURE_ENABLE_CACHE = 0x02,
     ATA_FEATURE_SET_TRANSFER_MODE = 0x03,
+    ATA_FEATURE_ENABLE_ADVANCED_POWER_MANAGEMENT = 0x05,
     ATA_FEATURE_DISABLE_CACHE = 0x82,
     ATA_FEATURE_ENABLE_REVERT_TO_DEFAULT = 0xcc,
     ATA_FEATURE_DISABLE_REVERT_TO_DEFAULT = 0x66,
@@ -271,6 +272,7 @@ enum {
     SCSI_CMD_TEST_UNIT_READY = 0x00,
     SCSI_CMD_REQUEST_SENSE = 0x03,
     SCSI_CMD_INQUIRY = 0x12,
+    SCSI_CMD_MODE_SENSE_6 = 0x1a,
     SCSI_CMD_MODE_SELECT = 0x55,
     SCSI_CMD_MODE_SENSE = 0x5a,
 

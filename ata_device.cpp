@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2014 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -659,9 +659,13 @@ void ATADevice::do_set_features()
     case ATA_FEATURE_SET_TRANSFER_MODE:
         set_transfer_mode();
         break;
+    case ATA_FEATURE_ENABLE_ADVANCED_POWER_MANAGEMENT:
+        D_MESSAGE("unsuppotted feature 0x%x", _feature);
+        command_abort_error();
+        break;
     default:
-        D_MESSAGE("unhandled 0x%x. sleeping... ", _feature);
-        for (;;) sleep(2);
+        W_MESSAGE("unhandled 0x%x", _feature);
+        command_abort_error();
     }
 }
 

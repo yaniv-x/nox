@@ -2186,13 +2186,13 @@ void ATAPICdrom::handle_packet(uint8_t* packet)
     case MMC_CMD_READ_SUBCHANNEL:
     case MMC_CMD_SYNCHRONIZE_CACHE:
     case MMC_CMD_PAUSE_RESUME:
+    case SCSI_CMD_MODE_SENSE_6:
         D_MESSAGE("abort command 0x%x", packet[0]);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
         break;
     default:
-        D_MESSAGE("invalid command 0x%x", packet[0]);
+        W_MESSAGE("unhandled command 0x%x", packet[0]);
         packet_cmd_abort(SCSI_SENSE_ILLEGAL_REQUEST, SCSI_SENSE_ADD_INVALID_COMMAND_OPERATION_CODE);
-        for (;;) sleep(2);
     }
 }
 
