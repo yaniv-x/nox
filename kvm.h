@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -41,6 +41,7 @@ class KVM: private NonCopyable {
 public:
     KVM();
 
+    void set_addresses(address_t tss_address, address_t identity_address);
     KvmMapRef map_mem_slot(page_address_t start, uint64_t num_pages,
                         page_address_t host_address);
     void unmap_mem_slot(KvmMapRef map_ref);

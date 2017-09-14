@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Yaniv Kamay,
+    Copyright (c) 2013-2017 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -119,10 +119,6 @@ void KVM::init()
         THROW("no debug regs extension");
     }
 
-    if (!check_extention(KVM_CAP_SET_TSS_ADDR)) {
-        THROW("no set tss extension");
-    }
-
     if (!(_max_vcpu = ioctl(_devfd.get(), KVM_CHECK_EXTENSION, KVM_CAP_NR_VCPUS))) {
         THROW("unable to get max vcpu");
     }
@@ -147,8 +143,33 @@ void KVM::init()
     for (uint32_t i = 0; i < _num_mem_slot; i++) {
         _free_slots.push_back(i);
     }
+}
 
-    //todo: set tss KVM_SET_TSS_ADDR
+
+void KVM::set_addresses(address_t tss_address, address_t identity_address)
+{
+    if (check_extention(KVM_CAP_SET_TSS_ADDR)) {
+
+        if (ioctl(_vmfd.get(), KVM_SET_TSS_ADDR, tss_address) == -1) {
+            int err = errno;
+            THROW("set tss failed: errno %d (%s)", err, strerror(err));
+        }
+
+        D_MESSAGE("tss @ %p", tss_address);
+    }
+
+    if (!check_extention(KVM_CAP_SET_IDENTITY_MAP_ADDR)) {
+        return;
+    }
+
+    uint64_t addr = identity_address;
+
+    if (ioctl(_vmfd.get(), KVM_SET_IDENTITY_MAP_ADDR, &addr) == -1) {
+        int err = errno;
+        THROW("set identity failed: errno %d (%s)", err, strerror(err));
+    }
+
+    D_MESSAGE("identity @ %p", addr);
 }
 
 

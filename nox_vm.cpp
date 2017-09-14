@@ -863,11 +863,15 @@ void NoxVM::init_ram()
     _free_high_bios_pages = HIGH_BIOS_SIZE >> GUEST_PAGE_SHIFT;
 
     ASSERT(4ULL * GB - HIGH_BIOS_SIZE - MB > LOCAL_APIC_ADDRESS + GUEST_PAGE_SIZE); // arbitrary MB
-                                                                                    // of free space
+                                                                                    // of free
+                                                                                    // space
 
     alloc_high_bios_pages(1);
 
-    _blow_high_bios_pages = 0;
+    _kvm->set_addresses(4ULL * GB - HIGH_BIOS_SIZE - 4 * GUEST_PAGE_SIZE,
+                       4ULL * GB - HIGH_BIOS_SIZE - 8 * GUEST_PAGE_SIZE); // putting some gaps
+                                                                          // between regions
+    _blow_high_bios_pages = 12;
 }
 
 
