@@ -3178,8 +3178,6 @@ void NIC::auto_negotiation()
 
 void NIC::phy_manual_config()
 {
-    ASSERT(!(_phy_ctrl & PHY_CTRL_AUTO_NEGOTIATION));
-
     _phy_status &= ~PHY_STATUS_LINK_UP;
 
     _phy_partner_ability = 0;
