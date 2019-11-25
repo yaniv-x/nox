@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2014-2017 Yaniv Kamay,
+    Copyright (c) 2014-2019 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -2908,7 +2908,9 @@ void NIC::phy_reset_interface()
 
         memset(&ifr, 0, sizeof(ifr));
         ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-        strncpy(ifr.ifr_ifrn.ifrn_name, _interface_name.c_str(), IFNAMSIZ);
+        ASSERT(_interface_name.length() < IFNAMSIZ);
+        memcpy(ifr.ifr_ifrn.ifrn_name, _interface_name.c_str(), MIN(_interface_name.length(),
+                                                                              IFNAMSIZ - 1));
 
         if (ioctl(tun.get(), TUNSETIFF, &ifr) == -1){
             int err = errno;
