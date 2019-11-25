@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2017 Yaniv Kamay,
+    Copyright (c) 2013-2019 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <linux/if.h>
 #include <sstream>
 
 #include "application.h"
@@ -392,6 +393,12 @@ bool Application::init(int argc, const char** argv)
             const char* interface = iner->get_option("interface");
 
             if (interface) {
+                if (strlen(interface) >= IFNAMSIZ) {
+                    printf("%s: nic interface name \"%s\" exceed max length of %i\n",
+                           parser.get_prog_name(), interface, IFNAMSIZ - 1);
+                    return false;
+                }
+
                 info.interface = interface;
             }
 
