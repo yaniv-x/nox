@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013-2017 Yaniv Kamay,
+    Copyright (c) 2013-2019 Yaniv Kamay,
     All rights reserved.
 
     Source code is provided for evaluation purposes only. Modification or use in
@@ -1292,7 +1292,6 @@ void ATADisk::do_command(uint8_t command)
     default:
         D_MESSAGE("unhandled 0x%x %u", command, command);
         command_abort_error();
-        for (;;) sleep(2);
     }
 }
 
